@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>能力バトル ―スタンド・アリーナ―</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- タイトル／セットアップ画面 -->
+  <section id="setup" class="screen">
+    <header class="title">
+      <div class="menace left">ゴ<br>ゴ<br>ゴ</div>
+      <div>
+        <h1>能力バトル</h1>
+        <p class="subtitle">― STAND ARENA ―</p>
+      </div>
+      <div class="menace right">ゴ<br>ゴ<br>ゴ</div>
+    </header>
+
+    <div class="mode-row">
+      <span>バトル形式：</span>
+      <label><input type="radio" name="mode" value="ffa" checked> 個人戦（バトルロイヤル）</label>
+      <label><input type="radio" name="mode" value="team"> チーム戦（2 vs 2）</label>
+    </div>
+
+    <div id="slots" class="slots"></div>
+
+    <div class="setup-actions">
+      <button id="start-btn" class="big">バトル開始</button>
+      <p id="setup-error" class="error"></p>
+    </div>
+
+    <details class="howto">
+      <summary>遊び方</summary>
+      <ul>
+        <li>毎ターン「移動」と「行動（攻撃・能力・ラッシュ）」を1回ずつ、好きな順番で行えます。</li>
+        <li>行動順はスピードの高い順です（ラウンドごとに多少ゆらぎます）。</li>
+        <li>壁は移動も視線も遮ります。瓦礫は移動コスト2ですが、視線は通ります。</li>
+        <li>攻撃したり攻撃を受けたりするとラッシュゲージが溜まり、100で「ラッシュ」（4連撃）が使えます。成長性が高いほど溜まりやすくなります。</li>
+        <li>マップ上の「✚ 包帯」でHP回復、「➶ 矢のかけら」でゲージが増えます。</li>
+        <li>最後まで立っていた者（チーム）の勝利です。</li>
+        <li>操作：ボタンでモードを選び、光ったマスをクリック。右クリック／Escでキャンセル。</li>
+      </ul>
+      <p>パラメータ（A〜E）の意味：破壊力＝攻撃力 / スピード＝移動力・行動順 / 射程距離＝通常攻撃の届く距離 / 持続力＝最大HP / 精密動作性＝命中率・会心率 / 成長性＝ゲージ上昇量</p>
+    </details>
+  </section>
+
+  <!-- バトル画面 -->
+  <section id="battle" class="screen hidden">
+    <div class="topbar">
+      <span id="round-label"></span>
+      <span id="turn-label"></span>
+      <button id="quit-btn" class="small">タイトルへ</button>
+    </div>
+    <div class="battle-layout">
+      <div id="board-wrap">
+        <div id="board"></div>
+        <div id="fx-layer"></div>
+      </div>
+      <aside class="side">
+        <div id="current-card" class="card"></div>
+        <div id="actions" class="actions">
+          <button data-act="move">移動</button>
+          <button data-act="attack">攻撃</button>
+          <button data-act="ability">能力</button>
+          <button data-act="rush">ラッシュ</button>
+          <button data-act="end" class="end">ターン終了</button>
+        </div>
+        <p id="hint" class="hint"></p>
+        <div id="unit-list"></div>
+        <div id="log" class="log"></div>
+      </aside>
+    </div>
+  </section>
+
+  <div id="cutin" class="cutin hidden"><div class="cutin-band"><span class="cutin-text"></span></div></div>
+  <div id="banner" class="banner hidden"></div>
+  <div id="gameover" class="overlay hidden">
+    <div class="overlay-box">
+      <h2 id="gameover-title"></h2>
+      <p id="gameover-body"></p>
+      <button id="again-btn" class="big">同じメンバーでもう一戦</button>
+      <button id="title-btn">タイトルへ</button>
+    </div>
+  </div>
+
+  <script src="js/data.js"></script>
+  <script src="js/map.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/abilities.js"></script>
+  <script src="js/ai.js"></script>
+  <script src="js/ui.js"></script>
+</body>
+</html>
