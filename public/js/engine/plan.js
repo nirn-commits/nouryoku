@@ -3,7 +3,7 @@ import { ACTIONS, ABILITIES, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter, pointInRect } from './vec.js';
 import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt, findPath } from './world.js';
 import { applyAbility } from './abilities.js';
-import { itemDef } from './items.js';
+import { itemDef, strengthScale } from './items.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
@@ -655,12 +655,16 @@ const EXEC = {
           const d = dist(c.x, c.y, e.x, e.y);
           const ang = Math.abs(angDiff(c.facing, angleTo(c.x, c.y, e.x, e.y)));
           if (e.alive && e.floor === c.floor && d <= meleeRange(c) + e.r * 0.5 && ang <= (c.def.meleeArc ?? RULES.meleeArc)) {
-            const weapon = c.held && itemDef(c.held).melee > c.def.power ? c.held.name : null;
+            const weapon = c.held && weaponMelee(c) > c.def.power ? c.held.name : null;
             if (e.status.invulnUntil <= b.t) b.emit({ text: weapon ? `${c.name} の${weapon}が ${e.name} を捉えた！` : `${c.name} の『${c.stand}』の拳が ${e.name} を捉えた！`, kind: 'combat', actor: c, affected: e, pos: e, sound: 4 });
             const a = angleTo(c.x, c.y, e.x, e.y);
             // スタンドは本体から離れるほど力が落ちる（素の間合いの外で当たった拳は7割）
             const far = !weapon && d > (c.def.meleeRange ?? RULES.meleeRange) + e.r * 0.5;
-            const dealt = b.damage(e, meleePower(c) * (far ? 0.7 : 1), { source: c, kind: 'melee', from: c, label: weapon || (far ? '伸ばしたスタンドの拳' : '拳') });
+            // 錠二は自分の密室の中では「最後までやる」：拳の威力が1.35倍
+            const room = b.buildingOf(c);
+            const sealedByMe = !!(room && room.sealed && room.sealed.by === c.id);
+            const mult = (far ? 0.7 : 1) * (sealedByMe ? 1.35 : 1);
+            const dealt = b.damage(e, meleePower(c) * mult, { source: c, kind: 'melee', from: c, label: weapon || (sealedByMe ? '密室の拳' : far ? '伸ばしたスタンドの拳' : '拳') });
             if (weapon) b.breakHeld(c);
             if (dealt > 0) { e.kbx = Math.cos(a) * 3; e.kby = Math.sin(a) * 3; }
           } else {
@@ -702,7 +706,8 @@ const EXEC = {
         const item = c.held;
         c.held = null;
         const tz = st.def.target.type === 'enemy' && b.perceivedEnemy(c)?.visible ? b.baseZ(b.enemyOf(c)) + 1.2 : null;
-        b.spawnThrown(c, item, c.x, c.y, D.aim.x, D.aim.y, { tz });
+        // 投げる威力も腕力で少し変わる
+        b.spawnThrown(c, item, c.x, c.y, D.aim.x, D.aim.y, { tz, damage: itemDef(item).throw * (0.7 + c.def.power / 50) });
         b.emit({ text: `${c.name} が${item.name}を投げた！`, kind: 'combat', actor: c, pos: c, sound: 5, soundKind: 'throw' });
         D.phase = 'recover';
         D.until = b.t + RULES.throwRecovery;
@@ -1002,14 +1007,18 @@ function pe0(b, c) {
 function meleeRange(c) {
   const base = c.def.meleeRange ?? RULES.meleeRange;
   const it = c.held ? itemDef(c.held) : null;
-  if (it && it.melee > c.def.power) return base + it.reach;
+  if (it && weaponMelee(c) > c.def.power) return base + it.reach;
   // 出しているスタンドは敵へ飛び出して殴るので、射程の分だけ届く
   return c.standBody ? base + (c.def.standRange || 0) * 0.5 : base;
 }
 
-function meleePower(c) {
+function weaponMelee(c) {
   const it = c.held ? itemDef(c.held) : null;
-  return Math.max(c.def.power, it ? it.melee : 0);
+  return it ? it.melee * strengthScale(c) : 0;
+}
+
+function meleePower(c) {
+  return Math.max(c.def.power, weaponMelee(c));
 }
 
 // 次の手順を敵に対して実行できる距離（追尾の終了判定に使う）

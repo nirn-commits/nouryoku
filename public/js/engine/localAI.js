@@ -1,7 +1,7 @@
 // Gemini が使えない・間に合わない時の CPU 思考（ルールベース）。
 // 使う情報は本人の知覚（perceivedEnemy・記憶・見えている物）だけで、相手の行動計画は参照しない
 import { ABILITIES, RULES } from './data.js';
-import { ITEM_KINDS } from './items.js';
+import { ITEM_KINDS, meleeWith } from './items.js';
 import { dist, distToRect, pointInRect } from './vec.js';
 
 function incomingProjectile(b, c) {
@@ -11,7 +11,7 @@ function incomingProjectile(b, c) {
 // 近くに落ちている、殴る武器として素手より強い物
 function nearbyItem(b, c, range) {
   return b.world.items
-    .filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) <= range && ITEM_KINDS[i.kind].melee > c.def.power)
+    .filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) <= range && meleeWith(c, i.kind) > c.def.power)
     .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y))[0] || null;
 }
 
@@ -171,7 +171,7 @@ function nanamiPlan(b, c, pe, say) {
   const deployedFree = alive.filter(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, c.x, c.y) < 1.5).length;
   // 武器（包丁・鉄パイプなど）を持っていなければ拾う
   if (!c.held) {
-    const it = b.world.items.filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) < 12 && ITEM_KINDS[i.kind].melee >= 11)
+    const it = b.world.items.filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) < 12 && meleeWith(c, i.kind) > c.def.power + 2)
       .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y))[0];
     if (it && !(visible && d < 9)) {
       steps.push({ action: 'pickup', targetType: 'object', targetId: it.id, mode: 'walk' });

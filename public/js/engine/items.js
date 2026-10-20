@@ -36,3 +36,13 @@ export function makeItem(kind, x, y, floor = 0, extra = {}) {
 export function itemDef(item) {
   return item ? ITEM_KINDS[item.kind] : null;
 }
+
+// 武器の威力は振るう人の腕力で変わる（破壊力の低い七海・鷺沼は鉄パイプでも半分程度、十河は7割強、錠二は1倍強）
+export function strengthScale(c) {
+  return Math.min(1.15, Math.max(0.5, 0.3 + c.def.power / 25));
+}
+
+// その人が持って殴った時の威力
+export function meleeWith(c, kind) {
+  return Math.round(ITEM_KINDS[kind].melee * strengthScale(c));
+}

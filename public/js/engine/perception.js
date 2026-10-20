@@ -1,7 +1,7 @@
 // 観測情報の構築：AI（プレイヤー入力の解析・CPUの作戦）に渡すのは「その人物が知り得る情報」だけ
 import { ABILITIES, ACTIONS, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, rectCenter, distToRect } from './vec.js';
-import { ITEM_KINDS } from './items.js';
+import { ITEM_KINDS, meleeWith } from './items.js';
 
 const r1 = v => Math.round(v * 10) / 10;
 const deg = a => Math.round((((a * 180) / Math.PI) % 360 + 360) % 360);
@@ -129,7 +129,7 @@ export function buildObservation(b, c) {
   const self = {
     name: c.name, stand: c.stand,
     pos: [r1(c.x), r1(c.y)], floor: c.floor + 1, facing_deg: deg(c.facing),
-    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), held: c.held ? `${c.held.name}（殴る${ITEM_KINDS[c.held.kind].melee}・投げる${ITEM_KINDS[c.held.kind].throw}${ITEM_KINDS[c.held.kind].breaks ? '・割れ物' : ''}）` : null, kg: c.def.kg,
+    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), held: c.held ? `${c.held.name}（殴る${meleeWith(c, c.held.kind)}・素手${c.def.power}・投げる${ITEM_KINDS[c.held.kind].throw}${ITEM_KINDS[c.held.kind].breaks ? '・割れ物' : ''}）` : null, kg: c.def.kg,
     touching: b.world.objects.filter(o => o.blocksMove && distToRect(c.x, c.y, o) <= c.r + 0.6).map(o => o.id),
     inside: bd ? `${bd.name}の${c.floor + 1}階${bd.sealed ? '（密室：炎に囲まれている）' : ''}` : '屋外',
     status: stateWords(b, c),
@@ -196,7 +196,7 @@ export function buildObservation(b, c) {
     items_seen: b.world.items
       .filter(i => dist(c.x, c.y, i.x, i.y) < 25 && b.canSee(c, i.x, i.y, (i.floor ?? 0) * 3 + 0.3))
       .slice(0, 10)
-      .map(i => ({ id: i.id, name: i.name, at: [r1(i.x), r1(i.y)], ...(i.floor ? { floor: i.floor + 1 } : {}), melee: ITEM_KINDS[i.kind].melee, throw: ITEM_KINDS[i.kind].throw })),
+      .map(i => ({ id: i.id, name: i.name, at: [r1(i.x), r1(i.y)], ...(i.floor ? { floor: i.floor + 1 } : {}), melee_for_me: meleeWith(c, i.kind), my_fist: c.def.power, throw: ITEM_KINDS[i.kind].throw })),
     observed_enemy_abilities: c.memory.observed.slice(),
     recent_events: recent,
     map: { size: [b.world.w, b.world.h], landmarks: landmarks(b, c), note: '細かい物体は近く（約25m以内）のものだけ載っている' },
