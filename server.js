@@ -18,7 +18,11 @@ try {
 } catch { /* .env は任意 */ }
 
 const API_KEY = process.env.GEMINI_API_KEY || '';
-const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+// 既定は Gemini 3 系の最新 Flash。使えない（404・無料枠なし等）場合は予備のモデルを順に試す
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.5-flash,gemini-3-flash-preview')
+  .split(',').map(x => x.trim()).filter(Boolean);
+let activeModel = MODEL;
 const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com';
 const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 30000);
 const PORT = Number(process.env.PORT || 8787);
@@ -124,21 +128,27 @@ class GeminiError extends Error {
   }
 }
 
-function explainHttp(status, bodyText) {
+function explainHttp(status, bodyText, model) {
   let msg = '';
   try { msg = JSON.parse(bodyText)?.error?.message || ''; } catch { msg = bodyText.slice(0, 200); }
   const hint = {
     400: 'リクエストの形式かモデル名が受け付けられませんでした',
     401: 'APIキーが無効です（.env の GEMINI_API_KEY を確認してください）',
     403: 'APIキーに権限がありません（キーの制限設定や、Gemini API が有効かを確認してください）',
-    404: `モデル「${MODEL}」が見つかりません（.env の GEMINI_MODEL を確認してください）`,
+    404: `モデル「${model}」が見つかりません（.env の GEMINI_MODEL を確認してください）`,
     429: '利用上限に達しました（しばらく待つか、無料枠の上限を確認してください）',
   }[status] || (status >= 500 ? 'Gemini 側の一時的な障害です' : 'Gemini の呼び出しに失敗しました');
   // 400 でも本文で原因が分かるもの（再試行しても直らない）
   if (/API key not valid|API_KEY_INVALID/i.test(msg)) return new GeminiError(`APIキーが無効です（.env の GEMINI_API_KEY を確認してください）（HTTP ${status}）`, msg, true);
   if (/location is not supported/i.test(msg)) return new GeminiError(`お使いの地域からは Gemini API を利用できません（HTTP ${status}）`, msg, true);
-  if (/not found|is not supported for generateContent/i.test(msg)) return new GeminiError(`モデル「${MODEL}」が使えません（.env の GEMINI_MODEL を確認してください）（HTTP ${status}）`, msg, true);
-  return new GeminiError(`${hint}（HTTP ${status}）`, msg);
+  if (/not found|is not supported for generateContent/i.test(msg)) {
+    const err = new GeminiError(`モデル「${model}」が使えません（.env の GEMINI_MODEL を確認してください）（HTTP ${status}）`, msg, true);
+    err.modelUnavailable = true;
+    return err;
+  }
+  const err = new GeminiError(`${hint}（HTTP ${status}）`, msg);
+  if (status === 404 || status === 429) err.modelUnavailable = true;
+  return err;
 }
 
 // 応答文から JSON を取り出す（```json で囲まれていても読めるように）
@@ -150,9 +160,9 @@ function extractJson(text) {
   throw new Error('JSON が見つからない');
 }
 
-async function requestOnce(body) {
+async function requestOnce(model, body) {
   if (typeof fetch !== 'function') throw new GeminiError('Node.js が古いため通信できません（18 以上が必要です）');
-  const url = `${API_BASE}/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`;
+  const url = `${API_BASE}/v1beta/models/${encodeURIComponent(model)}:generateContent`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
@@ -170,7 +180,7 @@ async function requestOnce(body) {
     }
     const textBody = await res.text();
     if (!res.ok) {
-      const err = explainHttp(res.status, textBody);
+      const err = explainHttp(res.status, textBody, model);
       err.status = res.status;
       throw err;
     }
@@ -209,27 +219,42 @@ async function requestOnce(body) {
   }
 }
 
-// 思考（thinking）の既定値：flash 系は思考なしで速く返させる。.env の GEMINI_THINKING_BUDGET で変更可
-function defaultThinking() {
+// Gemini 3 以降は思考の深さを thinkingLevel で、2.5 系は thinkingBudget（トークン数）で指定する
+function isLevelModel(model) {
+  return /^gemini-([3-9]|\d{2,})/.test(model);
+}
+
+// 思考の既定値：flash 系は最小限にして速く返させる。.env の GEMINI_THINKING_LEVEL / GEMINI_THINKING_BUDGET で変更可
+function defaultThinking(model) {
+  if (isLevelModel(model)) {
+    const lv = process.env.GEMINI_THINKING_LEVEL;
+    if (lv) return { thinkingLevel: lv.toLowerCase() };
+    return { thinkingLevel: /flash/i.test(model) ? 'minimal' : 'low' };
+  }
   const v = process.env.GEMINI_THINKING_BUDGET;
   if (v !== undefined && v !== '') return { thinkingBudget: Number(v) };
-  return /flash/i.test(MODEL) ? { thinkingBudget: 0 } : null;
+  return /flash/i.test(model) ? { thinkingBudget: 0 } : null;
+}
+
+function leastThinking(model) {
+  return isLevelModel(model) ? { thinkingLevel: /flash/i.test(model) ? 'minimal' : 'low' } : { thinkingBudget: 0 };
 }
 
 function generationConfig({ schema, thinking }) {
   const extra = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 2048);
+  // 出力が延々と続いて応答が返らなくなるのを防ぐ上限（思考トークンも含む）
+  const max = thinking && thinking.thinkingBudget !== undefined ? Math.max(0, thinking.thinkingBudget) + extra : 8192;
   return {
     temperature: 0.4,
     responseMimeType: 'application/json',
-    // 出力が延々と続いて応答が返らなくなるのを防ぐ上限（思考トークンも含む）
-    maxOutputTokens: thinking ? Math.max(0, thinking.thinkingBudget) + extra : 8192,
+    maxOutputTokens: max,
     ...(schema ? { responseSchema: PLAN_SCHEMA } : {}),
     ...(thinking ? { thinkingConfig: thinking } : {}),
   };
 }
 
-async function callGemini(systemText, userText, label = '') {
-  const thinking = defaultThinking();
+async function callModel(model, systemText, userText, label) {
+  const thinking = defaultThinking(model);
   // 400 の場合は設定を減らして再試行（思考設定なし → 応答スキーマなし）
   const queue = [{ schema: true, thinking }];
   if (thinking) queue.push({ schema: true, thinking: null });
@@ -241,23 +266,44 @@ async function callGemini(systemText, userText, label = '') {
     const sys = o.schema ? systemText : `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(PLAN_SCHEMA)}`;
     const started = Date.now();
     try {
-      const { plan, info } = await requestOnce({
+      const { plan, info } = await requestOnce(model, {
         systemInstruction: { parts: [{ text: sys }] },
         contents: [{ role: 'user', parts: [{ text: userText }] }],
         generationConfig: generationConfig(o),
       });
-      console.log(`[gemini] ${label} 成功 ${((Date.now() - started) / 1000).toFixed(1)}秒 ${info}`);
+      console.log(`[gemini] ${label} 成功（${model}）${((Date.now() - started) / 1000).toFixed(1)}秒 ${info}`);
       return plan;
     } catch (e) {
       lastErr = e;
-      console.error(`[gemini] ${label} 失敗 ${((Date.now() - started) / 1000).toFixed(1)}秒：${e.message}${e.detail ? ` ／ ${e.detail}` : ''}`);
+      console.error(`[gemini] ${label} 失敗（${model}）${((Date.now() - started) / 1000).toFixed(1)}秒：${e.message}${e.detail ? ` ／ ${e.detail}` : ''}`);
+      if (e.modelUnavailable) break;
       if (e.truncated && !retriedTruncation) {
-        // 出力が上限で切れた → 思考なしで一度だけやり直す
+        // 出力が上限で切れた → 思考を最小にして一度だけやり直す
         retriedTruncation = true;
-        queue.splice(i + 1, 0, { schema: o.schema, thinking: { thinkingBudget: 0 } });
+        queue.splice(i + 1, 0, { schema: o.schema, thinking: leastThinking(model) });
         continue;
       }
       if (e.status !== 400 || e.fatal) break;
+    }
+  }
+  throw lastErr;
+}
+
+// 使えるモデルが見つかったら、以後はそのモデルを使い続ける
+async function callGemini(systemText, userText, label = '') {
+  const models = [activeModel, ...[MODEL, ...FALLBACK_MODELS].filter(m => m !== activeModel)];
+  let lastErr;
+  for (const model of [...new Set(models)]) {
+    try {
+      const plan = await callModel(model, systemText, userText, label);
+      if (model !== activeModel) {
+        console.log(`[gemini] 以後はモデル「${model}」を使います`);
+        activeModel = model;
+      }
+      return plan;
+    } catch (e) {
+      lastErr = e;
+      if (!e.modelUnavailable) break;
     }
   }
   throw lastErr;
@@ -300,7 +346,7 @@ async function handlePlan(req, res) {
   const started = Date.now();
   try {
     const plan = await callGemini(system, user, role === 'player' ? 'プレイヤー解析' : 'CPU思考');
-    sendJson(res, 200, { plan, ms: Date.now() - started, model: MODEL });
+    sendJson(res, 200, { plan, ms: Date.now() - started, model: activeModel });
   } catch (e) {
     console.error(`[gemini] ${role}: ${e.message}${e.detail ? `\n  詳細: ${e.detail}` : ''}`);
     sendJson(res, 502, { error: e instanceof GeminiError ? e.message : `Gemini の呼び出しに失敗しました（${e.message}）`, detail: e.detail || '' });
@@ -322,16 +368,21 @@ function serveStatic(req, res) {
 
 export function createServer() {
   return http.createServer((req, res) => {
-    if (req.url === '/api/status' && req.method === 'GET') return sendJson(res, 200, { gemini: !!API_KEY, model: MODEL, timeoutMs: TIMEOUT_MS });
+    if (req.url === '/api/status' && req.method === 'GET') return sendJson(res, 200, { gemini: !!API_KEY, model: activeModel, timeoutMs: TIMEOUT_MS });
     if (req.url === '/api/plan' && req.method === 'POST') return void handlePlan(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
     res.writeHead(405); res.end();
   });
 }
 
+function thinkingLabel(model) {
+  const t = defaultThinking(model);
+  if (!t) return 'モデル既定';
+  return t.thinkingLevel ? `レベル ${t.thinkingLevel}` : `上限${t.thinkingBudget}トークン`;
+}
+
 async function checkGemini() {
-  const thinking = defaultThinking();
-  console.log(`Node.js ${process.version} / モデル: ${MODEL} / 思考: ${thinking ? `上限${thinking.thinkingBudget}トークン` : 'モデル既定'} / 待ち時間上限: ${TIMEOUT_MS / 1000}秒`);
+  console.log(`Node.js ${process.version} / モデル: ${MODEL}（予備: ${FALLBACK_MODELS.join(', ') || 'なし'}） / 思考: ${thinkingLabel(MODEL)} / 待ち時間上限: ${TIMEOUT_MS / 1000}秒`);
   if (!API_KEY) { console.log('✕ GEMINI_API_KEY が設定されていません（.env を確認してください）'); process.exit(1); }
   console.log(`APIキー: 設定あり（末尾 …${API_KEY.slice(-4)}）`);
   // 実際のゲームと同じ大きさの観測データで試す
@@ -349,7 +400,7 @@ async function checkGemini() {
     const started = Date.now();
     try {
       const plan = await callGemini(sys, user, label);
-      console.log(`✓ ${label}：合計${((Date.now() - started) / 1000).toFixed(1)}秒`);
+      console.log(`✓ ${label}：合計${((Date.now() - started) / 1000).toFixed(1)}秒（${activeModel}）`);
       console.log(`  ${JSON.stringify(plan)}`);
     } catch (e) {
       ok = false;
@@ -365,7 +416,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 } else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   createServer().listen(PORT, HOST, () => {
     console.log(`能力バトル: http://${HOST}:${PORT}/`);
-    const th = defaultThinking();
-    console.log(API_KEY ? `Gemini: 有効（${MODEL}・思考${th ? `上限${th.thinkingBudget}` : 'モデル既定'}・待ち時間上限${TIMEOUT_MS / 1000}秒）` : 'Gemini: 無効（GEMINI_API_KEY 未設定のため、ローカル解析で動作します）');
+    console.log(API_KEY ? `Gemini: 有効（${MODEL}・思考${thinkingLabel(MODEL)}・待ち時間上限${TIMEOUT_MS / 1000}秒）` : 'Gemini: 無効（GEMINI_API_KEY 未設定のため、ローカル解析で動作します）');
   });
 }
