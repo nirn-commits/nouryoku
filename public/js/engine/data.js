@@ -17,6 +17,9 @@ export const ACTIONS = {
   push: { name: '押す', desc: '近くの動かせる物体（木箱・机）を自分から遠ざける方向へ押し出す。勢いのある物体は人に当たるとダメージ', targets: ['object'] },
   pull: { name: '引く', desc: '近くの動かせる物体を自分の方へ引き寄せる', targets: ['object'] },
   look: { name: '観察', desc: '対象・方向を向いて様子を確かめる（0.6秒）', targets: ['enemy', 'ally', 'object', 'point', 'direction'] },
+  stand_out: { name: 'スタンドを出す', desc: 'スタンドを体の外に出して構える（0.2秒）。出している間はスタンドエネルギーが回復せず毎秒2ずつ減る（尽きると戻る）。出したスタンドは近接攻撃の時に敵へ飛び出すので拳の届く距離が伸びるが、本体から離れた所で当たった拳は威力が7割に落ちる', targets: ['none', 'self'] },
+  stand_move: { name: 'スタンドを先行させる', desc: 'スタンドを本体から射程（十河約2m・錠二約1.5m・鷺沼約1.2m）まで先に行かせ、指定の敵・地点・物・方向へ向かわせる（壁は抜けられない）。スタンドの位置からも周りが見えるので、角の先や窓の外を覗ける。鷺沼の弾はスタンドの位置から撃てる。敵の飛び道具がスタンドに当たると受け止めるが、本体にも3割の反動が返る。七海のエコー・ビーチは群体なので使えない（能力の deploy を使う）', targets: ['enemy', 'point', 'object', 'direction'] },
+  stand_in: { name: 'スタンドを戻す', desc: '出していたスタンドを体に戻す（エネルギーの回復が再開する）', targets: ['none', 'self'] },
   wait: { name: '待機', desc: 'その場で待つ。duration秒、または条件が満たされるまで', targets: ['none'] },
   ability: { name: '能力使用', desc: 'スタンド能力を使う。ability と effect と対象を指定', targets: ['enemy', 'self', 'object', 'point', 'projectile', 'direction'] },
 };
@@ -125,7 +128,7 @@ export const CHARACTERS = {
     nickname: 'ノリ',
     stand: 'パーペンディキュラー',
     color: '#f4a261',
-    hp: 95, sp: 100, spRegen: 6,
+    hp: 100, sp: 100, spRegen: 6.5, standRange: 2,
     walk: 3.3, run: 5.8,
     power: 11, defense: 1.0,
     abilities: ['perpendicular'],
@@ -157,7 +160,7 @@ export const CHARACTERS = {
     reading: 'さぎぬま れいじ',
     stand: 'セブンス・サン',
     color: '#b8a1e3',
-    hp: 90, sp: 100, spRegen: 6,
+    hp: 90, sp: 100, spRegen: 6, standRange: 1.2,
     walk: 3.4, run: 6.0,
     power: 4, defense: 1.0, balls: 30,
     abilities: ['seventh'],
@@ -173,7 +176,7 @@ export const CHARACTERS = {
     reading: 'きとう じょうじ',
     stand: 'ホテル・カリフォルニア',
     color: '#e85d04',
-    hp: 115, sp: 100, spRegen: 5,
+    hp: 110, sp: 100, spRegen: 5, standRange: 1.5,
     walk: 3.1, run: 5.6,
     power: 15, defense: 0.85,
     meleeRange: 1.5, meleeArc: Math.PI / 4,
@@ -191,6 +194,9 @@ export const RULES = {
   dt: 1 / 30,
   charRadius: 0.4,
   meleeRange: 1.7,
+  standSpeed: 9, // 先行させたスタンドの移動速度（m/s）
+  standDrain: 2, // スタンドを出している間に毎秒減るスタンドエネルギー
+  standBlock: 0.3, // スタンドで飛び道具を受け止めた時に本体へ返る割合
   meleeArc: Math.PI / 3, // 片側60°
   meleeWindup: 0.3,
   meleeRecovery: 0.4,

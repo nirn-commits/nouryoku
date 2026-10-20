@@ -8,6 +8,7 @@ import { TurnController } from './engine/controller.js';
 import { Renderer } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
 import { MAPS } from './engine/maps.js';
+import { loadFxSheet, saveFxBlob } from './fx.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -191,6 +192,28 @@ function clearPortrait(id) {
   try { localStorage.removeItem(PORTRAIT_KEY(id)); } catch {}
   delete portraitSrc[id];
   preloadPortraits();
+  // エフェクト素材（public/fx/effects.png またはブラウザに保存した画像）
+  const fxStatus = sheet => {
+    $('#fx-status').textContent = sheet
+      ? `読み込み済み：${sheet.source}（${sheet.w}×${sheet.h}px${sheet.keyed ? '・市松模様の背景を自動で抜きました' : ''}）`
+      : '素材なし（プログラムで描いたエフェクトを使います）';
+    $('#fx-clear').classList.toggle('hidden', !sheet || !sheet.source.startsWith('ブラウザ'));
+  };
+  const reloadFx = () => loadFxSheet().then(sheet => { state.renderer.sheet = sheet; fxStatus(sheet); }).catch(() => fxStatus(null));
+  reloadFx();
+  const fxIn = document.createElement('input');
+  fxIn.type = 'file';
+  fxIn.accept = 'image/*';
+  fxIn.addEventListener('change', async () => {
+    const f = fxIn.files[0];
+    fxIn.value = '';
+    if (!f) return;
+    $('#fx-status').textContent = '読み込み中…';
+    await saveFxBlob(f).catch(() => alert('ブラウザに保存できませんでした'));
+    reloadFx();
+  });
+  $('#fx-btn').addEventListener('click', () => fxIn.click());
+  $('#fx-clear').addEventListener('click', async () => { await saveFxBlob(null).catch(() => {}); reloadFx(); });
 }
 
 function portraitSlot(id, label) {
@@ -600,6 +623,28 @@ window.addEventListener('DOMContentLoaded', async () => {
   renderCharCards();
   renderMapCards();
   preloadPortraits();
+  // エフェクト素材（public/fx/effects.png またはブラウザに保存した画像）
+  const fxStatus = sheet => {
+    $('#fx-status').textContent = sheet
+      ? `読み込み済み：${sheet.source}（${sheet.w}×${sheet.h}px${sheet.keyed ? '・市松模様の背景を自動で抜きました' : ''}）`
+      : '素材なし（プログラムで描いたエフェクトを使います）';
+    $('#fx-clear').classList.toggle('hidden', !sheet || !sheet.source.startsWith('ブラウザ'));
+  };
+  const reloadFx = () => loadFxSheet().then(sheet => { state.renderer.sheet = sheet; fxStatus(sheet); }).catch(() => fxStatus(null));
+  reloadFx();
+  const fxIn = document.createElement('input');
+  fxIn.type = 'file';
+  fxIn.accept = 'image/*';
+  fxIn.addEventListener('change', async () => {
+    const f = fxIn.files[0];
+    fxIn.value = '';
+    if (!f) return;
+    $('#fx-status').textContent = '読み込み中…';
+    await saveFxBlob(f).catch(() => alert('ブラウザに保存できませんでした'));
+    reloadFx();
+  });
+  $('#fx-btn').addEventListener('click', () => fxIn.click());
+  $('#fx-clear').addEventListener('click', async () => { await saveFxBlob(null).catch(() => {}); reloadFx(); });
   await checkStatus();
   $('#opponent').addEventListener('change', e => { state.opponent = e.target.value; });
   $('#opponent2').addEventListener('change', e => { state.opponent2 = e.target.value; });

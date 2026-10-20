@@ -161,3 +161,6 @@ button:disabled { opacity: .5; cursor: default; }
 .screen-flash { position: absolute; inset: 0; pointer-events: none; opacity: 0; }
 .screen-flash.on { animation: sflash 0.35s ease-out; }
 @keyframes sflash { 0% { opacity: 1; } 100% { opacity: 0; } }
+
+.fx-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: center; margin-bottom: 12px; }
+.fx-row a { color: #9be7ff; font-size: 13px; }

@@ -7,7 +7,7 @@ import { itemDef } from './items.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
-  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
+  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', stand_out: 'none', stand_move: 'enemy', stand_in: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
 const DIR_LABEL = {
@@ -61,6 +61,9 @@ export function describeStep(b, s) {
     case 'swat': return `${cond}体のまわりを払う`;
     case 'pull': return `${cond}${tn}を引く`;
     case 'look': return `${cond}${tn}を観察`;
+    case 'stand_out': return `${cond}スタンドを出す`;
+    case 'stand_move': return `${cond}スタンドを${tn}へ先行させる`;
+    case 'stand_in': return `${cond}スタンドを戻す`;
     case 'wait': return `${cond}待機${s.duration ? `（${s.duration.toFixed(1)}秒）` : ''}`;
     case 'ability': {
       const ab = ABILITIES[s.ability];
@@ -89,7 +92,8 @@ function validateStep(b, c, raw, cursor) {
   const action = str(raw.action);
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
-  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop'].includes(action)) ttype = DEFAULT_TARGET[action];
+  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in'].includes(action)) ttype = DEFAULT_TARGET[action];
+  if (action.startsWith('stand_') && !c.def.standRange) return { error: `『${c.stand}』は群体のスタンドなので、本体のように出したり先行させたりはできない（能力の「聞き耳を立てる」「取り付く」で個体を送る）` };
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw };
 
@@ -208,6 +212,8 @@ function estimateCost(b, c, s, cursor) {
     case 'pickup': cost = 0.5 + (s.target.type === 'object' ? clamp(approxDist() / speed, 0, 4) : 1.5); break;
     case 'drop': cost = 0.1; break;
     case 'look': cost = 0.6; break;
+    case 'stand_out': case 'stand_in': cost = 0.2; break;
+    case 'stand_move': cost = 0.4; break;
     case 'wait': cost = s.duration; break;
     case 'ability': cost = ABILITIES[s.ability].castTime + 0.25; break;
   }
@@ -603,6 +609,7 @@ const EXEC = {
           D.until = b.t + RULES.meleeWindup;
           st.locked = true;
           c.windup = { kind: 'melee', until: D.until };
+          if (c.standBody && !D.obj && pe0(b, c)) c.standBody.goal = { char: b.enemyOf(c), x: b.enemyOf(c).x, y: b.enemyOf(c).y };
           b.emit({ text: `${c.name} が拳を振りかぶる`, kind: 'combat', actor: c, pos: c });
         } else if (r === 'stuck' || b.t > D.deadline) return { fail: '間合いに入れなかった' };
         return 'running';
@@ -625,7 +632,9 @@ const EXEC = {
             const weapon = c.held && itemDef(c.held).melee > c.def.power ? c.held.name : null;
             if (e.status.invulnUntil <= b.t) b.emit({ text: weapon ? `${c.name} の${weapon}が ${e.name} を捉えた！` : `${c.name} の『${c.stand}』の拳が ${e.name} を捉えた！`, kind: 'combat', actor: c, affected: e, pos: e, sound: 4 });
             const a = angleTo(c.x, c.y, e.x, e.y);
-            const dealt = b.damage(e, meleePower(c), { source: c, kind: 'melee', from: c, label: weapon || '拳' });
+            // スタンドは本体から離れるほど力が落ちる（素の間合いの外で当たった拳は7割）
+            const far = !weapon && d > (c.def.meleeRange ?? RULES.meleeRange) + e.r * 0.5;
+            const dealt = b.damage(e, meleePower(c) * (far ? 0.7 : 1), { source: c, kind: 'melee', from: c, label: weapon || (far ? '伸ばしたスタンドの拳' : '拳') });
             if (weapon) b.breakHeld(c);
             if (dealt > 0) { e.kbx = Math.cos(a) * 3; e.kby = Math.sin(a) * 3; }
           } else {
@@ -806,6 +815,40 @@ const EXEC = {
     },
   },
 
+  stand_out: {
+    start(b, c, st) {
+      b.standOut(c).goal = {};
+      st.data.until = b.t + 0.2;
+      return null;
+    },
+    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+  },
+
+  stand_move: {
+    start(b, c, st) {
+      const res = resolveTarget(b, c, st.def.target, st.def);
+      if (res.error) return res.error;
+      const s = b.standOut(c);
+      s.goal = { x: res.x, y: res.y, char: res.char || null };
+      selfLog(b, c, `『${c.stand}』を${targetName(b, st.def.target)}の方へ先行させる（射程${c.def.standRange}m）`);
+      st.data.until = b.t + 0.4;
+      return null;
+    },
+    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+  },
+
+  stand_in: {
+    start(b, c, st) {
+      if (c.standBody) {
+        c.standBody = null;
+        b.emit({ text: `${c.name} は『${c.stand}』を戻した`, obsText: `${c.name} のスタンドが消えた`, kind: 'stand', actor: c, pos: c });
+      }
+      st.data.until = b.t + 0.2;
+      return null;
+    },
+    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+  },
+
   drop: {
     start(b, c) {
       if (!c.held) return '何も持っていない';
@@ -924,11 +967,18 @@ const EXEC = {
   },
 };
 
+function pe0(b, c) {
+  const pe = b.perceivedEnemy(c);
+  return pe && pe.visible;
+}
+
 // 殴る距離・威力：持った物の方が強ければそれで殴る（リーチも伸びる）
 function meleeRange(c) {
   const base = c.def.meleeRange ?? RULES.meleeRange;
   const it = c.held ? itemDef(c.held) : null;
-  return it && it.melee > c.def.power ? base + it.reach : base;
+  if (it && it.melee > c.def.power) return base + it.reach;
+  // 出しているスタンドは敵へ飛び出して殴るので、射程の分だけ届く
+  return c.standBody ? base + (c.def.standRange || 0) * 0.5 : base;
 }
 
 function meleePower(c) {

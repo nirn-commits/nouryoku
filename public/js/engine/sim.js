@@ -18,6 +18,7 @@ function makeChar(id, charId, x, y, isCPU, team) {
     facing: 0, r: RULES.charRadius,
     hp: def.hp, maxHp: def.hp, sp: def.sp, maxSp: def.sp,
     held: null, // 手に持っている物（1つまで）
+    standBody: null, // 体の外に出したスタンド { x, y, floor, facing, goal }
     alive: true,
     status: { proneUntil: 0, stunUntil: 0, guardUntil: 0, invulnUntil: 0, recoverUntil: 0, deafUntil: 0 },
     balls: def.balls || 0,
@@ -147,24 +148,103 @@ export class Battle {
     return f * FLOOR_H + 0.5;
   }
 
+  // 本体の目に加えて、先行させたスタンドの位置からも見える
   canSee(viewer, x, y, tz) {
-    const d = dist(viewer.x, viewer.y, x, y);
-    if (d > RULES.visionRange) return false;
-    if (d > RULES.nearAwareness) {
-      const a = angleTo(viewer.x, viewer.y, x, y);
-      if (Math.abs(angDiff(viewer.facing, a)) > RULES.visionFov / 2) return false;
+    if (this.canSeeFrom(viewer, viewer.x, viewer.y, this.baseZ(viewer) + EYE_H, viewer.facing, x, y, tz, true)) return true;
+    const s = viewer.standBody;
+    if (s && s.floor === viewer.floor && dist(s.x, s.y, viewer.x, viewer.y) > 0.5) {
+      return this.canSeeFrom(viewer, s.x, s.y, s.floor * FLOOR_H + EYE_H, s.facing, x, y, tz, false);
     }
-    const vz = this.baseZ(viewer) + EYE_H;
+    return false;
+  }
+
+  canSeeFrom(viewer, ox, oy, vz, facing, x, y, tz, aware) {
+    const d = dist(ox, oy, x, y);
+    if (d > RULES.visionRange) return false;
+    if (!aware || d > RULES.nearAwareness) {
+      const a = angleTo(ox, oy, x, y);
+      if (Math.abs(angDiff(facing, a)) > RULES.visionFov / 2) return false;
+    }
     const z = tz ?? this.zOf({ x, y }, viewer);
     // 植え込みの中（地面の高さ）は、すぐそばか同じ植え込みの中からでないと見えない
     if (!this.world.bushes) this.world.bushes = this.world.objects.filter(o => o.kind === 'bush');
     if (z < 1.5) {
       for (const o of this.world.bushes) {
-        if (pointInRect(x, y, o) && d > 2.5 && !pointInRect(viewer.x, viewer.y, o)) return false;
+        if (pointInRect(x, y, o) && d > 2.5 && !pointInRect(ox, oy, o)) return false;
       }
     }
     // 高さを含めた視線：塀や車越しでも高い所からは見える。床・天井は階をまたぐ視線を遮る
-    return hasLOS(this.world, viewer.x, viewer.y, x, y, null, vz, z);
+    return hasLOS(this.world, ox, oy, x, y, null, vz, z);
+  }
+
+  // 近接攻撃や弾の出どころ：スタンドを先行させていればその位置
+  standOrigin(c) {
+    const s = c.standBody;
+    return s && s.floor === c.floor ? s : c;
+  }
+
+  // スタンドを出す（既に出ていればそのまま）
+  standOut(c) {
+    if (!c.standBody) {
+      c.standBody = { x: c.x + Math.cos(c.facing) * 0.5, y: c.y + Math.sin(c.facing) * 0.5, floor: c.floor, facing: c.facing, goal: {} };
+      this.emit({ text: `${c.name} が『${c.stand}』を出した`, obsText: `${c.name} のそばにスタンドの姿が浮かび上がった`, kind: 'stand', actor: c, pos: c });
+    }
+    return c.standBody;
+  }
+
+  // 先行したスタンド：目標へ向かうが、本体から射程より遠くへは行けず、壁も抜けられない
+  updateStand(c, dt) {
+    const s = c.standBody;
+    if (!s) return;
+    if (!c.alive) { c.standBody = null; return; }
+    const R = c.def.standRange || 1;
+    if (s.floor !== c.floor || c.launch || this.isAirborne(c) || c.climb) {
+      s.x = c.x; s.y = c.y; s.floor = c.floor; s.facing = c.facing;
+      return;
+    }
+    const g = s.goal || {};
+    if (g.char && g.char.alive && this.canSee(c, g.char.x, g.char.y)) { g.x = g.char.x; g.y = g.char.y; }
+    let gx, gy;
+    if (g.x !== undefined) { gx = g.x; gy = g.y; } else { gx = c.x + Math.cos(c.facing) * 0.6; gy = c.y + Math.sin(c.facing) * 0.6; }
+    const dx = gx - c.x, dy = gy - c.y, d = Math.hypot(dx, dy);
+    if (d > R) { gx = c.x + (dx / d) * R; gy = c.y + (dy / d) * R; }
+    const z = c.floor * FLOOR_H + 1.2;
+    for (let k = 0; k < 8 && !hasLOS(this.world, c.x, c.y, gx, gy, null, z, z); k++) {
+      gx = c.x + (gx - c.x) * 0.7; gy = c.y + (gy - c.y) * 0.7;
+    }
+    const m = dist(s.x, s.y, gx, gy), step = RULES.standSpeed * dt;
+    if (m > step) { s.x += ((gx - s.x) / m) * step; s.y += ((gy - s.y) / m) * step; } else { s.x = gx; s.y = gy; }
+    // 本体から離れて引きずられる時も射程は守る
+    const bd = dist(c.x, c.y, s.x, s.y);
+    if (bd > R + 0.05) { s.x = c.x + ((s.x - c.x) / bd) * R; s.y = c.y + ((s.y - c.y) / bd) * R; }
+    if (g.char && g.char.alive && this.canSee(c, g.char.x, g.char.y)) s.facing = angleTo(s.x, s.y, g.char.x, g.char.y);
+    else if (d > 0.3) s.facing = angleTo(c.x, c.y, g.x ?? gx, g.y ?? gy);
+    else s.facing = c.facing;
+  }
+
+  // 敵の飛び道具をスタンドで受け止める（本体に反動が返る）
+  standBlocks(p, x1, y1, owner) {
+    let best = null;
+    for (const c of this.chars) {
+      const s = c.standBody;
+      if (!c.alive || !s || (owner && c.team === owner.team) || s.floor !== (p.floor ?? s.floor)) continue;
+      const zb = s.floor * FLOOR_H;
+      if (p.z < zb - 0.2 || p.z > zb + 2) continue;
+      const t = segCircle(p.x, p.y, x1, y1, s.x, s.y, 0.35);
+      if (t !== null && (!best || t < best.t)) best = { t, c };
+    }
+    return best;
+  }
+
+  // 演出用のエフェクト（見えた人だけに表示）
+  puff(kind, pos, extra = {}) {
+    const z = pos.z ?? (pos.floor ?? 0) * FLOOR_H + 0.3;
+    this.fx.push({ kind, x: pos.x, y: pos.y, z, t: this.t, visibleTo: this.visibleSet({ x: pos.x, y: pos.y, z }), ...extra });
+  }
+
+  standHit(c, dmg, what, owner) {
+    this.emit({ text: `${c.name} の『${c.stand}』が${what}を受け止めた！`, obsText: `${c.name} のスタンドが${what}を受け止めた！`, kind: 'combat', actor: c, pos: c.standBody, sound: 6, soundKind: 'impact' });
+    this.damage(c, Math.max(1, Math.round(dmg * RULES.standBlock)), { source: owner, kind: 'stand', label: 'スタンドへの衝撃の反動' });
   }
 
   isAirborne(c) {
@@ -322,7 +402,7 @@ export class Battle {
     }
     const entry = { t: this.t, text, obsText, kind, actor: actor ? actor.id : null, visibleTo, heardBy };
     this.log.push(entry);
-    if (kind === 'ability' && pos) this.fx.push({ kind: 'flash', seq: ++this.fxSeq, x: pos.x, y: pos.y, t: this.t, color: actor ? actor.color : '#fff', visibleTo });
+    if (kind === 'ability' && pos) this.fx.push({ kind: 'flash', seq: ++this.fxSeq, x: pos.x, y: pos.y, t: this.t, color: actor ? actor.color : '#fff', charId: actor ? actor.charId : null, visibleTo });
     if (this.log.length > 400) this.log.shift();
 
     for (const c of this.chars) {
@@ -432,6 +512,7 @@ export class Battle {
       kind: 'damage', actor: source, affected: target, pos: target, sound: 9, soundKind: 'impact',
     });
     this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', big: dmg >= 15, visibleTo: entry.visibleTo });
+    if (['fall', 'slam', 'launch_impact', 'debris'].includes(kind)) this.puff('dust', { x: target.x, y: target.y, floor: target.floor });
     // 演出用：打撃の瞬間（画面側でヒットストップ・揺れ・擬音にする）
     this.fx.push({ kind: 'hit', seq: ++this.fxSeq, x: target.x, y: target.y, z: this.baseZ(target) + 1.1, dmg, guarded, hitKind: kind, target: target.id, t: this.t, visibleTo: entry.visibleTo, ang: from ? angleTo(from.x, from.y, target.x, target.y) : this.rng() * Math.PI * 2 });
     // 怯み：構えや詠唱を中断させる
@@ -472,11 +553,13 @@ export class Battle {
     if (o.kind === 'wall') {
       w.rubble.push({ x: o.x - 0.3, y: o.y - 0.3, w: o.w + 0.6, h: o.h + 0.6, floor: o.floor });
       this.emit({ text: `${o.name} が崩れ落ちた！`, kind: 'env', pos: center, sound: 14, soundKind: 'crash', actor: source });
+      this.puff('dust', center, { big: true });
       for (const c of this.chars) {
         if (c !== source && c.alive && c.floor <= o.floor && distToRect(c.x, c.y, o) <= 1.2) this.damage(c, 10, { source, kind: 'debris', label: '崩落した瓦礫' });
       }
     } else if (o.kind === 'window') {
       this.emit({ text: `${o.name} のガラスが割れた！`, kind: 'env', pos: center, sound: 12, soundKind: 'glass', actor: source });
+      this.puff('glass', { ...center, z: o.floor * FLOOR_H + 1.2 });
       // 割れた窓は通り抜けられる開口部になる（建物の記録は残す）
     } else {
       w.rubble.push({ x: o.x, y: o.y, w: o.w, h: o.h, floor: o.floor });
@@ -518,6 +601,7 @@ export class Battle {
       updateRunner(this, c);
     }
     for (const c of this.chars) if (c.alive) this.moveChar(c, dt);
+    for (const c of this.chars) this.updateStand(c, dt);
     this.separateChars();
     this.updateObjects(dt);
     for (const c of this.chars) if (c.units) this.updateUnits(c, dt);
@@ -542,7 +626,15 @@ export class Battle {
   moveChar(c, dt) {
     const s = c.status;
     for (const k in c.cd) if (c.cd[k] <= this.t) delete c.cd[k];
-    c.sp = Math.min(c.maxSp, c.sp + c.def.spRegen * dt);
+    if (!c.standBody) c.sp = Math.min(c.maxSp, c.sp + c.def.spRegen * dt);
+    else {
+      // 出している間は少しずつエネルギーを使い、尽きると自然に戻る
+      c.sp = Math.max(0, c.sp - RULES.standDrain * dt);
+      if (c.sp <= 0) {
+        c.standBody = null;
+        this.emit({ text: `スタンドエネルギーが尽き、『${c.stand}』が体に戻った`, kind: 'fail', actor: c });
+      }
+    }
 
     if (c.launch) {
       this.updateCharLaunch(c, dt);
@@ -563,6 +655,7 @@ export class Battle {
       c.air = null;
       const p = nearestWalkable(this.world, c.x, c.y, 3, c.floor);
       if (p) { c.x = p.x; c.y = p.y; }
+      this.puff('dust', { x: c.x, y: c.y, floor: c.floor });
       if (!soft) {
         this.emit({ text: `${c.name} が落下して着地した`, kind: 'combat', actor: c, pos: c, sound: 8, soundKind: 'fall' });
         this.damage(c, 5, { source: null, kind: 'fall', label: '着地の衝撃' });
@@ -850,6 +943,8 @@ export class Battle {
       // 密室の炎は飛び道具も通さない
       const sealedCross = this.sealedBoundaryBetween(p.x, p.y, x1, y1);
       if (sealedCross !== null && sealedCross < best) { best = sealedCross; hit = { type: 'flame' }; }
+      const sb = this.standBlocks(p, x1, y1, this.chars.find(x => x.id === p.owner));
+      if (sb && sb.t < best) { best = sb.t; hit = { type: 'stand', c: sb.c }; }
       for (const c of this.chars) {
         if (!c.alive) continue;
         if (c.id === p.owner && this.t - p.born < 0.3) continue;
@@ -868,7 +963,10 @@ export class Battle {
         const sp = Math.hypot(p.vx, p.vy) || 1;
         const dropFloor = hz >= FLOOR_H - 0.1 && upperFloorAt(w, hx, hy) ? 1 : 0;
         const name = p.item.name;
-        if (hit.type === 'char') {
+        if (hit.type === 'stand') {
+          this.standHit(hit.c, p.damage, name, owner);
+          this.landItem(p.item, hit.c.standBody.x, hit.c.standBody.y, hit.c.floor, owner, true);
+        } else if (hit.type === 'char') {
           if (hit.c.status.invulnUntil > this.t || this.isAirborne(hit.c) && hit.c.air.profile !== 'drop' && hz < this.baseZ(hit.c) - 0.2) { p.x = x1; p.y = y1; p.z = z1; keep.push(p); continue; }
           this.damage(hit.c, p.damage, { source: owner, kind: 'thrown', from: { x: hx - p.vx, y: hy - p.vy }, label: `投げられた${name}` });
           this.landItem(p.item, hit.c.x + (p.vx / sp) * 1.2, hit.c.y + (p.vy / sp) * 1.2, hit.c.floor, owner, true);
@@ -900,6 +998,7 @@ export class Battle {
     const def = itemDef(item);
     if (impact && def.breaks) {
       this.emit({ text: `${item.name}が割れた！`, kind: 'env', pos: { x, y, z: floor * FLOOR_H + 0.5, floor }, sound: 12, soundKind: 'glass', actor: owner });
+      this.puff('glass', { x, y, z: floor * FLOOR_H + 0.5 });
       return;
     }
     const p = nearestWalkable(this.world, x, y, 2, floor) || { x, y };
@@ -926,6 +1025,7 @@ export class Battle {
   breakHeld(c) {
     if (!c.held || !itemDef(c.held).breaks) return;
     this.emit({ text: `${c.held.name}が砕け散った！`, kind: 'env', actor: c, pos: c, sound: 12, soundKind: 'glass' });
+    this.puff('glass', { x: c.x + Math.cos(c.facing) * 0.6, y: c.y + Math.sin(c.facing) * 0.6, z: this.baseZ(c) + 1.2 });
     c.held = null;
   }
 
@@ -1049,6 +1149,7 @@ export class Battle {
   roarHit(owner, target, loud) {
     const ab = ABILITIES.echo;
     const pos = { x: target.x, y: target.y, z: this.baseZ(target) + 1.6 };
+    this.puff('shock', pos, { big: loud >= 3 });
     this.emit({ text: `『${ab.name}』— ${loud}つの轟音が${target.name}の耳元で一斉に鳴り響いた！`, obsText: `耳元で轟音が一斉に炸裂した！`, kind: 'ability', actor: owner, affected: target, pos, hint: ab.observedHint });
     if (loud >= 3) {
       target.status.deafUntil = this.t + 10;
@@ -1115,11 +1216,11 @@ export class Battle {
     }
   }
 
-  spawnBall(owner, angle) {
+  spawnBall(owner, angle, from = owner) {
     const z = this.baseZ(owner) + 1.3;
     const p = {
       id: `ball_${++projSeq}`, kind: 'ball', owner: owner.id,
-      x: owner.x + Math.cos(angle) * 0.5, y: owner.y + Math.sin(angle) * 0.5, z, floor: owner.floor,
+      x: from.x + Math.cos(angle) * 0.5, y: from.y + Math.sin(angle) * 0.5, z, floor: owner.floor,
       vx: Math.cos(angle) * 45, vy: Math.sin(angle) * 45, vz: 0,
       traveled: 0, bounces: 0, final: false, born: this.t, hit: new Set(),
     };
@@ -1147,6 +1248,8 @@ export class Battle {
       }
       const fl = this.sealedBoundaryBetween(p.x, p.y, x1, y1);
       if (fl !== null && fl < bt) { bt = fl; hit = { flame: true }; }
+      const sb = this.standBlocks(p, x1, y1, owner);
+      if (sb && sb.t < bt && !p.hit.has(`stand_${sb.c.id}`)) { bt = sb.t; hit = { stand: sb.c }; }
       for (const c of this.chars) {
         if (!c.alive || p.hit.has(c.id) || c.floor !== p.floor) continue;
         if (c !== owner && owner && c.team === owner.team) continue; // 味方には当てない
@@ -1163,6 +1266,13 @@ export class Battle {
       const hx = p.x + (x1 - p.x) * bt, hy = p.y + (y1 - p.y) * bt;
       p.traveled += rem * bt;
       rem -= rem * bt;
+      if (hit.stand) {
+        p.hit.add(`stand_${hit.stand.id}`);
+        this.standHit(hit.stand, this.ballDamage(p.bounces), `${p.bounces}回跳ねた弾`, owner);
+        // 5回以上跳ねた弾はスタンドも貫通する
+        if (p.bounces >= 5 && !p.final) { p.x = hx + dx * 0.5; p.y = hy + dy * 0.5; continue; }
+        return false;
+      }
       if (hit.flame) {
         this.emit({ text: '弾が炎の壁に阻まれて落ちた。', kind: 'env', actor: owner, pos: { x: hx, y: hy, z: p.z } });
         return false;

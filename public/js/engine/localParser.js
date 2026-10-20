@@ -247,6 +247,20 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const run = /走|駆け|急い|ダッシュ|全力|一気|飛び込/.test(clause);
   const mentionsEnemy = /敵|相手|あいつ|奴|やつ/.test(clause);
 
+  // --- スタンドの出し入れ・先行 ---
+  if (/スタンド/.test(clause) && !/スタンド(で|の拳)(殴|攻撃|叩)/.test(clause)) {
+    if (/スタンドを?(戻|引っ込|しま|消)/.test(clause)) return [{ action: 'stand_in', targetType: 'none' }];
+    if (/先行|先に|先へ|前に出|前へ|行かせ|向かわせ|進ませ|覗|偵察|送り|送っ|伸ば|回り込ませ|飛ばし/.test(clause)) {
+      const t = pt ? toTarget(pt) : obj ? { targetType: 'object', targetId: obj.id } : mentionsEnemy ? { targetType: 'enemy' } : dir ? { targetType: 'direction', direction: dir === 'cover' ? 'forward' : dir } : { targetType: 'direction', direction: 'forward' };
+      return [{ action: 'stand_move', ...t }];
+    }
+    const m = clause.match(/スタンドを?(出して|出し|出す|発現させ(て)?|構えて)/);
+    if (m) {
+      const rest = clause.slice(m.index + m[0].length).trim();
+      return [{ action: 'stand_out', targetType: 'none' }, ...(rest ? parseClause(b, c, rest, has, ctx) : [])];
+    }
+  }
+
   // --- 能力 ---
   if (has.perpendicular && PERP_RE.test(clause)) {
     const held = (/持った物|手の物|手に持/.test(clause) || ITEM_WORDS.some(([re]) => re.test(clause))) && /飛ばす|飛ばし|弾き出|投げ|放つ|撃ち出/.test(clause);

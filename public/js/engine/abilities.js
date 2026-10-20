@@ -225,8 +225,10 @@ const IMPL = {
     if (inFlight + need > 3) return fail(`同時に飛ばせる弾は3発まで（飛んでいる弾${inFlight}発）`);
     if (res.error) return fail(res.error);
     const z = b.baseZ(c) + 1.3;
+    // スタンドを先行させていれば、その位置（角の先など）から弾く
+    const o = b.standOrigin(c);
     const aimAt = res.angle !== undefined ? null : { x: res.x, y: res.y };
-    const direct = aimAt ? angleTo(c.x, c.y, aimAt.x, aimAt.y) : res.angle;
+    const direct = aimAt ? angleTo(o.x, o.y, aimAt.x, aimAt.y) : res.angle;
     const rnd = () => (b.rng() - 0.5) * 2;
     // 反射回数 k で目標の近く（0.45m以内）を通る角度を探す
     // 当たる角度が連続している範囲の中央を選ぶ（かすめる角度より誤差に強い）
@@ -236,7 +238,7 @@ const IMPL = {
       for (let i = 0; i < N; i++) {
         const a = (i / N) * Math.PI * 2;
         let found = null, length = 0, blockedEarly = false;
-        b.traceBall(c.x, c.y, z, c.floor, Math.cos(a), Math.sin(a), 100, (sg, bounces) => {
+        b.traceBall(o.x, o.y, z, c.floor, Math.cos(a), Math.sin(a), 100, (sg, bounces) => {
           const segLen = Math.hypot(sg.x1 - sg.x0, sg.y1 - sg.y0);
           const vx = sg.x1 - sg.x0, vy = sg.y1 - sg.y0;
           const tt = segLen > 0 ? Math.max(0, Math.min(1, ((aimAt.x - sg.x0) * vx + (aimAt.y - sg.y0) * vy) / (segLen * segLen))) : 0;
@@ -297,7 +299,7 @@ const IMPL = {
     const balls = c.balls;
     if (balls < angles.length) note += balls ? '' : '（玉が尽きたので小石で代用）';
     c.balls = Math.max(0, balls - angles.length);
-    for (const a of angles) b.spawnBall(c, a);
+    for (const a of angles) b.spawnBall(c, a, o);
     b.emit({
       text: `『${ab.name}』— ${effect === 'direct' ? '指で弾を弾いた' : effect === 'spread' ? '3発を角度を変えて弾いた' : `${step.bounces ?? 2}回の跳弾を狙って弾いた`}${note}（残り${c.balls}個）`,
       obsText: `${c.name} の胸元の白い腕が、小さな玉を指で弾いた！`,

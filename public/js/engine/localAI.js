@@ -212,7 +212,19 @@ function chooseFocus(b, c) {
   c.focusId = best ? best.e.id : null;
 }
 
+// スタンドの出し入れ：殴り合いの前に出して間合いを伸ばし、エネルギーが減ったら戻す
 export function localCpuPlan(b, c) {
+  const plan = basePlan(b, c);
+  if (!c.def.standRange || !plan.steps) return plan;
+  const steps = plan.steps;
+  const melee = steps.some(st => st.action === 'melee' && (st.targetType || 'enemy') === 'enemy');
+  const usesSp = c.def.abilities.some(id => id === 'perpendicular' || id === 'seventh');
+  if (melee && !c.standBody && steps.length < 5 && !usesSp && b.rng() < 0.5) steps.unshift({ action: 'stand_out', targetType: 'none' });
+  else if (c.standBody && (!melee || (usesSp && c.sp < 40)) && steps.length < 5) steps.unshift({ action: 'stand_in', targetType: 'none' });
+  return plan;
+}
+
+function basePlan(b, c) {
   const rnd = b.rng;
   chooseFocus(b, c);
   const pe = b.perceivedEnemy(c);

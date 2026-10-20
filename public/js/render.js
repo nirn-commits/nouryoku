@@ -2,8 +2,9 @@
 // 建物は普段は屋根で覆い、プレイヤーが中にいる時だけ屋根を外して今いる階を見せる。
 // プレイヤーが知覚できるものだけを描く（debug 時は全表示）
 import { RULES } from './engine/data.js';
-import { clamp, pointInRect } from './engine/vec.js';
+import { clamp, pointInRect, dist } from './engine/vec.js';
 import { FLOOR_H } from './engine/world.js';
+import { ATLAS, AURA_OF, frameRect } from './fx.js';
 
 const K = 0.55; // 高さ1mが画面上で上へずれる量（m）
 
@@ -83,6 +84,27 @@ export class Renderer {
     this.portraits = {};
     this.shakeAmp = 0;
     this.shakeAt = 0;
+    this.sheet = null; // エフェクト素材（無ければプログラムで描く）
+  }
+
+  // 素材の1コマを、中心 (cx, cy)・高さ h ピクセルで描く
+  sprite(rect, cx, cy, h, { alpha = 1, rot = 0, anchorY = 0.5 } = {}) {
+    if (!this.sheet || !rect) return false;
+    const [sx, sy, sw, sh] = frameRect(this.sheet, rect);
+    const w = (h * sw) / sh;
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.translate(cx, cy);
+    if (rot) ctx.rotate(rot);
+    ctx.drawImage(this.sheet.canvas, sx, sy, sw, sh, -w / 2, -h * anchorY, w, h);
+    ctx.restore();
+    return true;
+  }
+
+  // 連番の途中のコマ（k は 0〜1 の進み具合）
+  seq(frames, k) {
+    return frames[Math.min(frames.length - 1, Math.max(0, Math.floor(k * frames.length)))];
   }
 
   // 画面揺れ（実時間で減衰）
@@ -240,6 +262,13 @@ export class Renderer {
       const bd = buildingOfPoint(c.x, c.y);
       const item = { key: c.y + c.r, z: b.baseZ(c), char: c, draw: () => this.drawChar(b, c, c === me, c !== me && c.team === me.team) };
       if (bd && !b.isAirborne(c)) groups.get(bd.id).push(item); else items.push(item);
+      // 体の外に出したスタンド（味方のものと、見えている敵のもの）
+      const sb = c.standBody;
+      if (c.alive && sb && (c.team === me.team || see(sb.x, sb.y, sb.floor * FLOOR_H + 1.2))) {
+        const sbd = buildingOfPoint(sb.x, sb.y);
+        const sItem = { key: sb.y + 0.2, z: sb.floor * FLOOR_H, draw: () => this.drawStand(b, c) };
+        if (sbd) groups.get(sbd.id).push(sItem); else items.push(sItem);
+      }
     }
     const ghosts = [];
     for (const bd of b.world.buildings) {
@@ -276,6 +305,14 @@ export class Renderer {
     for (const p of b.world.projectiles) {
       if (!see(p.x, p.y, p.z)) continue;
       const sp = Math.hypot(p.vx, p.vy) || 1;
+      if (this.sheet) {
+        // 軌跡の素材：弾は白、投げた物は自分側が青・相手側が赤
+        const owner = b.chars.find(c => c.id === p.owner);
+        const color = p.kind === 'ball' ? (p.bounces >= 5 ? 'yellow' : 'white') : owner && owner.team === me.team ? 'blue' : 'red';
+        const rot = Math.atan2(this.sy(p.y + p.vy / sp, p.z) - this.sy(p.y, p.z), (p.vx / sp) * P);
+        const L = P * (p.kind === 'ball' ? 2.2 : 1.6);
+        this.sprite(ATLAS.trail[color], p.x * P - Math.cos(rot) * L * 0.45, this.sy(p.y, p.z) - Math.sin(rot) * L * 0.45, L * (38 / 238), { rot });
+      }
       if (p.kind === 'ball') {
         // パチンコ玉
         ctx.fillStyle = '#e8e8f0';
@@ -344,6 +381,45 @@ export class Renderer {
         this.drawHit(f, age, fy);
       } else if (f.kind === 'ko') {
         this.drawKO(f, age, fy);
+      } else if (f.kind === 'spark' && this.sheet) {
+        this.sprite(this.seq(ATLAS.spark, age / 0.45), f.x * P, fy, P * 1.4, { alpha: age < 0.45 ? 1 : 0 });
+        ctx.fillStyle = '#fff3b0';
+        ctx.font = `bold ${Math.max(11, P * 0.5)}px monospace`;
+        ctx.globalAlpha = Math.max(0, 1 - age / 0.6);
+        ctx.fillText(f.text, f.x * P + 4, fy - 4);
+        ctx.globalAlpha = 1;
+      } else if (f.kind === 'flash' && this.sheet) {
+        const k = age / 0.7;
+        if (k < 1) this.sprite(ATLAS.aura[AURA_OF[f.charId] || 'white'], f.x * P, fy, P * (1 + k * 3), { alpha: 1 - k });
+      } else if (f.kind === 'glass') {
+        if (!this.sprite(this.seq(ATLAS.glass, age / 0.6), f.x * P, fy, P * 1.4, { alpha: age < 0.6 ? 1 : 0 })) {
+          ctx.globalAlpha = Math.max(0, 1 - age / 0.6);
+          ctx.fillStyle = '#cfe8ff';
+          for (let i = 0; i < 7; i++) {
+            const a = i * 0.9, r = (0.2 + age * 2) * P;
+            ctx.fillRect(f.x * P + Math.cos(a) * r, fy + Math.sin(a) * r * 0.7 + age * age * P * 3, 3, 3);
+          }
+          ctx.globalAlpha = 1;
+        }
+      } else if (f.kind === 'dust') {
+        const dur = f.big ? 1.0 : 0.7;
+        if (!this.sprite(this.seq(ATLAS.dust, age / dur), f.x * P, fy, P * (f.big ? 2.4 : 1.4), { alpha: age < dur ? 0.9 : 0, anchorY: 0.7 })) {
+          ctx.globalAlpha = Math.max(0, 0.6 * (1 - age / dur));
+          ctx.fillStyle = '#b8a890';
+          for (let i = 0; i < 5; i++) {
+            ctx.beginPath(); ctx.arc(f.x * P + (i - 2) * P * 0.25 * (1 + age), fy - age * P * 0.4, P * (0.15 + age * 0.3), 0, Math.PI * 2); ctx.fill();
+          }
+          ctx.globalAlpha = 1;
+        }
+      } else if (f.kind === 'shock') {
+        const dur = 0.7;
+        if (!this.sprite(this.seq(ATLAS.shock, age / dur), f.x * P, fy, P * (f.big ? 3.2 : 2), { alpha: age < dur ? 1 : 0 })) {
+          ctx.strokeStyle = '#f3d9a4';
+          ctx.lineWidth = 3;
+          ctx.globalAlpha = Math.max(0, 1 - age / dur);
+          for (const r0 of [0.3, 0.6]) { ctx.beginPath(); ctx.ellipse(f.x * P, fy, (r0 + age * 3) * P, (r0 + age * 3) * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke(); }
+          ctx.globalAlpha = 1;
+        }
       } else if (f.kind === 'spark') {
         // 跳弾の火花と反射回数
         ctx.globalAlpha = Math.max(0, 1 - age / 0.6);
@@ -645,6 +721,19 @@ export class Renderer {
   drawFlames(b, bd) {
     const ctx = this.ctx, P = this.px;
     const top = bd.floors * FLOOR_H + 0.6;
+    if (this.sheet) {
+      // 炎の帯を外周に沿って並べる（少しずつ揺らす）
+      const hgt = top * K * P;
+      const step = Math.max(1, (hgt * 212) / 135 / P) * 0.8;
+      const edges = [];
+      for (let x = bd.x; x < bd.x + bd.w; x += step) edges.push([x + step / 2, bd.y], [x + step / 2, bd.y + bd.h]);
+      for (let y = bd.y; y < bd.y + bd.h; y += step) edges.push([bd.x, y + step / 2], [bd.x + bd.w, y + step / 2]);
+      for (const [x, y] of edges) {
+        const flick = 0.85 + 0.15 * Math.sin(b.t * 9 + x * 3.1 + y * 1.7);
+        this.sprite(ATLAS.flame[0], x * P, this.sy(y, 0), hgt * flick, { alpha: 0.85, anchorY: 1 });
+      }
+      return;
+    }
     const perim = [];
     for (let x = bd.x; x <= bd.x + bd.w; x += 0.6) perim.push([x, bd.y], [x, bd.y + bd.h]);
     for (let y = bd.y; y <= bd.y + bd.h; y += 0.6) perim.push([bd.x, y], [bd.x + bd.w, y]);
@@ -665,6 +754,44 @@ export class Renderer {
     }
   }
 
+  // スタンドの姿：本体の色で半透明に光る人型。本体から離れていれば細い線でつなぐ
+  drawStand(b, c) {
+    const ctx = this.ctx, P = this.px;
+    const sb = c.standBody;
+    const z = sb.floor * FLOOR_H + 0.35 + Math.sin(b.t * 4 + c.x) * 0.06;
+    const x = sb.x * P, footY = this.sy(sb.y, z), headY = this.sy(sb.y, z + 1.85);
+    const bw = c.r * 1.25 * P;
+    ctx.save();
+    if (dist(sb.x, sb.y, c.x, c.y) > 0.4) {
+      ctx.strokeStyle = `${c.color}66`;
+      ctx.setLineDash([2, 4]);
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.moveTo(c.x * P, this.sy(c.y, b.baseZ(c) + 1.2)); ctx.lineTo(x, this.sy(sb.y, z + 1.2)); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.shadowColor = c.color;
+    ctx.shadowBlur = 12;
+    ctx.globalAlpha = 0.72;
+    ctx.fillStyle = `${c.color}aa`;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(x - bw / 2, headY + bw * 0.7, bw, footY - headY - bw * 0.7, bw / 2) : ctx.rect(x - bw / 2, headY + bw * 0.7, bw, footY - headY - bw * 0.7);
+    ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x, headY + bw * 0.45, bw * 0.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    // 構えた腕（向いている方へ）
+    ctx.lineWidth = Math.max(2, bw * 0.28);
+    ctx.strokeStyle = `${c.color}dd`;
+    const ay = (headY + footY) / 2 - bw * 0.3;
+    ctx.beginPath(); ctx.moveTo(x, ay); ctx.lineTo(x + Math.cos(sb.facing) * bw * 1.4, ay + Math.sin(sb.facing) * bw * 0.8); ctx.stroke();
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#fff';
+    ctx.font = `${Math.max(9, P * 0.36)}px sans-serif`;
+    ctx.fillText(`『${c.stand}』`, x - bw, headY - 3);
+    ctx.restore();
+  }
+
   drawGhost(b, c) {
     const ctx = this.ctx, P = this.px;
     const z = b.baseZ(c);
@@ -683,6 +810,18 @@ export class Renderer {
     const ctx = this.ctx, P = this.px;
     const x = f.x * P;
     const power = Math.min(1, f.dmg / 30);
+    if (this.sheet) {
+      if (age < 0.35) {
+        if (f.dmg >= 15 && age < 0.3) this.sprite(ATLAS.speedLines[0], x, fy, P * (3 + power * 2), { alpha: 0.75 * (1 - age / 0.3), rot: f.ang });
+        const frames = f.dmg >= 10 && !f.guarded ? ATLAS.hitBig : ATLAS.hitSmall;
+        this.sprite(this.seq(frames, age / 0.35), x, fy, P * (1.2 + power * 2.2));
+      }
+      if (f.dmg >= 5 && age < 1.0) {
+        const pop = age < 0.1 ? 1.4 - age * 4 : 1;
+        this.sprite(ATLAS.ono[onomatopoeia(f)], x + P * 1.4, fy - P * (2.0 + age * 0.5), P * (0.9 + power * 1.1) * pop, { alpha: Math.max(0, 1 - Math.max(0, age - 0.5) * 2), rot: -0.18 + ((f.seq * 37) % 10) / 30 });
+      }
+      return;
+    }
     if (age < 0.35) {
       const k = age / 0.35;
       ctx.globalAlpha = 1 - k;
@@ -730,6 +869,12 @@ export class Renderer {
 
   drawKO(f, age, fy) {
     const ctx = this.ctx, P = this.px;
+    if (this.sheet) {
+      const a = Math.min(1, age * 4) * Math.max(0, 1 - Math.max(0, age - 1.8) * 1.5);
+      const pop = age < 0.15 ? 1.6 - age * 4 : 1;
+      this.sprite(ATLAS.retire[0], f.x * P, fy - P * 2.2, P * 1.7 * pop, { alpha: a });
+      return;
+    }
     ctx.save();
     ctx.globalAlpha = Math.min(1, age * 4) * Math.max(0, 1 - Math.max(0, age - 1.8) * 1.5);
     const size = Math.max(18, P * 1.1);
@@ -785,7 +930,9 @@ export class Renderer {
     ctx.fillStyle = c.windup ? 'rgba(255,80,80,0.35)' : `${c.color}33`;
     ctx.beginPath(); ctx.ellipse(x, (footY + headY) / 2, bw * 1.6, (footY - headY) * 0.75, 0, 0, Math.PI * 2); ctx.fill();
     // 構え・発動待ちの間は「ゴゴゴ」
-    if (c.windup) {
+    if (c.windup && this.sheet) {
+      this.sprite(ATLAS.gogogo[0], x + bw * 2.2 + Math.sin(b.t * 40) * 1.5, (headY + footY) / 2, P * 1.7, { alpha: 0.9 });
+    } else if (c.windup) {
       ctx.save();
       ctx.font = `900 italic ${Math.max(11, P * 0.5)}px serif`;
       ctx.fillStyle = 'rgba(190,120,255,0.9)';

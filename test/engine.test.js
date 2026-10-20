@@ -8,6 +8,7 @@ import { buildObservation } from '../public/js/engine/perception.js';
 import { localParse } from '../public/js/engine/localParser.js';
 import { findPath, isWalkablePoint } from '../public/js/engine/world.js';
 import { makeItem } from '../public/js/engine/items.js';
+import { dist } from '../public/js/engine/vec.js';
 
 // 双方ローカル思考でターン制の戦闘を進める
 async function playTurns(b, maxTurns) {
@@ -500,4 +501,52 @@ test('2対2：片方が倒れても味方が残っていれば続き、相手チ
   assert.ok(b.over);
   assert.equal(b.winnerTeam, 0);
   assert.ok(b.fx.some(f => f.kind === 'ko') && b.fx.some(f => f.kind === 'hit'), '演出用の打撃・KO イベントが出ていない');
+});
+
+test('スタンド：先行させると射程内に留まり、スタンドの位置から見える', () => {
+  const b = new Battle({ seed: 51, mapId: 'lot', playerChar: 'kito', cpuChar: 'saginuma' });
+  const me = b.player, foe = b.cpu;
+  me.x = 24; me.y = 9; me.facing = Math.PI; me.floor = foe.floor = 0;
+  foe.x = 30; foe.y = 9;
+  b.setPlan(foe, compilePlan(b, foe, { steps: [{ action: 'wait', targetType: 'none', duration: 3 }] }));
+  assert.ok(!b.canSee(me, foe.x, foe.y), '背後の敵が最初から見えている');
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'stand_move', targetType: 'direction', direction: 'right' }] }));
+  me.facing = Math.PI;
+  runFor(b, 1);
+  const s = me.standBody;
+  assert.ok(s, 'スタンドが出ていない');
+  assert.ok(dist(s.x, s.y, me.x, me.y) <= me.def.standRange + 0.06, 'スタンドが射程より遠くへ行った');
+  assert.ok(b.canSee(me, foe.x, foe.y), 'スタンドの位置から見えていない');
+  assert.ok(me.memory.seen.cpu, 'スタンドで見た敵を記憶していない');
+});
+
+test('スタンド：敵の投げた物をスタンドで受け止めると、本体には3割だけ返る', () => {
+  const b = new Battle({ seed: 52, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  const me = b.player, foe = b.cpu;
+  me.x = 27; me.y = 9; me.floor = foe.floor = 0;
+  foe.x = 20; foe.y = 9;
+  me.standBody = { x: 25.6, y: 9, floor: 0, facing: Math.PI, goal: { x: 25.6, y: 9 } };
+  for (const c of b.chars) b.setPlan(c, compilePlan(b, c, { steps: [{ action: 'wait', targetType: 'none', duration: 3 }] }));
+  b.spawnThrown(foe, makeItem('brick', 0, 0), 20, 9, 27, 9);
+  const hp = me.hp;
+  runFor(b, 1.5);
+  const lost = hp - me.hp;
+  assert.ok(lost > 0 && lost <= 5, `反動のダメージがおかしい（${lost}）`);
+  assert.ok(b.log.some(l => l.text.includes('受け止めた')));
+});
+
+test('スタンド：七海は群体なので出し入れの行動を使えず、出している間はエネルギーが減る', () => {
+  const n = new Battle({ seed: 53, mapId: 'lot', playerChar: 'nanami', cpuChar: 'kito' });
+  const plan = compilePlan(n, n.player, { steps: [{ action: 'stand_out', targetType: 'none' }] });
+  assert.equal(plan.steps.length, 0);
+  assert.ok(plan.rejected[0].includes('群体'));
+  const b = new Battle({ seed: 53, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  b.setPlan(b.player, compilePlan(b, b.player, localParse(b, b.player, 'スタンドを出す')));
+  const sp = b.player.sp;
+  runFor(b, 3);
+  assert.ok(b.player.standBody);
+  assert.ok(b.player.sp < sp);
+  b.setPlan(b.player, compilePlan(b, b.player, localParse(b, b.player, 'スタンドを戻す')));
+  runFor(b, 1);
+  assert.equal(b.player.standBody, null);
 });

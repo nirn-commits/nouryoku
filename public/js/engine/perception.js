@@ -132,6 +132,7 @@ export function buildObservation(b, c) {
     inside: bd ? `${bd.name}の${c.floor + 1}階${bd.sealed ? '（密室：炎に囲まれている）' : ''}` : '屋外',
     status: stateWords(b, c),
     cooldowns: Object.fromEntries(Object.entries(c.cd).map(([k, v]) => [k, r1(v - b.t)])),
+    stand: c.def.standRange ? (c.standBody ? { out: true, pos: [r1(c.standBody.x), r1(c.standBody.y)], range: c.def.standRange, note: '出している間はスタンドエネルギーが回復しない' } : { out: false, range: c.def.standRange }) : { note: '群体のスタンドなので stand_out / stand_move は使えない' },
     ...(c.def.balls ? { balls: c.balls } : {}),
     ...(c.units ? { echo_units: unitSummary(b, c) } : {}),
     ...(c.memory.suspectAttached ? { notice: '自分の足音や声が消えている。体に何か小さな物が取り付いているかもしれない（swat で払える）' } : {}),
@@ -144,6 +145,7 @@ export function buildObservation(b, c) {
       return {
         id: e.id, name: e.name, visible: true, pos: [r1(e.x), r1(e.y)], floor: e.floor + 1, distance: r1(dist(c.x, c.y, e.x, e.y)),
         facing_deg: deg(e.facing), condition: hpWord(e), state: stateWords(b, e), inside: ebd ? `${ebd.name}の${e.floor + 1}階` : '屋外',
+        ...(e.standBody ? { stand_out_at: [r1(e.standBody.x), r1(e.standBody.y)] } : {}),
       };
     }
     const ls = c.memory.seen[e.id];
