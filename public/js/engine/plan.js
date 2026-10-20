@@ -611,6 +611,8 @@ const EXEC = {
           c.windup = { kind: 'melee', until: D.until };
           if (c.standBody && !D.obj && pe0(b, c)) c.standBody.goal = { char: b.enemyOf(c), x: b.enemyOf(c).x, y: b.enemyOf(c).y };
           b.emit({ text: `${c.name} が拳を振りかぶる`, kind: 'combat', actor: c, pos: c });
+          // 演出用：至近距離で殴り合う瞬間（画面側でクローズアップとスローにする）
+          if (!D.obj && e.alive && dist(c.x, c.y, e.x, e.y) < 3.2) b.puff('clash', { x: (c.x + e.x) / 2, y: (c.y + e.y) / 2, z: b.baseZ(c) + 1.1 }, { seq: ++b.fxSeq, until: D.until });
         } else if (r === 'stuck' || b.t > D.deadline) return { fail: '間合いに入れなかった' };
         return 'running';
       }

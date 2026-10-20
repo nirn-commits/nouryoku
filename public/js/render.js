@@ -99,6 +99,7 @@ export class Renderer {
     this.shakeAmp = 0;
     this.shakeAt = 0;
     this.sheet = null; // エフェクト素材（無ければプログラムで描く）
+    this.cine = null; // クローズアップ { x, y, z, scale, start, dur }（実時間）
     this.chips = {}; // キャラチップ（public/chips/<id>.png・<id>_stand.png）
   }
 
@@ -129,6 +130,26 @@ export class Renderer {
     this.shakeAt = now;
   }
 
+  // クローズアップ：(x, y) へ寄って scale 倍に拡大し、dur 秒後に戻る（より強い寄りで上書き）
+  closeUp(x, y, z, scale, dur) {
+    const now = performance.now();
+    const cur = this.cineAmount(now);
+    if (this.cine && cur > 0.3 && this.cine.scale > scale) return;
+    this.cine = { x, y, z, scale, start: now - (cur > 0 ? 120 * cur : 0), dur: dur * 1000 };
+  }
+
+  // 寄り具合 0〜1（寄る 0.12秒・保つ・戻る 0.3秒）
+  cineAmount(now) {
+    const c = this.cine;
+    if (!c) return 0;
+    const t = now - c.start;
+    if (t >= c.dur) { this.cine = null; return 0; }
+    const ease = v => v * v * (3 - 2 * v);
+    if (t < 120) return ease(t / 120);
+    if (t > c.dur - 300) return ease((c.dur - t) / 300);
+    return 1;
+  }
+
   currentShake(now) {
     return this.shakeAmp * Math.exp(-(now - this.shakeAt) / 110);
   }
@@ -142,6 +163,7 @@ export class Renderer {
     this.topPad = 3.6 * K * fit;
     this.viewH = Math.round(fit * battle.world.h + this.topPad);
     this.px = this.zoom === 'near' ? Math.max(fit * 2.2, 30) : fit;
+    this.basePx = this.px;
     this.dpr = window.devicePixelRatio || 1;
     this.canvas.style.width = `${w}px`;
     this.canvas.style.height = `${this.viewH}px`;
@@ -206,21 +228,34 @@ export class Renderer {
   }
 
   draw(b, { debug = false, hover = null, viewer = null } = {}) {
-    const ctx = this.ctx, P = this.px;
+    const ctx = this.ctx;
     const me = this.viewer = viewer || b.player;
     const see = (x, y, z) => debug || b.canSee(me, x, y, z);
     const shake = this.currentShake(performance.now());
     const sx = shake > 0.3 ? (Math.random() - 0.5) * 2 * shake : 0, syy = shake > 0.3 ? (Math.random() - 0.5) * 2 * shake : 0;
-    const W = b.world.w * P, H = b.world.h * P;
 
     // カメラ（拡大時は自分を中心に）
+    const P0 = this.px = this.basePx || this.px;
     if (this.zoom === 'near') {
-      this.offX = clamp(me.x * P - this.viewW / 2, 0, Math.max(0, W - this.viewW));
-      this.offY = clamp(this.sy(me.y, b.baseZ(me)) - this.viewH / 2, -P * 2, Math.max(0, H - this.viewH));
+      this.offX = clamp(me.x * P0 - this.viewW / 2, 0, Math.max(0, b.world.w * P0 - this.viewW));
+      this.offY = clamp(this.sy(me.y, b.baseZ(me)) - this.viewH / 2, -P0 * 2, Math.max(0, b.world.h * P0 - this.viewH));
     } else {
       this.offX = 0;
       this.offY = -this.topPad;
     }
+    // クローズアップ：拡大率を上げ、注目点を画面の中央へ寄せる
+    const cineK = this.cineAmount(performance.now());
+    if (cineK > 0) {
+      const c = this.cine;
+      const P2 = this.px = P0 * (1 + (c.scale - 1) * cineK);
+      const px0 = c.x * P0 - this.offX, py0 = (c.y - c.z * K) * P0 - this.offY; // 元の画面での注目点の位置
+      const keepX = c.x * P2 - px0, keepY = (c.y - c.z * K) * P2 - py0;
+      const midX = c.x * P2 - this.viewW / 2, midY = (c.y - c.z * K) * P2 - this.viewH / 2;
+      this.offX = keepX + (midX - keepX) * cineK;
+      this.offY = keepY + (midY - keepY) * cineK;
+    }
+    const P = this.px;
+    const W = b.world.w * P, H = b.world.h * P;
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, this.viewW, this.viewH);
@@ -537,6 +572,19 @@ export class Renderer {
       ctx.strokeStyle = 'rgba(255,255,255,0.6)';
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.arc(hover.x * P, this.sy(hover.y, me.floor * FLOOR_H), 4, 0, Math.PI * 2); ctx.stroke();
+    }
+    // クローズアップ中は上下に黒帯と周辺減光（映画のような見せ方）
+    if (cineK > 0) {
+      ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+      const vg = ctx.createRadialGradient(this.viewW / 2, this.viewH / 2, Math.min(this.viewW, this.viewH) * 0.25, this.viewW / 2, this.viewH / 2, Math.max(this.viewW, this.viewH) * 0.7);
+      vg.addColorStop(0, 'rgba(0,0,0,0)');
+      vg.addColorStop(1, `rgba(0,0,0,${0.55 * cineK})`);
+      ctx.fillStyle = vg;
+      ctx.fillRect(0, 0, this.viewW, this.viewH);
+      const bar = this.viewH * 0.085 * cineK;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, this.viewW, bar);
+      ctx.fillRect(0, this.viewH - bar, this.viewW, bar);
     }
   }
 

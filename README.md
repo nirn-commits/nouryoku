@@ -65,7 +65,8 @@ npm start                 # → http://127.0.0.1:8787/
 
 - 打撃が当たると、威力に応じたヒットストップ（一瞬の停止）・画面揺れ・集中線・擬音（ドゴォ、バキィ、ドギュン…）・大きなダメージ表示が出ます。
 - 大ダメージは画面がフラッシュし、再起不能の瞬間はスローモーションになります。構え中のキャラには「ゴゴゴ」が出ます。
-- 効果音はブラウザ内で合成しています（戦闘画面の「効果音」ボタンで ON/OFF）。
+- 至近距離の殴り合いの瞬間・大ダメージ・再起不能の時は、カメラが寄って（クローズアップ・上下の黒帯）スローモーションになります（戦闘画面の「寄り・スロー」ボタンで ON/OFF）。
+- 効果音は `public/sound/` の音声（Kenney の CC0 素材と合成音。`public/sound/README.md` 参照）を、音の種類と距離に応じて鳴らします。住宅街では環境音も小さく流れます（「効果音」ボタンで ON/OFF）。
 - エフェクト素材のスプライトシートを `public/fx/effects.png` に置くか、タイトル画面で選ぶと、その画像で描きます（`public/fx/README.md` 参照）。
 
 ## マップ
@@ -159,6 +160,6 @@ npm start                 # → http://127.0.0.1:8787/
 | `public/fx/` | エフェクトのスプライトシート `effects.png`（`public/fx/README.md` 参照） |
 | `public/chips/` | 戦闘画面のキャラチップ（ドット絵。`public/chips/README.md` 参照） |
 | `assets/source/` | 受け取った素材の元ファイル（zip など） |
-| `public/sound/` | 効果音・BGM（読み込みは今後対応。`public/sound/README.md` 参照） |
+| `public/sound/` | 効果音・環境音（`public/sound/README.md` 参照） |
 
 GitHub の画面からは、各フォルダを開いて「Add file」→「Upload files」で追加できます（ブランチは `claude/fervent-ptolemy-o27x6o` を選んでください）。

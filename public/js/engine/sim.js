@@ -540,7 +540,7 @@ export class Battle {
     target.lastDamagedAt = this.t;
     const entry = this.emit({
       text: `${target.name} に${label ? `${label}で` : ''}${dmg}ダメージ${guarded ? '（ガード）' : ''}`,
-      kind: 'damage', actor: source, affected: target, pos: target, sound: 9, soundKind: 'impact',
+      kind: 'damage', actor: source, affected: target, pos: target, sound: 9, soundKind: 'damage',
     });
     this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', big: dmg >= 15, visibleTo: entry.visibleTo });
     if (['fall', 'slam', 'launch_impact', 'debris'].includes(kind)) this.puff('dust', { x: target.x, y: target.y, floor: target.floor });

@@ -9,6 +9,7 @@ import { Renderer } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
 import { MAPS } from './engine/maps.js';
 import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
+import { Sound } from './audio.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -24,7 +25,9 @@ const state = {
   mode: '2v2',
   sfx: (() => { try { return localStorage.getItem('sfx') !== 'off'; } catch { return true; } })(),
   freezeUntil: 0, // ヒットストップ（実時間）
-  slowUntil: 0, // 決着時のスローモーション
+  slow: { until: 0, factor: 1 }, // スローモーション（実時間）
+  cine: (() => { try { return localStorage.getItem('cine') !== 'off'; } catch { return true; } })(), // クローズアップとスローの演出
+  seenSound: new WeakSet(),
   lastFx: 0,
   autoTurn: 0,
   mapId: 'town',
@@ -43,6 +46,8 @@ const state = {
   logSeen: new WeakSet(),
   ended: false,
 };
+
+const snd = new Sound();
 
 const EXAMPLES = {
   sogo: [
@@ -317,7 +322,10 @@ function startBattle() {
   state.logSeen = new WeakSet();
   state.acc = 0;
   state.paused = false;
-  state.freezeUntil = state.slowUntil = 0;
+  state.freezeUntil = 0;
+  state.slow = { until: 0, factor: 1 };
+  snd.unlock();
+  if (state.mapId === 'town') snd.startAmbience(); else snd.stopAmbience();
   state.lastFx = 0;
   state.autoTurn = 0;
   state.turn = new TurnController(b, {
@@ -502,8 +510,12 @@ function renderLog() {
     p.innerHTML = `<span class="t">${l.t.toFixed(1)}</span> ${escapeHtml(text)}`;
     if (l.heardBy.has(me.id) && l.kind !== 'speech') p.innerHTML += ' <span class="heard">（音）</span>';
     log.prepend(p);
+    if (l.kind === 'stand') playSe('stand', 0.5);
     if (l.kind === 'ability') {
-      const c = b.chars.find(ch => ch.id === l.actor);
+      const ac = b.chars.find(ch => ch.id === l.actor);
+      const seName = ac && ABILITY_SE[ac.def.abilities[0]];
+      if (seName) playSe(seName, 0.8, 'ability');
+      const c = ac;
       if (c && (c.team === me.team || DEBUG || b.canSee(me, c.x, c.y))) showCutin(c, text);
     }
   }
@@ -566,6 +578,36 @@ function viewerOf(b) {
   return b.player.alive ? b.player : b.alliesOf(b.player).find(a => a.alive) || b.player;
 }
 
+// 音の種類 → 効果音ファイル
+const SE_OF = {
+  impact: 'break', crash: 'crash', glass: 'glass', door: 'door', fall: 'fall', swing: 'swing', throw: 'swing',
+  ricochet: 'ricochet', flick: 'flick', alarm: 'alarm', siren: 'siren',
+};
+const ABILITY_SE = { perpendicular: 'launch', hotel: 'flame', echo: 'stand' };
+
+// 効果音を鳴らす。距離で小さくし、スロー中は低く再生する。素材が無ければ合成音で代用
+function playSe(name, vol = 1, fallback = null) {
+  const rate = performance.now() < state.slow.until ? 0.75 : 1;
+  if (snd.play(name, vol, rate) || snd.has(name)) return;
+  if (fallback) sfx(fallback, vol);
+}
+
+function seVolume(me, x, y, reach = 30) {
+  return Math.max(0.2, Math.min(1, 1 - dist(me.x, me.y, x, y) / reach));
+}
+
+// スロー：factor 倍の速さを ms ミリ秒（より強いスローで上書き）
+function slowMo(now, factor, ms) {
+  if (!state.cine) return;
+  if (now < state.slow.until && state.slow.factor <= factor) { state.slow.until = Math.max(state.slow.until, now + ms); return; }
+  state.slow = { until: now + ms, factor };
+}
+
+function closeUp(f, scale, sec) {
+  if (state.cine) state.renderer.closeUp(f.x, f.y, f.z ?? 1, scale, sec);
+}
+
+// 新しく起きた演出用エフェクトを拾い、ヒットストップ・揺れ・クローズアップ・スロー・効果音に変える
 function handleImpacts(now) {
   const b = state.battle;
   const me = viewerOf(b);
@@ -577,17 +619,47 @@ function handleImpacts(now) {
       const power = Math.min(1, f.dmg / 30);
       state.freezeUntil = Math.max(state.freezeUntil, now + 40 + power * 190);
       state.renderer.kick(3 + power * 12);
-      if (f.dmg >= 15) flashScreen(f.target === me.id ? 'rgba(255,60,60,0.35)' : 'rgba(255,255,255,0.35)');
-      sfx('hit', power);
+      if (f.dmg >= 15) {
+        flashScreen(f.target === me.id ? 'rgba(255,60,60,0.35)' : 'rgba(255,255,255,0.35)');
+        // 大ダメージ：寄ってスローに
+        closeUp(f, 2.3, 1.0);
+        slowMo(now, 0.25, 700);
+      }
+      const name = f.guarded ? 'guard' : f.hitKind === 'scratch' ? 'scratch' : f.dmg >= 15 ? 'hit_heavy' : 'hit_light';
+      playSe(name, seVolume(me, f.x, f.y) * (0.6 + power * 0.4), 'hit');
     } else if (f.kind === 'ko') {
       state.freezeUntil = Math.max(state.freezeUntil, now + 260);
-      state.slowUntil = now + 1600;
+      closeUp(f, 2.6, 1.9);
+      slowMo(now, 0.2, 1600);
       state.renderer.kick(16);
       flashScreen('rgba(255,255,255,0.55)');
-      sfx('ko', 1);
-    } else if (f.kind === 'flash') {
-      sfx('ability', 0.4);
+      playSe('ko', 1, 'ko');
+    } else if (f.kind === 'clash') {
+      // 至近距離の殴り合い：構えの間だけ寄ってスローに（続けて起きる時は3秒に1回まで）
+      if (now - (state.lastClash || 0) > 3000) {
+        state.lastClash = now;
+        closeUp(f, 1.8, 1.1);
+        slowMo(now, 0.4, 800);
+      }
+      playSe('swing', 0.5);
+    } else if (f.kind === 'shock') {
+      playSe('roar', 1);
     }
+  }
+  // 音：見えている所で鳴った音（sound）と、姿の見えない所から聞こえた音
+  for (const f of b.fx) {
+    if (f.kind !== 'sound' || state.seenSound.has(f)) continue;
+    state.seenSound.add(f);
+    if (!DEBUG && f.visibleTo && !f.visibleTo.has(me.id)) continue;
+    const name = SE_OF[f.sk];
+    if (name) playSe(name, seVolume(me, f.x, f.y, Math.max(12, f.radius * 1.2)));
+  }
+  for (const h of me.memory.heard) {
+    if (state.seenSound.has(h)) continue;
+    state.seenSound.add(h);
+    if (b.t - h.t > 0.5) continue;
+    const name = SE_OF[h.kind];
+    if (name) playSe(name, h.kind === 'siren' ? 0.8 : 0.45 * seVolume(me, h.x, h.y));
   }
 }
 
@@ -612,7 +684,7 @@ function loop(now) {
       state.turn.commit(compilePlan(b, b.player, { steps: [] }));
     }
     const frozen = now < state.freezeUntil;
-    const slow = now < state.slowUntil ? 0.3 : 1;
+    const slow = now < state.slow.until ? state.slow.factor : 1;
     if (!state.paused && !frozen && state.turn.phase === 'execute') {
       state.acc += dtReal * state.speed * slow;
       let n = 0;
@@ -688,8 +760,24 @@ window.addEventListener('DOMContentLoaded', async () => {
   const sfxBtn = $('#sfx-btn');
   const sfxLabel = () => { sfxBtn.textContent = `効果音：${state.sfx ? 'ON' : 'OFF'}`; };
   sfxLabel();
+  snd.setEnabled(state.sfx);
+  // クローズアップ・スロー演出の切り替え
+  const cineBtn = $('#cine-btn');
+  const cineLabel = () => { cineBtn.textContent = `寄り・スロー：${state.cine ? 'ON' : 'OFF'}`; };
+  cineLabel();
+  cineBtn.addEventListener('click', () => {
+    state.cine = !state.cine;
+    try { localStorage.setItem('cine', state.cine ? 'on' : 'off'); } catch {}
+    if (!state.cine) { state.renderer.cine = null; state.slow = { until: 0, factor: 1 }; }
+    cineLabel();
+  });
+  // 最初の操作で音を出せるようにする（ブラウザの決まり）
+  document.addEventListener('pointerdown', () => snd.unlock(), { once: true });
+  document.addEventListener('keydown', () => snd.unlock(), { once: true });
   sfxBtn.addEventListener('click', () => {
     state.sfx = !state.sfx;
+    snd.setEnabled(state.sfx);
+    if (state.sfx && state.battle && state.mapId === 'town') snd.startAmbience();
     try { localStorage.setItem('sfx', state.sfx ? 'on' : 'off'); } catch {}
     sfxLabel();
   });
@@ -766,6 +854,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     state.battle = null;
     $('#battle').classList.add('hidden');
     $('#title').classList.remove('hidden');
+    snd.stopAmbience();
   });
   $('#again-btn').addEventListener('click', startBattle);
   $('#title-btn').addEventListener('click', () => {
@@ -773,6 +862,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#result').classList.add('hidden');
     $('#battle').classList.add('hidden');
     $('#title').classList.remove('hidden');
+    snd.stopAmbience();
   });
   window.addEventListener('resize', () => { if (state.battle) state.renderer.resize(state.battle); });
   requestAnimationFrame(t => { state.last = t; loop(t); });
