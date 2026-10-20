@@ -229,6 +229,11 @@ export class Renderer {
 
   draw(b, { debug = false, hover = null, viewer = null } = {}) {
     const ctx = this.ctx;
+    // 前のフレームが途中で失敗していても、描画の状態を初期化してから描く
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    ctx.filter = 'none';
+    if (ctx.setLineDash) ctx.setLineDash([]);
     const me = this.viewer = viewer || b.player;
     const see = (x, y, z) => debug || b.canSee(me, x, y, z);
     const shake = this.currentShake(performance.now());
@@ -316,7 +321,7 @@ export class Renderer {
       const sb = c.standBody;
       if (c.alive && sb && (c.team === me.team || see(sb.x, sb.y, sb.floor * FLOOR_H + 1.2))) {
         const sbd = buildingOfPoint(sb.x, sb.y);
-        const sItem = { key: sb.y + 0.2, z: sb.floor * FLOOR_H, draw: () => this.drawStand(b, c) };
+        const sItem = { key: sb.y + 0.2, z: sb.floor * FLOOR_H, floor: sb.floor, stand: c, draw: () => this.drawStand(b, c) };
         if (sbd) groups.get(sbd.id).push(sItem); else items.push(sItem);
       }
     }
@@ -611,8 +616,10 @@ export class Renderer {
     }
     // 屋根を外した表示：見ている階より上は描かない。今いる階の壁は低く切って中を見やすくする
     const f = m.floor;
-    const lower = group.filter(it => (it.obj ? it.obj.floor : it.char.floor) < f);
-    const current = group.filter(it => (it.obj ? it.obj.floor : it.char.floor) === f);
+    // 物体・人物・スタンドのどれでも、その階で振り分ける
+    const floorOf = it => (it.obj ? it.obj.floor : it.char ? it.char.floor : it.floor ?? 0);
+    const lower = group.filter(it => floorOf(it) < f);
+    const current = group.filter(it => floorOf(it) === f);
     const draw = (list, capFloor) => {
       list.sort((a, z) => a.key - z.key || a.z - z.z);
       for (const it of list) {

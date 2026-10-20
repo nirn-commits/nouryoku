@@ -1,6 +1,6 @@
 // 戦闘シミュレーション本体：物理・知覚・ダメージ・ログ。勝敗はここで確定する
 import { CHARACTERS, ABILITIES, RULES } from './data.js';
-import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById, nearestWalkable, upperFloorAt, crossesSlab, FLOOR_H, EYE_H, BODY_H } from './world.js';
+import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById, nearestWalkable, upperFloorAt, crossesSlab, isWalkablePoint, FLOOR_H, EYE_H, BODY_H } from './world.js';
 import { createWorld } from './maps.js';
 import { itemDef } from './items.js';
 import { dist, angleTo, angDiff, circleRectPush, segRectRange, segCircle, distToRect, clamp, makeRng, pointInRect } from './vec.js';
@@ -44,7 +44,8 @@ function makeChar(id, charId, x, y, isCPU, team) {
 
 export class Battle {
   // 1対1：playerChar 対 cpuChar。2対2：allyChar（味方CPU）と cpu2Char を加える
-  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town' } = {}) {
+  // randomSpawn：開始位置を毎回ランダムにする（false なら地図ごとの決まった位置）
+  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
     this.mapId = mapId;
@@ -56,7 +57,7 @@ export class Battle {
     this.over = false;
     this.winner = null;
     this.winnerTeam = null;
-    const sp = this.world.spawns;
+    const sp = randomSpawn ? this.randomSpawns() || this.world.spawns : this.world.spawns;
     this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, false, 0);
     this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true, 1);
     this.chars = [this.player, this.cpu];
@@ -68,6 +69,28 @@ export class Battle {
     }
     this.teamSize = Math.max(...[0, 1].map(t => this.chars.filter(c => c.team === t).length));
     this.emit({ text: `―― 戦闘開始${this.teamSize > 1 ? '（2対2）' : ''} ――`, kind: 'system', all: true });
+  }
+
+  // ランダムな開始位置：屋外の歩ける場所から、互いに十分離れていて歩いて行き来できる2点を選ぶ
+  randomSpawns() {
+    const w = this.world;
+    const pts = [];
+    for (let i = 0; i < 600 && pts.length < 80; i++) {
+      const x = 1.5 + this.rng() * (w.w - 3), y = 1.5 + this.rng() * (w.h - 3);
+      if (!isWalkablePoint(w, x, y, 0) || buildingAt(w, x, y)) continue;
+      if (w.objects.some(o => o.kind === 'bush' && pointInRect(x, y, o, 0.5))) continue;
+      pts.push({ x, y });
+    }
+    const far = Math.max(w.w, w.h) * 0.55;
+    for (let tries = 0; tries < 40 && pts.length > 1; tries++) {
+      const a = pts[Math.floor(this.rng() * pts.length)];
+      const cands = pts.filter(p => dist(a.x, a.y, p.x, p.y) >= far);
+      if (!cands.length) continue;
+      const c = cands[Math.floor(this.rng() * cands.length)];
+      if (!findPath(w, a.x, a.y, c.x, c.y, 0, 0)) continue;
+      return this.rng() < 0.5 ? { player: a, cpu: c } : { player: c, cpu: a };
+    }
+    return null;
   }
 
   // 出現地点の少し横（歩ける場所）

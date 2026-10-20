@@ -671,13 +671,30 @@ function flashScreen(color) {
   el.classList.add('on');
 }
 
+// 不具合が起きても画面と進行を止めない：内容を一度だけログに出して続ける
+const reported = new Set();
+function guard(where, fn) {
+  try {
+    fn();
+  } catch (e) {
+    const key = `${where}:${e.message}`;
+    if (!reported.has(key)) {
+      reported.add(key);
+      console.error(where, e);
+      if (state.battle) state.battle.emit({ text: `（${where}で不具合が起きました：${e.message}。続行します）`, kind: 'fail', all: true });
+    }
+  }
+}
+
 function loop(now) {
+  // 次のフレームを先に予約しておく（途中で例外が起きても止まらない）
+  requestAnimationFrame(loop);
   const dtReal = Math.min(0.1, (now - state.last) / 1000 || 0);
   state.last = now;
   const b = state.battle;
   if (b && !$('#battle').classList.contains('hidden')) {
     // 時間が進むのは実行フェーズの間だけ
-    handleImpacts(now);
+    guard('演出', () => handleImpacts(now));
     // 自分がやられた後は、味方の戦いを観戦する（入力ターンは自動で進む）
     if (state.turn.phase === 'input' && !b.player.alive && state.autoTurn !== state.turn.turn) {
       state.autoTurn = state.turn.turn;
@@ -689,21 +706,20 @@ function loop(now) {
       state.acc += dtReal * state.speed * slow;
       let n = 0;
       while (state.acc >= RULES.dt && n++ < 12 && state.turn.phase === 'execute') {
-        state.turn.step();
+        guard('戦闘の進行', () => state.turn.step());
         state.acc -= RULES.dt;
       }
     } else {
       state.acc = 0;
     }
-    updatePhase();
+    guard('画面の更新', () => updatePhase());
     // 自分がやられたら、生きている味方の視点で観戦する
     const viewer = viewerOf(b);
-    state.renderer.draw(b, { debug: DEBUG, hover: state.hover, viewer });
-    renderSide();
-    renderLog();
+    guard('戦場の描画', () => state.renderer.draw(b, { debug: DEBUG, hover: state.hover, viewer }));
+    guard('情報欄の表示', () => renderSide());
+    guard('ログの表示', () => renderLog());
     if (b.over && !state.ended) showResult();
   }
-  requestAnimationFrame(loop);
 }
 
 // ---------- フィールドのクリック：座標や物体名を入力欄へ ----------

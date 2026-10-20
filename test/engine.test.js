@@ -125,7 +125,7 @@ test('建物の外から中への経路は壁を通らない', () => {
 });
 
 test('ローカル解析：仕様書の入力例', () => {
-  const b = new Battle({ seed: 1, playerChar: 'sogo', cpuChar: 'kito', mapId: 'lot' });
+  const b = new Battle({ seed: 1, playerChar: 'sogo', cpuChar: 'kito', mapId: 'lot', randomSpawn: false });
   b.player.memory.lastSeen = { x: 20, y: 10, floor: 0, t: 0 };
   const p1 = compilePlan(b, b.player, localParse(b, b.player, '左の家に駆け込み、窓から敵の位置を確認する'));
   assert.deepEqual(p1.steps.map(s => s.action), ['move', 'move', 'look']);
@@ -578,4 +578,20 @@ test('時間制限：警察が来た時点で与ダメージの多い側の判�
     b2.step();
   }
   assert.equal(b2.winnerTeam, null, '両者待つだけなのに勝敗がついた');
+});
+
+test('開始位置はランダムで、屋外の歩ける場所に、敵味方が十分離れて出現する', () => {
+  const seen = new Set();
+  for (let seed = 1; seed <= 12; seed++) {
+    for (const mapId of ['town', 'lot']) {
+      const b = new Battle({ seed, mapId, playerChar: 'sogo', allyChar: 'kito', cpuChar: 'nanami', cpu2Char: 'saginuma' });
+      for (const c of b.chars) {
+        assert.ok(isWalkablePoint(b.world, c.x, c.y, 0), `${mapId} seed ${seed}：${c.id} が歩けない場所に出た`);
+      }
+      assert.ok(!b.buildingOf(b.player) && !b.buildingOf(b.cpu), '建物の中に出現した');
+      assert.ok(dist(b.player.x, b.player.y, b.cpu.x, b.cpu.y) >= Math.max(b.world.w, b.world.h) * 0.5, '敵味方が近すぎる');
+      seen.add(`${mapId}:${Math.round(b.player.x)},${Math.round(b.player.y)}`);
+    }
+  }
+  assert.ok(seen.size >= 10, '開始位置が毎回同じ');
 });
