@@ -43,6 +43,13 @@ function sogoPlan(b, c, pe, say) {
     steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' });
     return { interpretation: '（CPU・ローカル）面を蹴って攻撃をかわす', speech: say(0.3), steps };
   }
+  // 開けた所で叩きつける面が無ければ、真上に打ち上げて落下させ、落ちた所を殴る
+  if (ready && d <= 2 && !slamTarget(b, c, e) && !b.buildingOf(e) && b.rng() < 0.6) {
+    steps.push({ action: 'ability', ability: 'perpendicular', effect: 'uplift', targetType: 'enemy' });
+    steps.push({ action: 'wait', targetType: 'none', duration: 2, condition: { kind: 'enemy_prone' } });
+    steps.push({ action: 'melee', targetType: 'enemy' });
+    return { interpretation: '（CPU・ローカル）真上に打ち上げて、落ちた所を殴る', speech: say(0.3) || '10m、落ちるまで1.8秒', steps };
+  }
   if (ready && d <= 2) {
     const slam = slamTarget(b, c, e);
     steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
@@ -96,6 +103,12 @@ function kitoPlan(b, c, pe, say) {
     if (bd.sealed) {
       // 開けられた出口は、相手が離れていれば閉め直す
       const d = pe ? dist(c.x, c.y, pe.x, pe.y) : 99;
+      if (pe && pe.visible && d <= 1.6 && b.rng() < 0.5) {
+        steps.push({ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' });
+        steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
+        steps.push({ action: 'melee', targetType: 'enemy' });
+        return { interpretation: '（CPU・ローカル）炎の壁へ叩きつける', speech: say(0.3), steps };
+      }
       if (exits.length && d > 3) steps.push({ action: 'close', targetType: 'object', targetId: exits[0].id });
       steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
       steps.push({ action: 'melee', targetType: 'enemy' });
@@ -156,6 +169,18 @@ function nanamiPlan(b, c, pe, say) {
     steps.push({ action: 'melee', targetType: 'enemy' });
     return { interpretation: '（CPU・ローカル）集めた轟音を敵の耳元で鳴らして仕留める', speech: say(0.3), steps };
   }
+  // 近づかれたら、無音の結界を張ってその中を通って静かに離れる
+  if (visible && d < 7 && alive.filter(u => u.state === 'home' || (u.state === 'deployed' && !u.sound)).length >= 6 && b.rng() < 0.4) {
+    steps.push({ action: 'ability', ability: 'echo', effect: 'silence_zone', targetType: 'self' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
+    return { interpretation: '（CPU・ローカル）無音の結界を張って静かに離れる', speech: null, steps };
+  }
+  // 見失われている間に、足音の行列で別の方向へ誘導する
+  if (!visible && pe && b.t - pe.t < 8 && alive.some(u => u.sound && u.sound.kind.startsWith('footsteps')) && b.rng() < 0.35) {
+    steps.push({ action: 'ability', ability: 'echo', effect: 'decoy_walk', targetType: 'direction', direction: 'away_from_enemy', distance: 14 });
+    steps.push({ action: 'move', mode: 'walk', targetType: 'direction', direction: 'cover' });
+    return { interpretation: '（CPU・ローカル）足音の行列で誘導する', speech: null, steps };
+  }
   if (visible && d < 7) {
     // 近づかれたら囮の足音を反対側に置いて離れる
     if (alive.some(u => u.sound && u.sound.kind.startsWith('footsteps'))) steps.push({ action: 'ability', ability: 'echo', effect: 'place', sound: 'footsteps', targetType: 'direction', direction: 'toward_enemy', distance: 14 });
@@ -198,6 +223,18 @@ function saginumaPlan(b, c, pe, say) {
   const inFlight = b.world.projectiles.filter(p => p.kind === 'ball' && p.owner === c.id).length;
   if (!pe) return null;
   const d = dist(c.x, c.y, pe.x, pe.y);
+  // 追われている：足元に玉を撒いて逃げる（走って追ってくれば転ぶ）
+  if (pe.visible && d < 8 && d > 3 && c.balls >= 8 && !b.world.zones.some(z => z.kind === 'caltrops' && z.owner === c.id) && b.rng() < 0.5) {
+    steps.push({ action: 'ability', ability: 'seventh', effect: 'caltrops', targetType: 'self' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 8 });
+    steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 });
+    return { interpretation: '（CPU・ローカル）玉を撒いて足止めし、離れて撃つ', speech: say(0.2), steps };
+  }
+  if (pe.visible && d >= 8 && d < 18 && inFlight === 0 && c.balls >= 10 && b.rng() < 0.2) {
+    steps.push({ action: 'ability', ability: 'seventh', effect: 'suppress', targetType: 'enemy' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
+    return { interpretation: '（CPU・ローカル）牽制射撃しながら物陰へ', speech: null, steps };
+  }
   if (pe.visible && d < 6) {
     // 近づかれたら跳んで距離を取り、近距離の跳弾で迎え撃つ
     if (!c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
@@ -258,6 +295,22 @@ export function localCpuPlan(b, c) {
   const steps = plan.steps;
   const melee = steps.some(st => st.action === 'melee' && (st.targetType || 'enemy') === 'enemy');
   const usesSp = c.def.abilities.some(id => id === 'perpendicular' || id === 'seventh');
+  // 近接の読み合い：相手がガードを固めていれば掴み、殴りかかってくるなら受け流しを混ぜる
+  const pe = b.perceivedEnemy(c);
+  if (pe && pe.visible && c.def.power >= 10) {
+    const e = pe.char, d = dist(c.x, c.y, e.x, e.y);
+    const r = b.rng();
+    if ((e.status.guardUntil > b.t || e.status.counterUntil > b.t) && d < 3 && r < 0.7) {
+      steps.unshift({ action: 'grab', targetType: 'enemy' });
+    } else if (e.windup && e.windup.kind === 'melee' && d < 2.5 && r < 0.35) {
+      plan.steps = [{ action: 'counter', targetType: 'none' }, { action: 'melee', targetType: 'enemy' }];
+      return plan;
+    } else if (melee && d > 2.2 && d < 4.2 && r < 0.2) {
+      steps.unshift({ action: 'tackle', targetType: 'enemy' });
+    } else if (melee && d < 2.5 && r < 0.12) {
+      steps.unshift({ action: 'feint', targetType: 'enemy' });
+    }
+  }
   if (melee && !c.standBody && steps.length < 5 && !usesSp && b.rng() < 0.5) steps.unshift({ action: 'stand_out', targetType: 'none' });
   else if (c.standBody && (!melee || (usesSp && c.sp < 40)) && steps.length < 5) steps.unshift({ action: 'stand_in', targetType: 'none' });
   return plan;

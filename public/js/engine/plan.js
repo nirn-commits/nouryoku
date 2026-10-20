@@ -7,7 +7,7 @@ import { itemDef, strengthScale } from './items.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
-  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', stand_out: 'none', stand_move: 'enemy', stand_in: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
+  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', grab: 'enemy', tackle: 'enemy', counter: 'none', feint: 'enemy', hide: 'none', search: 'none', decoy: 'direction', vault: 'object', use_item: 'direction', stand_out: 'none', stand_move: 'enemy', stand_in: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
 const DIR_LABEL = {
@@ -62,6 +62,15 @@ export function describeStep(b, s) {
     case 'pull': return `${cond}${tn}を引く`;
     case 'look': return `${cond}${tn}を観察`;
     case 'stand_out': return `${cond}スタンドを出す`;
+    case 'grab': return `${cond}${tn}に掴みかかる`;
+    case 'tackle': return `${cond}${tn}へ体当たり`;
+    case 'counter': return `${cond}受け流しの構え`;
+    case 'feint': return `${cond}${tn}へフェイント`;
+    case 'hide': return `${cond}身を潜める（${s.duration.toFixed(0)}秒）`;
+    case 'search': return `${cond}周囲を見回す`;
+    case 'decoy': return `${cond}${tn}に物音を立てる`;
+    case 'vault': return `${cond}${tn}を乗り越える`;
+    case 'use_item': return `${cond}手の物を使う${s.target.type !== 'none' && s.target.type !== 'self' ? `（${tn}）` : ''}`;
     case 'stand_move': return `${cond}スタンドを${tn}へ先行させる`;
     case 'stand_in': return `${cond}スタンドを戻す`;
     case 'wait': return `${cond}待機${s.duration ? `（${s.duration.toFixed(1)}秒）` : ''}`;
@@ -75,7 +84,7 @@ export function describeStep(b, s) {
 }
 
 function condLabel(c) {
-  return CONDITIONS[c.kind].replace('value', c.value ?? '');
+  return CONDITIONS[c.kind].replace('value', c.value ?? '').replace(/（[^）]*）/g, '');
 }
 
 function resolveObjectId(b, id) {
@@ -92,11 +101,15 @@ function validateStep(b, c, raw, cursor) {
   const action = str(raw.action);
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
-  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in'].includes(action)) ttype = DEFAULT_TARGET[action];
+  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in', 'counter', 'hide', 'search', 'use_item'].includes(action)) ttype = DEFAULT_TARGET[action];
   if (action.startsWith('stand_') && !c.def.standRange) return { error: `『${c.stand}』は群体のスタンドなので、本体のように出したり先行させたりはできない（能力の「聞き耳を立てる」「取り付く」で個体を送る）` };
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw, autoMode: action === 'move' && raw.mode !== 'run' && raw.mode !== 'walk' };
 
+  if (action === 'use_item') {
+    const kind = c.held && c.held.kind;
+    if (kind !== 'extinguisher' && kind !== 'umbrella') return { error: c.held ? `${c.held.name}には特別な使い方がない（消火器と傘だけ）` : '道具を持っていない（消火器か傘を先に拾う）' };
+  }
   // 能力の照合：存在しない能力・他人の能力は許可しない
   if (action === 'ability') {
     const abId = str(raw.ability);
@@ -114,7 +127,7 @@ function validateStep(b, c, raw, cursor) {
     step.ability = abId;
     step.effect = effect;
     // ホテル・カリフォルニアは「自分の手で最後の出口を閉める」ことで成立するので、行動としては「閉める」
-    if (abId === 'hotel') step.action = 'close';
+    if (abId === 'hotel' && effect === 'seal') step.action = 'close';
   } else if (!ACTIONS[action].targets.includes(ttype)) {
     return { error: `${ACTIONS[action].name}は「${ttype}」を対象にできない` };
   }
@@ -138,6 +151,7 @@ function validateStep(b, c, raw, cursor) {
       if (!o.openable) return { error: `${o.name}は開かない（割ることはできる）` };
     }
     if (action === 'jump_down' && (!o || o.kind !== 'window' || o.floor !== 1)) return { error: `飛び降りられるのは2階の窓だけ（${targetName(b, t)}は不可）` };
+    if (action === 'vault' && (!o || !o.blocksMove || (o.z1 - o.z0) > 1.6 || o.kind === 'door' || o.kind === 'window')) return { error: `${targetName(b, t)}は乗り越えられない（高さ1.6m以下の物だけ）` };
     if (action === 'ability') {
       if (step.ability === 'perpendicular' && step.effect === 'launch') {
         if (!o || !o.movable) return { error: `『パーペンディキュラー』で弾き出せるのは動かせる物のみ（${targetName(b, t)}は不可）` };
@@ -169,6 +183,7 @@ function validateStep(b, c, raw, cursor) {
   if (action === 'guard') step.duration = clamp(d ?? 1.5, 0.3, 3);
   else if (action === 'chase') step.duration = clamp(d ?? 4, 0.5, 8);
   else if (action === 'wait') step.duration = clamp(d ?? (raw.condition ? 0 : 1), 0, 6);
+  else if (action === 'hide') step.duration = clamp(d ?? 3, 0.5, 8);
   else step.duration = 0;
 
   if (raw.condition && typeof raw.condition === 'object' && raw.condition.kind) {
@@ -213,6 +228,15 @@ function estimateCost(b, c, s, cursor) {
     case 'throw': cost = RULES.throwWindup + RULES.throwRecovery + 0.1; break;
     case 'guard': cost = s.duration; break;
     case 'dodge': cost = 0.4; break;
+    case 'grab': cost = 0.6 + clamp((approxDist() - 1.2) / c.def.run, 0, 2); break;
+    case 'tackle': cost = 0.7; break;
+    case 'counter': cost = 0.9; break;
+    case 'feint': cost = 0.4; break;
+    case 'hide': cost = s.duration; break;
+    case 'search': cost = 1.5; break;
+    case 'decoy': cost = 0.5; break;
+    case 'vault': cost = 0.9 + clamp(approxDist() / c.def.run, 0, 3); break;
+    case 'use_item': cost = 0.5; break;
     case 'push': case 'pull': cost = 0.6 + clamp((approxDist() - 1) / c.def.walk, 0, 3); break;
     case 'open': case 'close': cost = 0.6 + clamp((approxDist() - 1) / speed, 0, 4); break;
     case 'jump_down': cost = 1.2 + (s.target.type === 'object' ? clamp((approxDist() - 1) / speed, 0, 4) : 1); break;
@@ -424,6 +448,8 @@ function checkCondition(b, c, cond, st) {
     case 'enemy_attacking': return visible && pe.char.windup && dist(c.x, c.y, pe.x, pe.y) < 6;
     case 'hp_below': return c.hp <= (cond.value ?? 40);
     case 'damaged': return c.lastDamagedAt > st.t0;
+    case 'enemy_guarding': return !!(visible && (pe.char.status.guardUntil > b.t || pe.char.status.counterUntil > b.t));
+    case 'enemy_prone': return !!(visible && (pe.char.status.proneUntil > b.t || pe.char.status.stunUntil > b.t || b.isAirborne(pe.char)));
     case 'enemy_inside': {
       const bd = b.buildingOf(c);
       // どの敵でも、同じ建物の中にいるのが見えたら（味方の報告も含む）
@@ -846,6 +872,284 @@ const EXEC = {
     },
   },
 
+  // 掴み：近づいて組み付く。ガード・受け流しは効かないが、構えの間に殴られると潰される
+  grab: {
+    start(b, c, st) {
+      c.status.hideUntil = 0;
+      st.data.phase = 'approach';
+      st.data.deadline = b.t + 2.2;
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      const e = b.enemyOf(c);
+      if (D.phase === 'approach') {
+        const pe = resolveTarget(b, c, st.def.target);
+        if (pe.error) return { fail: '掴む相手が見えない' };
+        const r = approach(b, c, st, pe.x, pe.y, 1.0, true, pe.f);
+        if (r === 'arrived') {
+          D.phase = 'windup';
+          D.until = b.t + 0.4;
+          st.locked = true;
+          c.windup = { kind: 'grab', until: D.until };
+          b.emit({ text: `${c.name} が掴みかかる！`, kind: 'combat', actor: c, pos: c, sound: 3 });
+        } else if (r === 'stuck' || b.t > D.deadline) return { fail: '掴める距離まで近づけなかった' };
+        return 'running';
+      }
+      if (D.phase === 'windup') {
+        if (b.canSee(c, e.x, e.y)) faceTo(c, e.x, e.y);
+        if (b.t < D.until) return 'running';
+        c.windup = null;
+        const d = dist(c.x, c.y, e.x, e.y);
+        if (e.alive && e.floor === c.floor && d <= 1.35 && !b.isAirborne(e) && !e.launch && !(e.status.invulnUntil > b.t)) {
+          b.emit({ text: `${c.name} が ${e.name} に組み付いた！ ${e.status.guardUntil > b.t || e.status.counterUntil > b.t ? '（構えごと崩した）' : ''}`, kind: 'combat', actor: c, affected: e, pos: e, sound: 5, soundKind: 'impact' });
+          e.status.guardUntil = 0;
+          e.status.counterUntil = 0;
+          e.status.stunUntil = Math.max(e.status.stunUntil, b.t + 1.2);
+          e.status.grabbedUntil = b.t + 1.2;
+          e.kbx = e.kby = 0;
+          interruptStep(b, e, '組み付かれて動けない', true);
+          b.damage(e, 4, { source: c, kind: 'grab', label: '組み付き' });
+        } else {
+          b.emit({ text: `${c.name} の掴みは空を切った`, kind: 'combat', actor: c, pos: c, sound: 3, soundKind: 'swing' });
+          c.status.stunUntil = Math.max(c.status.stunUntil, b.t + 0.3);
+        }
+        D.phase = 'recover';
+        D.until = b.t + 0.25;
+        return 'running';
+      }
+      return b.t >= D.until ? 'done' : 'running';
+    },
+  },
+
+  // 体当たり：突進して当たれば突き飛ばして転倒、壁なら叩きつけ
+  tackle: {
+    start(b, c, st) {
+      c.status.hideUntil = 0;
+      const res = resolveTarget(b, c, st.def.target, st.def);
+      if (res.error) return res.error;
+      const a = res.angle ?? angleTo(c.x, c.y, res.x, res.y);
+      st.data.dir = { x: Math.cos(a), y: Math.sin(a) };
+      st.data.phase = 'charge';
+      st.data.until = b.t + 0.15;
+      st.locked = true;
+      c.facing = a;
+      c.windup = { kind: 'tackle', until: st.data.until };
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      if (D.phase === 'charge') {
+        if (b.t < D.until) return 'running';
+        c.windup = null;
+        c.kbx = D.dir.x * 10.6; c.kby = D.dir.y * 10.6;
+        c.kbSlam = null;
+        D.phase = 'dash';
+        D.until = b.t + 0.55;
+        b.emit({ text: `${c.name} が体当たりで突っ込む！`, kind: 'combat', actor: c, pos: c, sound: 6, soundKind: 'footsteps_run' });
+        return 'running';
+      }
+      if (D.phase === 'dash') {
+        const hitC = b.enemiesOf(c).find(e => e.alive && e.floor === c.floor && dist(c.x, c.y, e.x, e.y) <= c.r + e.r + 0.25 && !b.isAirborne(e) && !e.launch);
+        if (hitC) {
+          c.kbx = c.kby = 0;
+          if (hitC.status.invulnUntil > b.t) {
+            b.emit({ text: `${hitC.name} は体当たりをかわした！`, kind: 'combat', actor: c, affected: hitC, pos: hitC });
+          } else {
+            b.emit({ text: `${c.name} の体当たりが ${hitC.name} を突き飛ばした！`, kind: 'combat', actor: c, affected: hitC, pos: hitC, sound: 8, soundKind: 'impact' });
+            hitC.kbx = D.dir.x * 9.2; hitC.kby = D.dir.y * 9.2;
+            hitC.kbSlam = { damage: 7, source: c };
+            hitC.status.proneUntil = Math.max(hitC.status.proneUntil, b.t + 1.0);
+            hitC.status.guardUntil = 0;
+            interruptStep(b, hitC, '突き飛ばされた', true);
+            b.damage(hitC, 6, { source: c, kind: 'tackle', label: '体当たり' });
+          }
+          D.phase = 'recover';
+          D.until = b.t + 0.3;
+          return 'running';
+        }
+        if (b.t < D.until && Math.hypot(c.kbx, c.kby) > 1) return 'running';
+        b.emit({ text: `${c.name} の体当たりは外れ、よろけた`, kind: 'combat', actor: c, pos: c });
+        c.status.stunUntil = Math.max(c.status.stunUntil, b.t + 0.6);
+        return 'done';
+      }
+      return b.t >= D.until ? 'done' : 'running';
+    },
+  },
+
+  // 受け流し：短い構え。正面から殴られたら打ち返す（判定は sim の damage）
+  counter: {
+    start(b, c, st) {
+      c.status.counterUntil = b.t + 0.8;
+      st.data.until = b.t + 0.8;
+      st.locked = true;
+      return null;
+    },
+    update(b, c, st) {
+      const pe = b.perceivedEnemy(c);
+      if (pe && pe.visible) faceTo(c, pe.x, pe.y);
+      // 受け流しが決まると構えは消費される（sim の damage で 0 になる）
+      if (c.status.counterUntil === 0) return 'done';
+      if (b.t < st.data.until) return 'running';
+      // 何も来なかった：構えを解く隙
+      c.status.counterUntil = 0;
+      c.status.stunUntil = Math.max(c.status.stunUntil, b.t + 0.4);
+      return 'done';
+    },
+    end(b, c) { c.status.counterUntil = 0; },
+  },
+
+  // フェイント：構えだけ見せる（相手の反射のガードや条件付きの行動を誘う）
+  feint: {
+    start(b, c, st) {
+      c.status.hideUntil = 0;
+      st.data.until = b.t + 0.35;
+      c.windup = { kind: 'melee', until: st.data.until + 0.3, feint: true };
+      b.emit({ text: `${c.name} が拳を振りかぶる`, kind: 'combat', actor: c, pos: c });
+      return null;
+    },
+    update(b, c, st) {
+      const pe = b.perceivedEnemy(c);
+      if (pe && pe.visible) faceTo(c, pe.x, pe.y);
+      if (b.t < st.data.until) return 'running';
+      c.windup = null;
+      selfLog(b, c, '……と見せかけて、拳を止めた（フェイント）');
+      return 'done';
+    },
+    end(b, c) { if (c.windup && c.windup.feint) c.windup = null; },
+  },
+
+  // 潜む：動かずに気配を消す
+  hide: {
+    start(b, c, st) {
+      st.data.until = b.t + st.def.duration;
+      c.status.hideUntil = st.data.until;
+      selfLog(b, c, '身を潜めて気配を消した');
+      return null;
+    },
+    update(b, c, st) {
+      if (c.status.hideUntil <= b.t) return 'done';
+      return b.t >= st.data.until ? 'done' : 'running';
+    },
+    end(b, c) { c.status.hideUntil = 0; },
+  },
+
+  // 見回す：一周ぐるりと向きを変える
+  search: {
+    start(b, c, st) {
+      st.data.t0 = b.t;
+      st.data.f0 = c.facing;
+      return null;
+    },
+    update(b, c, st) {
+      const k = (b.t - st.data.t0) / 1.5;
+      c.facing = st.data.f0 + k * Math.PI * 2;
+      c.desired.face = c.facing;
+      if (k < 1) return 'running';
+      const seen = b.enemiesOf(c).filter(e => e.alive && c.memory.seen[e.id] && b.t - c.memory.seen[e.id].t < 1.6);
+      selfLog(b, c, seen.length ? `見回して ${seen.map(e => e.name).join('・')} を見つけた` : '見回したが、敵の姿は見えない');
+      return 'done';
+    },
+  },
+
+  // 物音を立てる：小石を投げて離れた所で音を鳴らす
+  decoy: {
+    start(b, c, st) {
+      const res = resolveTarget(b, c, st.def.target, { ...st.def, distance: st.def.distance ?? 8 });
+      if (res.error) return res.error;
+      let { x, y } = res;
+      const d = dist(c.x, c.y, x, y);
+      if (d > 12) { x = c.x + ((x - c.x) / d) * 12; y = c.y + ((y - c.y) / d) * 12; }
+      st.data.at = { x, y, floor: res.f ?? c.floor };
+      st.data.until = b.t + 0.45;
+      faceTo(c, x, y);
+      return null;
+    },
+    update(b, c, st) {
+      faceTo(c, st.data.at.x, st.data.at.y);
+      if (b.t < st.data.until) return 'running';
+      const at = st.data.at;
+      selfLog(b, c, `小石を投げて(${at.x.toFixed(1)}, ${at.y.toFixed(1)})で物音を立てた`);
+      b.puff('dust', { x: at.x, y: at.y, floor: at.floor });
+      b.playAt(at, 10, 'impact', c);
+      return 'done';
+    },
+  },
+
+  // 乗り越える：低い障害物の向こう側へ
+  vault: {
+    start(b, c, st) {
+      const o = b.objectById(st.def.target.id);
+      if (!o || !b.world.objects.includes(o)) return '乗り越える物が無い';
+      st.data.obj = o;
+      st.data.phase = 'approach';
+      st.data.deadline = b.t + 4;
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      const o = D.obj;
+      const n = nearestPointOnRect(c.x, c.y, o);
+      if (D.phase === 'approach') {
+        if (dist(c.x, c.y, n.x, n.y) <= c.r + 0.35 && c.floor === o.floor) {
+          // 向こう側の着地点：自分から物の中心を通って反対側へ
+          const cc = rectCenter(o);
+          const a = angleTo(c.x, c.y, cc.x, cc.y);
+          const span = Math.abs(Math.cos(a)) * o.w + Math.abs(Math.sin(a)) * o.h;
+          const land = nearestWalkable(b.world, cc.x + Math.cos(a) * (span / 2 + c.r + 0.4), cc.y + Math.sin(a) * (span / 2 + c.r + 0.4), 1.2, c.floor);
+          if (!land) return { fail: `${o.name}の向こう側に降りる場所がない` };
+          D.land = land;
+          D.from = { x: c.x, y: c.y };
+          D.phase = 'over';
+          D.t0 = b.t;
+          st.locked = true;
+          b.emit({ text: `${c.name} が${o.name}を乗り越える`, kind: 'combat', actor: c, pos: c, sound: 4 });
+          return 'running';
+        }
+        const r = approach(b, c, st, n.x, n.y, c.r + 0.3, st.def.mode === 'run', o.floor);
+        if (r === 'stuck' || b.t > D.deadline) return { fail: `${o.name}に近づけなかった` };
+        return 'running';
+      }
+      if (D.phase === 'over') {
+        const k = Math.min(1, (b.t - D.t0) / 0.7);
+        c.x = D.from.x + (D.land.x - D.from.x) * k;
+        c.y = D.from.y + (D.land.y - D.from.y) * k;
+        c.vx = c.vy = 0;
+        return k >= 1 ? 'done' : 'running';
+      }
+      return 'done';
+    },
+  },
+
+  // 道具を使う：消火器の煙幕・傘の盾
+  use_item: {
+    start(b, c, st) {
+      const kind = c.held && c.held.kind;
+      if (kind === 'extinguisher') {
+        const res = st.def.target.type === 'none' || st.def.target.type === 'self'
+          ? { x: c.x + Math.cos(c.facing) * 3, y: c.y + Math.sin(c.facing) * 3, f: c.floor }
+          : resolveTarget(b, c, st.def.target, { ...st.def, distance: st.def.distance ?? 3 });
+        if (res.error) return res.error;
+        const d = dist(c.x, c.y, res.x, res.y);
+        const k = d > 4 ? 4 / d : 1;
+        const at = { x: c.x + (res.x - c.x) * k, y: c.y + (res.y - c.y) * k };
+        b.addZone({ kind: 'smoke', x: at.x, y: at.y, r: 3, floor: c.floor, until: b.t + 8, owner: c.id });
+        b.emit({ text: `${c.name} が消火器を噴射した！ 白い煙が辺りを覆う`, kind: 'env', actor: c, pos: c, sound: 8, soundKind: 'crash' });
+        c.held = null; // 空になった消火器は捨てる
+        st.data.until = b.t + 0.5;
+        return null;
+      }
+      if (kind === 'umbrella') {
+        c.status.umbrellaUntil = b.t + 3;
+        b.emit({ text: `${c.name} が傘を開いて身構えた`, kind: 'combat', actor: c, pos: c, sound: 3 });
+        st.data.until = b.t + 0.3;
+        return null;
+      }
+      return '使える道具を持っていない';
+    },
+    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+  },
+
   stand_out: {
     start(b, c, st) {
       b.standOut(c).goal = {};
@@ -1131,6 +1435,8 @@ function startStep(b, c, def) {
 }
 
 function beginRun(b, c, st) {
+  // 攻撃や能力を始めると、潜んでいた気配は解ける
+  if (['melee', 'throw', 'ability', 'grab', 'tackle', 'feint', 'decoy'].includes(st.def.action)) c.status.hideUntil = 0;
   st.phase = 'run';
   st.runT0 = b.t;
   const err = EXEC[st.def.action].start(b, c, st);

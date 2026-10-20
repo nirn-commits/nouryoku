@@ -20,7 +20,7 @@ function makeChar(id, charId, x, y, isCPU, team) {
     held: null, // 手に持っている物（1つまで）
     standBody: null, // 体の外に出したスタンド { x, y, floor, facing, goal }
     alive: true,
-    status: { proneUntil: 0, stunUntil: 0, guardUntil: 0, invulnUntil: 0, recoverUntil: 0, deafUntil: 0 },
+    status: { proneUntil: 0, stunUntil: 0, guardUntil: 0, invulnUntil: 0, recoverUntil: 0, deafUntil: 0, hideUntil: 0, counterUntil: 0, umbrellaUntil: 0, grabbedUntil: 0 },
     balls: def.balls || 0,
     // エコー・ビーチの24体（背中の◆の数が1〜24、長い腕が左右半々）
     units: def.abilities.includes('echo')
@@ -184,6 +184,11 @@ export class Battle {
   canSeeFrom(viewer, ox, oy, vz, facing, x, y, tz, aware) {
     const d = dist(ox, oy, x, y);
     if (d > RULES.visionRange) return false;
+    // 潜んでいる人物は6m（植え込みの中なら2.5m）より遠くからは見つからない
+    const hidden = this.chars.find(h => h !== viewer && h.x === x && h.y === y && h.status.hideUntil > this.t);
+    if (hidden && d > (this.bushAt(hidden.x, hidden.y) ? 2.5 : 6)) return false;
+    // 煙幕：煙の中や向こう側は見えない（すぐそば1.5m以内は見える）
+    if (d > 1.5 && this.world.zones.length && this.smokeBetween(ox, oy, x, y)) return false;
     if (!aware || d > RULES.nearAwareness) {
       const a = angleTo(ox, oy, x, y);
       if (Math.abs(angDiff(facing, a)) > RULES.visionFov / 2) return false;
@@ -261,9 +266,78 @@ export class Battle {
     this.fx.push({ kind, x: pos.x, y: pos.y, z, t: this.t, visibleTo: this.visibleSet({ x: pos.x, y: pos.y, z }), ...extra });
   }
 
+  // 開いた傘：正面から来る飛び道具を防ぐ
+  umbrellaBlocks(p, x1, y1) {
+    let best = null;
+    for (const c of this.chars) {
+      if (!c.alive || !(c.status.umbrellaUntil > this.t) || c.id === p.owner) continue;
+      const cx = c.x + Math.cos(c.facing) * 0.45, cy = c.y + Math.sin(c.facing) * 0.45;
+      const t = segCircle(p.x, p.y, x1, y1, cx, cy, 0.55);
+      if (t === null) continue;
+      const from = angleTo(c.x, c.y, p.x, p.y);
+      if (Math.abs(angDiff(c.facing, from)) > Math.PI / 2) continue;
+      if (!best || t < best.t) best = { t, c };
+    }
+    return best;
+  }
+
+  // 牽制射撃：一定間隔で直接撃つ
+  updateBurst(c) {
+    const bu = c.burst;
+    if (this.t < bu.next) return;
+    if (bu.left <= 0 || c.balls <= 0 || !(c.status.stunUntil <= this.t && c.status.proneUntil <= this.t)) { c.burst = null; return; }
+    const inFlight = this.world.projectiles.filter(p => p.kind === 'ball' && p.owner === c.id).length;
+    bu.next = this.t + 0.5;
+    if (inFlight >= 3) return;
+    let a = bu.angle;
+    if (bu.target) {
+      const pe = this.perceivedEnemy(c, bu.target);
+      if (pe) a = angleTo(c.x, c.y, pe.x, pe.y);
+    }
+    a += (this.rng() - 0.5) * 0.06;
+    c.facing = a;
+    c.balls--;
+    bu.left--;
+    const o = this.standOrigin(c);
+    this.spawnBall(c, a, o);
+    this.emit({ text: `${c.name} が牽制の弾を弾いた（残り${c.balls}個）`, obsText: `${c.name} から小さな玉が続けざまに飛んでくる！`, kind: 'combat', actor: c, pos: c, sound: 3, soundKind: 'flick' });
+  }
+
   standHit(c, dmg, what, owner) {
     this.emit({ text: `${c.name} の『${c.stand}』が${what}を受け止めた！`, obsText: `${c.name} のスタンドが${what}を受け止めた！`, kind: 'combat', actor: c, pos: c.standBody, sound: 6, soundKind: 'impact' });
     this.damage(c, Math.max(1, Math.round(dmg * RULES.standBlock)), { source: owner, kind: 'stand', label: 'スタンドへの衝撃の反動' });
+  }
+
+  smokeBetween(x0, y0, x1, y1) {
+    for (const z of this.world.zones) {
+      if (z.kind !== 'smoke') continue;
+      const vx = x1 - x0, vy = y1 - y0, L2 = vx * vx + vy * vy || 1;
+      const t = Math.max(0, Math.min(1, ((z.x - x0) * vx + (z.y - y0) * vy) / L2));
+      if (dist(z.x, z.y, x0 + vx * t, y0 + vy * t) < z.r) return true;
+    }
+    return false;
+  }
+
+  zoneAt(kind, x, y, floor = 0) {
+    return this.world.zones.find(z => z.kind === kind && (z.floor ?? 0) === floor && dist(z.x, z.y, x, y) <= z.r) || null;
+  }
+
+  addZone(z) {
+    this.world.zones.push({ floor: 0, ...z });
+  }
+
+  // 少し後に鳴らす音（足音の行列など）。owner の個体が鳴らすので拾われない
+  schedule(t, fn) {
+    (this.scheduled ||= []).push({ t, fn });
+  }
+
+  // 本人の音を出さずに、聞こえる人にだけ音を届ける（置いた音を鳴らす時と同じ扱い）
+  playAt(pos, radius, kind, except = null) {
+    const z = (pos.floor ?? 0) * FLOOR_H + 0.5;
+    for (const c of this.chars) {
+      if (c === except || !c.alive) continue;
+      if (this.canHear(c, pos.x, pos.y, radius, z)) this.recordSound(c, pos, kind, null);
+    }
   }
 
   isAirborne(c) {
@@ -545,6 +619,17 @@ export class Battle {
       this.emit({ text: `${target.name} は${label || '攻撃'}を紙一重でかわした！`, actor: source, affected: target, pos: target, kind: 'combat' });
       return 0;
     }
+    // 受け流し：正面から殴られたら受け流して打ち返す
+    if (kind === 'melee' && source && target.status.counterUntil > this.t) {
+      const a = angleTo(target.x, target.y, source.x, source.y);
+      if (Math.abs(angDiff(target.facing, a)) <= (75 * Math.PI) / 180) {
+        target.status.counterUntil = 0;
+        this.emit({ text: `${target.name} は${source.name}の${label || '攻撃'}を受け流し、打ち返した！`, kind: 'combat', actor: target, affected: source, pos: target, sound: 6, soundKind: 'impact' });
+        source.status.stunUntil = Math.max(source.status.stunUntil, this.t + 0.6);
+        this.damage(source, target.def.power * 1.2, { source: target, kind: 'counter', from: target, label: '受け流しからの反撃' });
+        return 0;
+      }
+    }
     let dmg = amount * target.def.defense;
     const scoring = source && source.team !== target.team;
     let guarded = false;
@@ -651,6 +736,12 @@ export class Battle {
     this.t += dt;
     const w = this.world;
     w.zones = w.zones.filter(z => z.until > this.t);
+    if (this.scheduled && this.scheduled.length) {
+      const due = this.scheduled.filter(s => s.t <= this.t);
+      this.scheduled = this.scheduled.filter(s => s.t > this.t);
+      for (const s of due) s.fn();
+    }
+    for (const c of this.chars) if (c.burst && c.alive) this.updateBurst(c);
     this.updateSeals();
 
     for (const c of this.chars) {
@@ -717,7 +808,14 @@ export class Battle {
       const p = nearestWalkable(this.world, c.x, c.y, 3, c.floor);
       if (p) { c.x = p.x; c.y = p.y; }
       this.puff('dust', { x: c.x, y: c.y, floor: c.floor });
-      if (!soft) {
+      const up = c.uplifted;
+      c.uplifted = null;
+      if (up) {
+        // 打ち上げられて落ちた：受け身が取れず転倒
+        this.emit({ text: `${c.name} が地面に叩きつけられた！`, kind: 'combat', affected: c, pos: c, sound: 10, soundKind: 'fall' });
+        this.damage(c, 8, { source: up.source, kind: 'fall', label: '打ち上げからの落下' });
+        s.proneUntil = Math.max(s.proneUntil, this.t + 1.2);
+      } else if (!soft) {
         this.emit({ text: `${c.name} が落下して着地した`, kind: 'combat', actor: c, pos: c, sound: 8, soundKind: 'fall' });
         this.damage(c, 5, { source: null, kind: 'fall', label: '着地の衝撃' });
         s.stunUntil = Math.max(s.stunUntil, this.t + 0.3);
@@ -805,6 +903,19 @@ export class Battle {
 
     // 2階の床の外に出たら落下する（2階の窓から飛び出した時など）
     if (c.floor === 1 && !upperFloorAt(this.world, c.x, c.y)) this.startDrop(c);
+
+    // 潜んでいる人は、歩き出すと解ける
+    if (s.hideUntil > this.t && speed > 0.4 && kbSpeed <= 0.2) s.hideUntil = 0;
+    // 撒かれた玉：走って踏むと転ぶ（撒いた本人の側は踏まない）
+    if (speed > c.def.walk + 0.3 && !(s.proneUntil > this.t)) {
+      const cz = this.zoneAt('caltrops', c.x, c.y, c.floor);
+      if (cz && cz.team !== c.team) {
+        s.proneUntil = this.t + 1.2;
+        c.vx *= 0.3; c.vy *= 0.3;
+        this.emit({ text: `${c.name} は床に撒かれた玉を踏んで転んだ！`, kind: 'combat', affected: c, pos: c, sound: 6, soundKind: 'fall', hint: ABILITIES.seventh.observedHint });
+        interruptStep(this, c, '足を取られて転んだ', true);
+      }
+    }
 
     // 足音
     const moved = dist(ox, oy, c.x, c.y);
@@ -1018,6 +1129,8 @@ export class Battle {
       if (sealedCross !== null && sealedCross < best) { best = sealedCross; hit = { type: 'flame' }; }
       const sb = this.standBlocks(p, x1, y1, this.chars.find(x => x.id === p.owner));
       if (sb && sb.t < best) { best = sb.t; hit = { type: 'stand', c: sb.c }; }
+      const ub = this.umbrellaBlocks(p, x1, y1);
+      if (ub && ub.t < best) { best = ub.t; hit = { type: 'umbrella', c: ub.c }; }
       for (const c of this.chars) {
         if (!c.alive) continue;
         if (c.id === p.owner && this.t - p.born < 0.3) continue;
@@ -1036,7 +1149,10 @@ export class Battle {
         const sp = Math.hypot(p.vx, p.vy) || 1;
         const dropFloor = hz >= FLOOR_H - 0.1 && upperFloorAt(w, hx, hy) ? 1 : 0;
         const name = p.item.name;
-        if (hit.type === 'stand') {
+        if (hit.type === 'umbrella') {
+          this.emit({ text: `${hit.c.name} の傘が${name}を防いだ！`, kind: 'combat', actor: hit.c, pos: hit.c, sound: 6, soundKind: 'impact' });
+          this.landItem(p.item, hit.c.x + Math.cos(hit.c.facing) * 0.8, hit.c.y + Math.sin(hit.c.facing) * 0.8, hit.c.floor, owner, true);
+        } else if (hit.type === 'stand') {
           this.standHit(hit.c, p.damage, name, owner);
           this.landItem(p.item, hit.c.standBody.x, hit.c.standBody.y, hit.c.floor, owner, true);
         } else if (hit.type === 'char') {
@@ -1107,13 +1223,15 @@ export class Battle {
   // 音が鳴った瞬間、近くの個体（または鳴らした人物に取り付いた個体）が拾えば true（その場では鳴らない）
   captureSound(pos, radius, kind, text, sourceChar) {
     if (radius <= 0) return false;
+    // 無音の結界の中で鳴った音は、すべて吸い取られる
+    if (this.world.zones.length && this.zoneAt('silence', pos.x, pos.y, pos.floor ?? (sourceChar ? sourceChar.floor : 0))) return true;
     for (const owner of this.chars) {
       if (!owner.units || !owner.alive) continue;
       // 大きな音は、近くに配置された空きの個体が先に引っ張られる
       if (radius >= 9) {
         const z0 = this.zOf(pos);
         const free = owner.units.find(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, pos.x, pos.y) <= 1.0 && Math.abs(u.floor * FLOOR_H - z0) < 2.5);
-        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar); return true; }
+        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar); this.unitHeard(owner, sourceChar, free); return true; }
       }
       // 取り付いた個体：その人物から出る音を拾い続ける（保持は最後の1音）
       if (sourceChar) {
@@ -1134,9 +1252,17 @@ export class Battle {
         if (u.sound.radius >= radius) continue;
       }
       u.sound = this.makeSound(kind, radius, text, sourceChar);
+      this.unitHeard(owner, sourceChar, u);
       return true;
     }
     return false;
+  }
+
+  // 配置した個体のすぐそば（1m以内）で敵が音を立てた：七海にはその敵の居場所が正確に分かる（味方にも伝える）
+  unitHeard(owner, src, u) {
+    if (!src || src.team === owner.team || !src.alive) return;
+    const rec = { id: src.id, name: src.name, x: src.x, y: src.y, floor: src.floor, t: this.t, facing: src.facing, via: `エコー・ビーチ◆${u.n}` };
+    for (const c of this.chars) if (c.team === owner.team && c.alive) c.memory.seen[src.id] = { ...rec };
   }
 
   makeSound(kind, radius, text, who) {
@@ -1338,6 +1464,8 @@ export class Battle {
       }
       const fl = this.sealedBoundaryBetween(p.x, p.y, x1, y1);
       if (fl !== null && fl < bt) { bt = fl; hit = { flame: true }; }
+      const ub = this.umbrellaBlocks(p, x1, y1);
+      if (ub && ub.t < bt) { bt = ub.t; hit = { umbrella: ub.c }; }
       const sb = this.standBlocks(p, x1, y1, owner);
       if (sb && sb.t < bt && !p.hit.has(`stand_${sb.c.id}`)) { bt = sb.t; hit = { stand: sb.c }; }
       for (const c of this.chars) {
@@ -1356,6 +1484,10 @@ export class Battle {
       const hx = p.x + (x1 - p.x) * bt, hy = p.y + (y1 - p.y) * bt;
       p.traveled += rem * bt;
       rem -= rem * bt;
+      if (hit.umbrella) {
+        this.emit({ text: `${hit.umbrella.name} の傘が弾を防いだ！`, kind: 'combat', actor: hit.umbrella, pos: hit.umbrella, sound: 6, soundKind: 'ricochet' });
+        return false;
+      }
       if (hit.stand) {
         p.hit.add(`stand_${hit.stand.id}`);
         this.standHit(hit.stand, this.ballDamage(p.bounces), `${p.bounces}回跳ねた弾`, owner);

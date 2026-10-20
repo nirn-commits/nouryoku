@@ -6,7 +6,7 @@ import { localCpuPlan } from '../public/js/engine/localAI.js';
 import { compilePlan } from '../public/js/engine/plan.js';
 import { buildObservation } from '../public/js/engine/perception.js';
 import { localParse } from '../public/js/engine/localParser.js';
-import { findPath, isWalkablePoint } from '../public/js/engine/world.js';
+import { findPath, isWalkablePoint, nearestWalkable } from '../public/js/engine/world.js';
 import { makeItem } from '../public/js/engine/items.js';
 import { dist, pointInRect } from '../public/js/engine/vec.js';
 
@@ -680,4 +680,185 @@ test('スタンド：壁をすり抜けて先行し、壁越しに見える', ()
   runFor(b, 1);
   assert.ok(me.standBody.y < bd.y, 'スタンドが壁の外へ出ていない');
   assert.ok(b.canSee(me, foe.x, foe.y), 'スタンドの位置から壁の外が見えていない');
+});
+
+// ---------- 増やした行動 ----------
+
+function duel(me, foe, opts = {}) {
+  const b = new Battle({ seed: 91, mapId: 'lot', playerChar: me, cpuChar: foe, randomSpawn: false, ...opts });
+  b.player.x = 22; b.player.y = 9; b.player.facing = 0; b.player.floor = 0;
+  b.cpu.x = 23.4; b.cpu.y = 9; b.cpu.facing = Math.PI; b.cpu.floor = 0;
+  return b;
+}
+const plan = (b, c, steps) => b.setPlan(c, compilePlan(b, c, { steps }));
+
+test('掴み：ガードしている相手を崩して動けなくする／構えの間に殴られると潰される', () => {
+  const b = duel('kito', 'sogo');
+  plan(b, b.cpu, [{ action: 'guard', targetType: 'enemy', duration: 3 }]);
+  plan(b, b.player, [{ action: 'grab', targetType: 'enemy' }]);
+  const hp = b.cpu.hp;
+  runFor(b, 1);
+  assert.ok(b.cpu.hp < hp, '掴みのダメージが入っていない');
+  assert.ok(b.cpu.status.grabbedUntil > b.t - 0.5, '組み付かれていない');
+  // 殴り＞掴み
+  const b2 = duel('sogo', 'kito');
+  plan(b2, b2.cpu, [{ action: 'melee', targetType: 'enemy' }]);
+  plan(b2, b2.player, [{ action: 'wait', targetType: 'none', duration: 0.25 }, { action: 'grab', targetType: 'enemy' }]);
+  runFor(b2, 1.5);
+  assert.ok(!b2.log.some(l => l.text.includes('組み付いた')), '殴られたのに掴みが決まった');
+});
+
+test('受け流し：正面からの殴りを打ち返す', () => {
+  const b = duel('kito', 'sogo');
+  plan(b, b.player, [{ action: 'counter', targetType: 'none' }]);
+  plan(b, b.cpu, [{ action: 'melee', targetType: 'enemy' }]);
+  const hpMe = b.player.hp, hpFoe = b.cpu.hp;
+  runFor(b, 1.5);
+  assert.equal(b.player.hp, hpMe, '受け流したのにダメージを受けた');
+  assert.ok(b.cpu.hp < hpFoe, '打ち返していない');
+});
+
+test('体当たり：当たった相手を突き飛ばして転倒させる', () => {
+  const b = duel('kito', 'sogo');
+  b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
+  b.cpu.x = 25;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'tackle', targetType: 'enemy' }]);
+  const x0 = b.cpu.x, hp = b.cpu.hp;
+  runFor(b, 0.6);
+  assert.ok(b.cpu.status.proneUntil > b.t, '転倒していない');
+  runFor(b, 0.6);
+  assert.ok(b.cpu.x > x0 + 1.5, '突き飛ばされていない');
+  assert.ok(b.cpu.hp < hp);
+});
+
+test('潜む：6mより遠くからは見えず、歩き出すと解ける。フェイントは構えだけ見せる', () => {
+  const b = duel('sogo', 'kito');
+  b.cpu.x = 30;
+  plan(b, b.cpu, [{ action: 'hide', targetType: 'none', duration: 5 }]);
+  runFor(b, 0.2);
+  assert.ok(!b.canSee(b.player, b.cpu.x, b.cpu.y), '8m先の潜んだ相手が見えている');
+  b.cpu.x = 26; b.cpu.vx = 0;
+  assert.ok(b.canSee(b.player, b.cpu.x, b.cpu.y), '4mの距離で見えない');
+  plan(b, b.cpu, [{ action: 'move', mode: 'walk', targetType: 'point', x: 30, y: 9 }]);
+  runFor(b, 0.6);
+  assert.equal(b.cpu.status.hideUntil, 0, '歩いても潜んだまま');
+  const b2 = duel('sogo', 'kito');
+  plan(b2, b2.player, [{ action: 'feint', targetType: 'enemy' }]);
+  plan(b2, b2.cpu, [{ action: 'wait', targetType: 'none', duration: 2 }]);
+  runFor(b2, 0.2);
+  assert.ok(b2.player.windup, 'フェイントで構えを見せていない');
+  const hp = b2.cpu.hp;
+  runFor(b2, 1);
+  assert.equal(b2.cpu.hp, hp, 'フェイントなのに当たった');
+});
+
+test('物音を立てる・見回す・乗り越える', () => {
+  const b = duel('sogo', 'kito');
+  b.cpu.x = 30; b.cpu.facing = 0;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'decoy', targetType: 'point', x: 31, y: 9 }]);
+  runFor(b, 1);
+  assert.ok(b.cpu.memory.heard.some(h => h.kind === 'impact'), '物音が聞こえていない');
+  // 見回す：背後の敵に気づく
+  const b2 = duel('sogo', 'kito');
+  b2.player.facing = Math.PI; b2.cpu.x = 28;
+  plan(b2, b2.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b2, b2.player, [{ action: 'search', targetType: 'none' }]);
+  runFor(b2, 2);
+  assert.ok(b2.player.memory.seen.cpu, '見回しても背後の敵に気づかない');
+  // 乗り越える
+  const b3 = new Battle({ seed: 92, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito', randomSpawn: false });
+  const crate = b3.world.objects.find(o => o.kind === 'crate');
+  b3.cpu.x = 2; b3.cpu.y = 2;
+  const cc = { x: crate.x + crate.w / 2, y: crate.y + crate.h / 2 };
+  const start = nearestWalkable(b3.world, cc.x - crate.w / 2 - 0.8, cc.y, 1.5, 0);
+  b3.player.x = start.x; b3.player.y = start.y;
+  plan(b3, b3.cpu, [{ action: 'wait', targetType: 'none', duration: 4 }]);
+  plan(b3, b3.player, [{ action: 'vault', targetType: 'object', targetId: crate.id }]);
+  runFor(b3, 2.5);
+  assert.ok(b3.player.x > cc.x, '木箱の向こう側へ出ていない');
+});
+
+test('道具：消火器の煙幕は視線を遮り、傘は正面からの投擲を防ぐ', () => {
+  const b = duel('sogo', 'kito');
+  b.cpu.x = 30;
+  b.player.held = { id: 'ext', kind: 'extinguisher', name: '消火器' };
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  assert.ok(b.canSee(b.player, b.cpu.x, b.cpu.y));
+  plan(b, b.player, [{ action: 'use_item', targetType: 'enemy' }]);
+  runFor(b, 0.6);
+  assert.ok(b.world.zones.some(z => z.kind === 'smoke'), '煙幕が出ていない');
+  assert.ok(!b.canSee(b.player, b.cpu.x, b.cpu.y), '煙幕越しに見えている');
+  const b2 = duel('kito', 'sogo');
+  b2.cpu.x = 30;
+  b2.player.held = { id: 'umb', kind: 'umbrella', name: '傘' };
+  plan(b2, b2.player, [{ action: 'use_item', targetType: 'none' }]);
+  plan(b2, b2.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  runFor(b2, 0.4);
+  b2.spawnThrown(b2.cpu, makeItem('brick', 0, 0), 30, 9, 22, 9);
+  const hp = b2.player.hp;
+  runFor(b2, 1);
+  assert.equal(b2.player.hp, hp, '傘が投擲を防いでいない');
+});
+
+test('十河：真上に打ち上げると、落ちてダメージと転倒', () => {
+  const b = duel('sogo', 'kito');
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 4 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'perpendicular', effect: 'uplift', targetType: 'enemy' }]);
+  const hp = b.cpu.hp;
+  runFor(b, 0.8);
+  assert.ok(b.isAirborne(b.cpu), '打ち上がっていない');
+  runFor(b, 1.6);
+  assert.ok(!b.isAirborne(b.cpu));
+  assert.ok(b.cpu.hp <= hp - 6, '落下ダメージが入っていない');
+  assert.ok(b.cpu.status.proneUntil > b.t, '転倒していない');
+});
+
+test('錠二：密室の中で相手を炎の壁へ叩きつける', () => {
+  const { b, bd } = kitoRoom();
+  plan(b, b.player, [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }]);
+  runFor(b, 3);
+  assert.ok(bd.sealed);
+  b.player.x = b.cpu.x - 1; b.player.y = b.cpu.y; b.player.facing = 0;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' }]);
+  const hp = b.cpu.hp;
+  runFor(b, 1.5);
+  assert.ok(hp - b.cpu.hp >= 15, `炎への叩きつけのダメージが小さい（${hp - b.cpu.hp}）`);
+});
+
+test('七海：無音の結界の中の足音は聞こえず、足音の行列は離れた所を歩く音に聞こえる', () => {
+  const b = duel('nanami', 'kito');
+  b.cpu.x = 30;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 6 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'echo', effect: 'silence_zone', targetType: 'self' }]);
+  runFor(b, 1.2);
+  assert.ok(b.world.zones.some(z => z.kind === 'silence'), '結界が張られていない');
+  const n0 = b.cpu.memory.heard.length;
+  for (let i = 0; i < 3; i++) b.noise(b.player, 9, 'footsteps_run');
+  assert.equal(b.cpu.memory.heard.length, n0, '結界の中の足音が聞こえた');
+  const b2 = duel('nanami', 'kito');
+  b2.cpu.x = 28; b2.cpu.y = 9;
+  plan(b2, b2.cpu, [{ action: 'wait', targetType: 'none', duration: 6 }]);
+  plan(b2, b2.player, [{ action: 'ability', ability: 'echo', effect: 'decoy_walk', targetType: 'point', x: 27, y: 15 }]);
+  runFor(b2, 4);
+  const steps = b2.cpu.memory.heard.filter(h => h.kind.startsWith('footsteps'));
+  assert.ok(steps.length >= 3, `足音の行列が聞こえていない（${steps.length}）`);
+});
+
+test('鷺沼：撒いた玉を走って踏むと転び、牽制射撃は続けて撃つ', () => {
+  const b = duel('saginuma', 'kito');
+  b.cpu.x = 30;
+  plan(b, b.player, [{ action: 'ability', ability: 'seventh', effect: 'caltrops', targetType: 'point', x: 26, y: 9 }]);
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 0.5 }, { action: 'move', mode: 'run', targetType: 'point', x: 23, y: 9 }]);
+  runFor(b, 3);
+  assert.ok(b.log.some(l => l.text.includes('玉を踏んで転んだ')), '走って踏んでも転ばない');
+  const b2 = duel('saginuma', 'kito');
+  b2.cpu.x = 32;
+  const balls = b2.player.balls;
+  plan(b2, b2.cpu, [{ action: 'wait', targetType: 'none', duration: 4 }]);
+  plan(b2, b2.player, [{ action: 'ability', ability: 'seventh', effect: 'suppress', targetType: 'enemy' }]);
+  runFor(b2, 2.5);
+  assert.ok(balls - b2.player.balls >= 3, '牽制射撃で続けて撃っていない');
 });

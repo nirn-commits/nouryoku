@@ -15,6 +15,8 @@ const IMPOSSIBLE = [
 ];
 
 const COND = [
+  [/ガードしたら|守りを固めたら|ガードを固めたら|身構えたら/, () => ({ kind: 'enemy_guarding' })],
+  [/(倒れ|転ん|転倒し|よろけ|吹っ飛ん|打ち上が)(だ|た)ら/, () => ({ kind: 'enemy_prone' })],
   [/(入って|入り込んで|踏み込んで)(き|来)たら|(中|家|部屋|建物)に入ったら/, () => ({ kind: 'enemy_inside' })],
   [/(近づいて|接近して|近くに)(き|来)たら|間合いに入ったら|寄ってきたら/, () => ({ kind: 'enemy_within', value: 4 })],
   [/(飛んで|投げて)(き|来)たら|物が飛んで|飛来/, () => ({ kind: 'projectile_incoming' })],
@@ -254,6 +256,24 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const run = /走|駆け|急い|ダッシュ|全力|一気|飛び込/.test(clause);
   const mentionsEnemy = /敵|相手|あいつ|奴|やつ/.test(clause);
 
+  // --- 近接の駆け引き・隠密・地形の行動 ---
+  if (/掴みかか|掴む|掴ん|組み付|組みつ|捕まえ|羽交い締め/.test(clause) && !/物を掴|を拾/.test(clause)) return [{ action: 'grab', targetType: 'enemy' }];
+  if (/体当たり|タックル|突進|ぶちかま|ショルダー/.test(clause)) return [{ action: 'tackle', ...(mentionsEnemy || !dir ? { targetType: 'enemy' } : { targetType: 'direction', direction: dir }) }];
+  if (/受け流|カウンター|返し技|いなす|待ち構えて返/.test(clause)) return [{ action: 'counter', targetType: 'none' }];
+  if (/フェイント|殴るふり|殴るフリ|見せかけ|牽制のふり/.test(clause)) return [{ action: 'feint', targetType: 'enemy' }];
+  if (/潜む|潜んで|身を潜め|息を殺|気配を消|じっと隠れ/.test(clause) && !/移動|走|向か/.test(clause)) {
+    const m = clause.match(/(\d+(?:\.\d+)?)\s*秒/);
+    return [{ action: 'hide', targetType: 'none', ...(m ? { duration: Number(m[1]) } : {}) }];
+  }
+  if (/見回|見渡|周りを確認|周囲を確認|ぐるりと/.test(clause)) return [{ action: 'search', targetType: 'none' }];
+  if (/小石|石ころ|物音を立て|音を立てて(気を|注意を)?(引|逸|そら)|陽動|気を逸ら|注意を逸ら/.test(clause) && !has.echo) {
+    return [{ action: 'decoy', ...(pt ? toTarget(pt) : obj ? { targetType: 'object', targetId: obj.id } : { targetType: 'direction', direction: dir && dir !== 'cover' ? dir : 'away_from_enemy', distance: 8 }) }];
+  }
+  if (/乗り越え|飛び越え|よじ登って越え|またいで/.test(clause) && obj) return [{ action: 'vault', targetType: 'object', targetId: obj.id }];
+  if (/消火器/.test(clause) && /噴射|吹き|煙幕|撒/.test(clause)) return [{ action: 'use_item', ...(dir && dir !== 'cover' ? { targetType: 'direction', direction: dir } : mentionsEnemy ? { targetType: 'enemy' } : { targetType: 'none' }) }];
+  if (/煙幕/.test(clause)) return [{ action: 'use_item', targetType: mentionsEnemy ? 'enemy' : 'none' }];
+  if (/傘/.test(clause) && /開|広げ|盾|防/.test(clause)) return [{ action: 'use_item', targetType: 'none' }];
+
   // --- スタンドの出し入れ・先行 ---
   if (/スタンド/.test(clause) && !/スタンド(で|の拳)(殴|攻撃|叩)/.test(clause)) {
     if (/スタンドを?(戻|引っ込|しま|消)/.test(clause)) return [{ action: 'stand_in', targetType: 'none' }];
@@ -269,6 +289,21 @@ function parseClause(b, c, clause, has, ctx = {}) {
   }
 
   // --- 能力 ---
+  if (has.perpendicular && /打ち上げ|真上に(弾|飛ば|打ち)|空中に(弾|飛ば|打ち)|上に弾き上げ/.test(clause)) return [{ action: 'ability', ability: 'perpendicular', effect: 'uplift', targetType: 'enemy' }];
+  if (has.hotel && /炎(の壁)?(に|へ)(叩きつけ|投げ|押し付|ぶつけ)|壁の炎/.test(clause)) return [{ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' }];
+  if (has.echo && /結界|無音の|音を消す場|音の消える/.test(clause)) {
+    const where = pt ? toTarget(pt) : obj ? toTarget(obj) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir, distance: 6 } : { targetType: 'self' };
+    return [{ action: 'ability', ability: 'echo', effect: 'silence_zone', ...where }];
+  }
+  if (has.echo && /足音の行列|足音を(歩かせ|並べ|行進|移動させ)|誰かが歩いて(いる|る)ように/.test(clause)) {
+    const where = pt ? toTarget(pt) : obj ? toTarget(obj) : { targetType: 'direction', direction: dir && dir !== 'cover' ? dir : 'away_from_enemy', distance: 14 };
+    return [{ action: 'ability', ability: 'echo', effect: 'decoy_walk', ...where }];
+  }
+  if (has.seventh && /撒く|撒い|ばら撒|まきびし|床に(玉|球)/.test(clause)) {
+    const where = pt ? toTarget(pt) : obj ? toTarget(obj) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir, distance: 4 } : { targetType: 'self' };
+    return [{ action: 'ability', ability: 'seventh', effect: 'caltrops', ...where }];
+  }
+  if (has.seventh && /牽制|連射|撃ち続け|弾幕|釘付け/.test(clause)) return [{ action: 'ability', ability: 'seventh', effect: 'suppress', ...(dir && dir !== 'cover' && !mentionsEnemy ? { targetType: 'direction', direction: dir } : { targetType: 'enemy' }) }];
   if (has.perpendicular && PERP_RE.test(clause)) {
     const held = (/持った物|手の物|手に持/.test(clause) || ITEM_WORDS.some(([re]) => re.test(clause))) && /飛ばす|飛ばし|弾き出|投げ|放つ|撃ち出/.test(clause);
     if (held) {

@@ -21,6 +21,11 @@ function stateWords(b, c) {
   if (c.status.proneUntil > t) s.push('転倒中');
   if (c.status.stunUntil > t) s.push('怯み');
   if (c.status.guardUntil > t) s.push('ガード中');
+  if (c.status.counterUntil > t) s.push('受け流しの構え');
+  if (c.status.umbrellaUntil > t) s.push('傘を開いて構えている');
+  if (c.status.grabbedUntil > t) s.push('組み付かれて動けない');
+  if (c.status.hideUntil > t) s.push('身を潜めている');
+  if (c.uplifted) s.push('打ち上げられて落下中');
   if (c.windup) s.push(c.windup.kind === 'melee' ? '殴りかかる構え' : c.windup.kind === 'throw' ? '投擲の構え' : '何かを発動しようとしている');
   const sp = Math.hypot(c.vx, c.vy);
   if (sp > c.def.walk + 0.3) s.push('走っている');
@@ -100,6 +105,8 @@ export function rulesSummary() {
       jump_down: '2階の窓から jump_down で外へ飛び降りられる（着地の衝撃あり）',
       items: '戦場に落ちている物（items_seen）は pickup で拾って持てる（1つまで）。持った物の方が強ければ melee はそれで殴る。throw は持った物を投げる（初めは誰も何も持っていない）',
       point_floor: 'point を2階の地点にしたい時は floor=1 を付ける',
+      close_combat: '近接の読み合い：殴り(melee)は掴み(grab)の構えを潰す／掴みはガード・受け流しを崩す／受け流し(counter)は正面からの殴りを打ち返す。フェイント(feint)で相手の構えや回避を空振りさせられる。体当たり(tackle)は突き飛ばして転倒させる',
+      stealth: '潜む(hide)と6mより遠くから見つからない（動くと解ける）。物音を立てる(decoy)で離れた所に音を出して誘える。煙幕（消火器の use_item）は視線を遮る',
     },
   };
 }
@@ -192,6 +199,10 @@ export function buildObservation(b, c) {
     enemy,
     heard,
     visible_projectiles: projectiles,
+    // 場の仕掛け：見えている煙幕・撒かれた玉、味方の無音の結界
+    zones: b.world.zones
+      .filter(z => (z.team !== undefined && z.team === c.team) || (z.kind !== 'silence' && b.canSee(c, z.x, z.y, (z.floor ?? 0) * 3 + 0.3)) || dist(c.x, c.y, z.x, z.y) < z.r + 1)
+      .map(z => ({ kind: { smoke: '煙幕（視線を遮る）', caltrops: '床に撒かれた玉（走ると転ぶ）', silence: '無音の結界（中の音が消える）' }[z.kind] || z.kind, at: [r1(z.x), r1(z.y)], radius: z.r, seconds_left: r1(z.until - b.t), ...(z.team !== undefined ? { mine: z.team === c.team } : {}) })),
     // 拾える物（見えている物だけ）。pickup の targetId に id を使う
     items_seen: b.world.items
       .filter(i => dist(c.x, c.y, i.x, i.y) < 25 && b.canSee(c, i.x, i.y, (i.floor ?? 0) * 3 + 0.3))

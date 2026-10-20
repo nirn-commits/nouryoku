@@ -339,6 +339,39 @@ export class Renderer {
     // 密室の炎
     for (const bd of b.world.buildings) if (bd.sealed) this.drawFlames(b, bd);
 
+    // 場の仕掛け：煙幕（見える範囲）・撒かれた玉（見える所）・無音の結界（自分の側のものだけ）
+    for (const z of b.world.zones) {
+      const zz = (z.floor ?? 0) * FLOOR_H;
+      const zx = z.x * P, zy = this.sy(z.y, zz);
+      if (z.kind === 'smoke') {
+        const left = Math.min(1, (z.until - b.t) / 2);
+        for (let i = 0; i < 9; i++) {
+          const a = i * 2.1 + b.t * 0.3, rr = z.r * (0.25 + (i % 3) * 0.28);
+          ctx.fillStyle = `rgba(225,228,232,${0.42 * left})`;
+          ctx.beginPath(); ctx.arc(zx + Math.cos(a) * rr * P, this.sy(z.y + Math.sin(a) * rr * 0.7, zz + 1 + (i % 3) * 0.4), z.r * 0.55 * P, 0, Math.PI * 2); ctx.fill();
+        }
+      } else if (z.kind === 'caltrops' && (debug || z.team === me.team || see(z.x, z.y, zz + 0.1))) {
+        ctx.fillStyle = 'rgba(235,235,245,0.9)';
+        for (let i = 0; i < 14; i++) {
+          const a = i * 2.4, rr = z.r * ((i * 37) % 10) / 10;
+          ctx.beginPath(); ctx.arc(zx + Math.cos(a) * rr * P, zy + Math.sin(a) * rr * P * 0.7, Math.max(1.5, P * 0.06), 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.strokeStyle = 'rgba(235,235,245,0.35)';
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (z.kind === 'silence' && (debug || z.team === me.team)) {
+        ctx.strokeStyle = 'rgba(122,209,197,0.8)';
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(122,209,197,0.9)';
+        ctx.font = `${Math.max(10, P * 0.4)}px sans-serif`;
+        ctx.fillText(`無音の結界 ${(z.until - b.t).toFixed(0)}s`, zx - z.r * P * 0.6, zy - z.r * P * 0.75);
+      }
+    }
+
     // エコー・ビーチの個体：自分と味方の個体は常に、相手の個体はすぐそば（2.5m以内）だけ見える
     // 近くに固まった個体はまとめて、スタンドのチップ1つと体数の数字で示す
     for (const c of b.chars) {
@@ -1113,7 +1146,7 @@ export class Renderer {
       ctx.closePath();
       ctx.fill();
     }
-    ctx.globalAlpha = c.floor === 0 && b.bushAt(c.x, c.y) ? 0.55 : 1;
+    ctx.globalAlpha = (c.floor === 0 && b.bushAt(c.x, c.y)) || s.hideUntil > b.t ? 0.5 : 1;
     const h = 1.75;
     const chip = this.chips && this.chips[c.charId];
     const chipSize = chipSizeFor(P);
@@ -1175,6 +1208,22 @@ export class Renderer {
     if (c.held) {
       this.drawItem({ ...c.held, x: c.x + Math.cos(c.facing + 0.8) * c.r * 1.2, y: c.y + Math.sin(c.facing + 0.8) * c.r * 1.2 }, z + 1.0, false);
     }
+    // 受け流しの構え（青い弧）・開いた傘・組み付かれている
+    if (s.counterUntil > b.t) {
+      ctx.strokeStyle = '#6cf';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(x, (footY + headY) / 2, bw * 1.6, (footY - headY) * 0.65, 0, c.facing - 1.4, c.facing + 1.4); ctx.stroke();
+    }
+    if (s.umbrellaUntil > b.t) {
+      const ux = x + Math.cos(c.facing) * bw * 1.6, uy = (footY + headY) / 2 + Math.sin(c.facing) * bw;
+      ctx.fillStyle = 'rgba(58,110,165,0.85)';
+      ctx.beginPath(); ctx.ellipse(ux, uy, bw * 1.2, bw * 1.5, c.facing, -Math.PI / 2, Math.PI / 2); ctx.fill();
+    }
+    if (s.grabbedUntil > b.t) {
+      ctx.fillStyle = '#ffd166';
+      ctx.font = `bold ${Math.max(10, P * 0.42)}px sans-serif`;
+      ctx.fillText('組み付かれ', x - bw * 1.5, footY + Math.max(12, P * 0.5));
+    }
     if (s.guardUntil > b.t) {
       ctx.strokeStyle = '#ffd166';
       ctx.lineWidth = 3;
@@ -1193,7 +1242,7 @@ export class Renderer {
     if (prone) tags.push('転倒');
     if (s.stunUntil > b.t) tags.push('怯み');
     if (c.climb) tags.push('階段');
-    if (c.floor === 0 && b.bushAt(c.x, c.y)) tags.push('潜伏');
+    if ((c.floor === 0 && b.bushAt(c.x, c.y)) || s.hideUntil > b.t) tags.push('潜伏');
     if (air) tags.push('空中');
     ctx.fillText(`${isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
     ctx.globalAlpha = 1;

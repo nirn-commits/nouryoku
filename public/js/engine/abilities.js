@@ -122,6 +122,28 @@ const IMPL = {
       return { ok: true };
     }
 
+    if (effect === 'uplift') {
+      const t = enemyTarget(b, c, res, ab.effects.uplift.range);
+      if (t.err) return fail(t.err);
+      const e = t.e;
+      if (b.isAirborne(e) || e.launch) return fail('相手が地面に立っていない');
+      if (e.floor !== c.floor) return fail('相手が別の階にいる');
+      if ((e.def.kg ?? 60) > 100) return fail(`${e.name}は重すぎる（上限100kg）`);
+      mark(e.x, e.y);
+      interruptStep(b, e, '足元から真上へ弾き上げられた', true);
+      if (buildingAt(b.world, e.x, e.y)) {
+        b.emit({ text: `『${ab.name}』— ${e.name}を床から真上へ弾き上げ、天井に叩きつけた！`, obsText: `${c.name} が触れた瞬間、${e.name}が真上へ弾けて天井に激突した！`, kind: 'ability', actor: c, affected: e, pos: e, sound: 10, soundKind: 'impact', hint: ab.observedHint });
+        b.damage(e, 10, { source: c, kind: 'slam', label: '天井への激突' });
+        e.status.stunUntil = Math.max(e.status.stunUntil, b.t + 0.8);
+        return { ok: true };
+      }
+      e.air = { landAt: b.t + 1.8, since: b.t };
+      e.uplifted = { source: c };
+      e.kbx = e.kby = 0;
+      b.launchDone(e.x, e.y, 10);
+      return ok(`『${ab.name}』— ${e.name}を足元の地面から真上へ10m打ち上げた！`, `${c.name} が触れた瞬間、${e.name}が真上へ打ち上げられた！`, e, e);
+    }
+
     // launch_held：手に持った物を10m先まで
     if (!c.held) return fail('飛ばす物を持っていない（先に何か拾う）');
     if (res.error) return fail(res.error);
@@ -176,6 +198,44 @@ const IMPL = {
         log(`${pick.length}体を(${p.x.toFixed(1)}, ${p.y.toFixed(1)})へ送り、聞き耳を立てさせる`);
         return { ok: true };
       }
+      case 'silence_zone': {
+        const p = targetPoint();
+        if (!p) return fail(res.error || '結界を張る場所が分からない');
+        if (!inRange50(p)) return fail(`結界の場所が射程外（${dist(c.x, c.y, p.x, p.y).toFixed(1)}m > 50m）`);
+        const pick = free().slice(0, 6);
+        if (pick.length < 4) return fail('空いている個体が足りない（4体以上必要）');
+        let far = 0;
+        pick.forEach((u, i) => {
+          const a = (i / pick.length) * Math.PI * 2;
+          u.state = 'move'; u.attachedTo = null;
+          u.target = { x: p.x + Math.cos(a) * 2.6, y: p.y + Math.sin(a) * 2.6, floor: p.floor };
+          far = Math.max(far, dist(u.x, u.y, u.target.x, u.target.y));
+        });
+        // 個体が円陣に着いた時点から10秒間
+        const start = b.t + far / 10;
+        b.schedule(start, () => b.addZone({ kind: 'silence', x: p.x, y: p.y, r: 3, floor: p.floor, until: start + 10, owner: c.id, team: c.team }));
+        log(`${pick.length}体で(${p.x.toFixed(1)}, ${p.y.toFixed(1)})に円陣を組み、無音の結界を張る（半径3m・10秒）`);
+        return { ok: true };
+      }
+      case 'decoy_walk': {
+        const p = targetPoint();
+        if (!p) return fail(res.error || '足音を向かわせる場所が分からない');
+        if (!inRange50(p)) return fail('射程外（50mより遠い）');
+        const holder = alive.find(u => u.sound && u.sound.kind.startsWith('footsteps') && u.state !== 'attached');
+        if (!holder) return fail('足音を抱えた個体がいない（先に足音を集める）');
+        const snd = holder.sound;
+        holder.sound = null;
+        holder.state = 'move'; holder.attachedTo = null; holder.target = { x: p.x, y: p.y, floor: p.floor };
+        // 本体の少し先から目的地まで、0.5秒ごとに足音を鳴らす
+        const sx = c.x + (p.x - c.x) * 0.25, sy = c.y + (p.y - c.y) * 0.25;
+        for (let i = 0; i < 6; i++) {
+          const k = i / 5;
+          const at = { x: sx + (p.x - sx) * k, y: sy + (p.y - sy) * k, floor: p.floor };
+          b.schedule(b.t + 0.3 + i * 0.5, () => b.playAt(at, snd.radius, snd.kind, c));
+        }
+        log(`「${snd.label}」を並べ、(${p.x.toFixed(1)}, ${p.y.toFixed(1)})へ向かう足音の行列を鳴らす`);
+        return { ok: true };
+      }
       case 'scratch': {
         const e = b.enemyOf(c);
         if (res.error) return fail(res.error);
@@ -219,6 +279,26 @@ const IMPL = {
   },
 
   seventh(b, c, effect, res, ab, step) {
+    if (effect === 'caltrops') {
+      if (res.error) return fail(res.error);
+      if (c.balls <= 0) return fail('玉が残っていない');
+      let { x, y } = res;
+      if (res.self) { x = c.x; y = c.y; }
+      if (dist(c.x, c.y, x, y) > ab.effects.caltrops.range) return fail(`撒く場所が遠すぎる（${dist(c.x, c.y, x, y).toFixed(1)}m > ${ab.effects.caltrops.range}m）`);
+      const n = Math.min(5, c.balls);
+      c.balls -= n;
+      b.addZone({ kind: 'caltrops', x, y, r: 1.5, floor: res.f ?? c.floor, until: b.t + 20, owner: c.id, team: c.team, n });
+      b.emit({ text: `『${ab.name}』— 玉を${n}個、(${x.toFixed(1)}, ${y.toFixed(1)})の床に撒いた（残り${c.balls}個）`, obsText: `${c.name} が床に小さな玉をばら撒いた`, kind: 'ability', actor: c, pos: { x, y }, sound: 4, soundKind: 'flick', hint: ab.observedHint });
+      return { ok: true };
+    }
+    if (effect === 'suppress') {
+      if (res.error) return fail(res.error);
+      if (c.balls <= 0) return fail('玉が残っていない');
+      const e = res.char || (step.target.type === 'enemy' ? b.enemyOf(c) : null);
+      c.burst = { left: Math.min(4, c.balls), next: b.t, angle: res.angle ?? angleTo(c.x, c.y, res.x, res.y), target: e };
+      b.emit({ text: `『${ab.name}』— 牽制の連射を始める`, kind: 'ability', actor: c, pos: c, hint: ab.observedHint });
+      return { ok: true };
+    }
     const inFlight = b.world.projectiles.filter(p => p.kind === 'ball' && p.owner === c.id).length;
     const need = effect === 'spread' ? 3 : 1;
     if (inFlight + need > 3) return fail(`同時に飛ばせる弾は3発まで（飛んでいる弾${inFlight}発）`);
@@ -306,6 +386,32 @@ const IMPL = {
     });
     return { ok: true };
   },
+};
+
+// ホテル・カリフォルニア：密室の中で、相手を炎の壁へ叩きつける
+IMPL.hotel = (b, c, effect, res, ab) => {
+  if (effect !== 'flame_slam') return fail('不明な効果');
+  const room = buildingAt(b.world, c.x, c.y);
+  if (!room || !room.sealed || room.sealed.by !== c.id) return fail('自分の密室の中でしか使えない');
+  const e = b.enemyOf(c);
+  if (!e.alive || !b.canSee(c, e.x, e.y)) return fail('相手が見えていない');
+  if (dist(c.x, c.y, e.x, e.y) > 1.6) return fail(`相手に手が届かない（${dist(c.x, c.y, e.x, e.y).toFixed(1)}m > 1.6m）`);
+  // 一番近い外壁の方向へ投げる
+  const edges = [
+    { d: e.x - room.x, x: -1, y: 0 }, { d: room.x + room.w - e.x, x: 1, y: 0 },
+    { d: e.y - room.y, x: 0, y: -1 }, { d: room.y + room.h - e.y, x: 0, y: 1 },
+  ].sort((p, q) => p.d - q.d);
+  const dir = edges[0];
+  interruptStep(b, e, '炎の壁へ投げつけられた', true);
+  b.emit({ text: `『${ab.name}』— ${e.name}を掴み、燃えさかる外壁へ叩きつける！`, obsText: `${c.name} が ${e.name} を炎の壁へ投げつけた！`, kind: 'ability', actor: c, affected: e, pos: e, sound: 10, soundKind: 'impact', hint: ab.observedHint });
+  b.damage(e, 8, { source: c, kind: 'grab', label: '投げつけ' });
+  if (e.alive) {
+    e.kbx = dir.x * 11; e.kby = dir.y * 11;
+    e.kbSlam = { damage: 6, source: c };
+    e.status.proneUntil = Math.max(e.status.proneUntil, b.t + 0.8);
+    b.burn(e, room);
+  }
+  return { ok: true };
 };
 
 export function applyAbility(b, c, step, res) {
