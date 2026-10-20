@@ -55,6 +55,8 @@ export function landmarks(b, c = null) {
     const item = { id: o.id, name: o.name, kind: o.kind, at: [r1(cc.x), r1(cc.y)] };
     if (o.floor) item.floor = o.floor;
     if (o.kind === 'door' || o.kind === 'window') item.state = o.openable ? (o.open ? 'open' : 'closed') : 'fixed';
+    // 窓はガラスの状態も別に持つ（割れていれば枠が閉まっていても通れる。密室の判定は枠の開閉）
+    if (o.kind === 'window') item.glass = o.broken ? 'broken' : 'intact';
     if (o.height >= 0.5 && o.kind !== 'wall' && !exit) item.height = o.height;
     if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
     if (o.kind === 'wall' && o.style === 'block') item.height = o.height;
@@ -87,7 +89,7 @@ export function rulesSummary() {
     melee: `近接攻撃の射程${RULES.meleeRange}m、振りかぶり${RULES.meleeWindup}秒（その間に避けられうる）`,
     environment: {
       wall: '壁・塀・柱。移動も視線も遮る。壊せる（外壁は不可）',
-      window: '窓・ガラス。視線は通す。割れると通り抜けられる',
+      window: '窓。枠の開閉（state）とガラス（glass）を別に持つ。視線は通す。枠が開いているかガラスが割れていれば通り抜けられる。ガラスが割れても枠は閉められ、密室の判定は枠が閉まっているかで決まる（はめ殺しのガラスは割れたら閉められない）',
       bush: '植え込み。通れるが遅く音が出る。中にいると2.5m以内に近づかれない限り見つからない（中から外は見える）',
       car: '車。遮蔽物になる。衝撃を与えると防犯アラームが鳴り、遠くまで聞こえる（陽動に使える）',
       hole: '掘削穴。通れないが視線は通る',

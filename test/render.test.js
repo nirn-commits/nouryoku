@@ -42,6 +42,10 @@ test('描画：建物の中でスタンドを出していても、描画が例�
   b.cpu.x = me.x + 1; b.cpu.y = me.y;
   me.standBody = { x: me.x + 1, y: me.y, floor: 0, facing: 0, goal: {} };
   b.cpu.standBody = { x: b.cpu.x - 0.5, y: b.cpu.y, floor: 0, facing: Math.PI, goal: {} };
+  // 割れた窓（枠が閉まっているもの・開いているもの）も描く
+  const wins = b.world.objects.filter(o => o.kind === 'window' && o.building === bd.id);
+  b.damageObject(wins[0], 99, null);
+  if (wins[1]) { b.damageObject(wins[1], 99, null); b.setOpen(wins[1], true, null); }
   const r = makeRenderer(b);
   r.draw(b);
   // 2階にいる場合とクローズアップ中も

@@ -424,6 +424,16 @@ function checkCondition(b, c, cond, st) {
     case 'enemy_attacking': return visible && pe.char.windup && dist(c.x, c.y, pe.x, pe.y) < 6;
     case 'hp_below': return c.hp <= (cond.value ?? 40);
     case 'damaged': return c.lastDamagedAt > st.t0;
+    case 'enemy_inside': {
+      const bd = b.buildingOf(c);
+      // どの敵でも、同じ建物の中にいるのが見えたら（味方の報告も含む）
+      return !!bd && b.enemiesOf(c).some(e => {
+        if (!e.alive) return false;
+        if (b.canSee(c, e.x, e.y)) return pointInRect(e.x, e.y, bd);
+        const r = c.memory.seen[e.id];
+        return r && b.t - r.t < 1 && pointInRect(r.x, r.y, bd);
+      });
+    }
   }
   return false;
 }
@@ -789,7 +799,7 @@ const EXEC = {
           b.burn(c);
           return { fail: '窓の外は炎の壁で、飛び出せない' };
         }
-        if (b.world.objects.includes(o) && !o.open) {
+        if (b.world.objects.includes(o) && !o.open && !o.broken) {
           b.emit({ text: `${c.name} が${o.name}を突き破った！`, kind: 'combat', actor: c, pos: { ...cc, floor: 1 }, sound: 12, soundKind: 'glass' });
           b.destroyObject(o, c);
           b.damage(c, 2, { source: null, kind: 'fall', label: 'ガラス' });
@@ -1032,9 +1042,11 @@ function openClose(open) {
       if (!b.world.objects.includes(o)) return { fail: '対象が壊れた' };
       const n = nearestPointOnRect(c.x, c.y, o);
       if (D.phase === 'approach') {
-        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= 1.0) {
+        // スタンドを出していれば、スタンドの手が届く所（射程の分だけ遠く）から素早く開け閉めできる
+        const reach = 1.0 + (c.standBody ? c.def.standRange || 0 : 0);
+        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= reach && hasLOS(b.world, c.x, c.y, n.x, n.y)) {
           D.phase = 'act';
-          D.until = b.t + 0.35;
+          D.until = b.t + (c.standBody ? 0.15 : 0.35);
           st.locked = true;
           return 'running';
         }

@@ -107,6 +107,29 @@ function kitoPlan(b, c, pe, say) {
     steps.push({ action: 'melee', targetType: 'enemy' });
     return { interpretation: '（CPU・ローカル）出口を閉めて密室にする', speech: say(0.4) || (exits.length <= 1 ? '閉めるぞ' : null), steps };
   }
+  // 誘い込み：自分が建物の中にいて敵が近くにいるなら、入ってきた瞬間に出口を閉める（待ち伏せ）
+  if (bd && !bd.sealed && pe && pe.visible && dist(c.x, c.y, pe.x, pe.y) < 14 && bd.w * bd.h * bd.floors <= 200) {
+    const exits = openExits(bd);
+    if (exits.length) {
+      steps.push({ action: 'stand_out', targetType: 'none' });
+      for (const [i, o] of exits.slice(0, 3).entries()) steps.push({ action: 'close', targetType: 'object', targetId: o.id, ...(i === exits.length - 1 || i === 2 ? { condition: { kind: 'enemy_inside' } } : {}) });
+      steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
+      return { interpretation: '（CPU・ローカル）部屋に誘い込み、入ってきたら閉める', speech: say(0.3) || (b.rng() < 0.4 ? '……入れ' : null), steps };
+    }
+  }
+  // 誘い込み：外で敵と向き合ったら、近くの家へ入って待つ（敵が追ってきたら閉じ込める）
+  if (!bd && pe && pe.visible && dist(c.x, c.y, pe.x, pe.y) < 16 && b.rng() < 0.45) {
+    const house = b.world.buildings
+      .filter(x => x.w * x.h * x.floors <= 200 && x.exits.some(id => b.objectById(id)?.kind === 'door'))
+      .map(x => ({ x, d: dist(c.x, c.y, x.x + x.w / 2, x.y + x.h / 2) }))
+      .filter(h => h.d < 12)
+      .sort((p, q) => p.d - q.d)[0];
+    if (house) {
+      steps.push({ action: 'move', mode: 'run', targetType: 'object', targetId: house.x.id });
+      steps.push({ action: 'look', targetType: 'enemy' });
+      return { interpretation: '（CPU・ローカル）家に入って誘い込む', speech: b.rng() < 0.3 ? '来い' : null, steps };
+    }
+  }
   if (pe && pe.visible) {
     // 相手が建物に入ったら追って入る。外なら追いかけて殴る
     steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });

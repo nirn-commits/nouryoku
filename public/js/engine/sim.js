@@ -600,8 +600,21 @@ export class Battle {
     this.destroyObject(o, source);
   }
 
+  // 窓のガラスが割れる：窓枠は残り、枠の開け閉めとは別に「割れている」状態になる（通り抜けられる）
+  breakGlass(o, source) {
+    if (o.broken) return;
+    o.broken = true;
+    o.blocksMove = false;
+    o.indestructible = true;
+    const center = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
+    this.emit({ text: `${o.name} のガラスが割れた！（窓枠は${o.openable ? (o.open ? '開いたまま' : '閉まったまま') : 'はめ殺し'}）`, kind: 'env', pos: center, sound: 12, soundKind: 'glass', actor: source });
+    this.puff('glass', { ...center, z: o.floor * FLOOR_H + 1.2 });
+    markNavDirty(this.world);
+  }
+
   destroyObject(o, source, cause = '破壊') {
     const w = this.world;
+    if (o.kind === 'window') { this.breakGlass(o, source); return; }
     w.objects = w.objects.filter(x => x !== o);
     const center = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
     if (o.kind === 'wall') {
@@ -611,10 +624,6 @@ export class Battle {
       for (const c of this.chars) {
         if (c !== source && c.alive && c.floor <= o.floor && distToRect(c.x, c.y, o) <= 1.2) this.damage(c, 10, { source, kind: 'debris', label: '崩落した瓦礫' });
       }
-    } else if (o.kind === 'window') {
-      this.emit({ text: `${o.name} のガラスが割れた！`, kind: 'env', pos: center, sound: 12, soundKind: 'glass', actor: source });
-      this.puff('glass', { ...center, z: o.floor * FLOOR_H + 1.2 });
-      // 割れた窓は通り抜けられる開口部になる（建物の記録は残す）
     } else {
       w.rubble.push({ x: o.x, y: o.y, w: o.w, h: o.h, floor: o.floor });
       this.emit({ text: `${o.name} が壊れた。`, kind: 'env', pos: center, sound: 10, soundKind: 'crash', actor: source });
@@ -819,7 +828,7 @@ export class Battle {
     if (!o.openable || !this.world.objects.includes(o) || !!o.open === open) return false;
     if (!open && this.chars.some(c => c.alive && c.floor === o.floor && circleRectPush(c.x, c.y, c.r, o))) return false;
     o.open = open;
-    o.blocksMove = !open;
+    o.blocksMove = !open && !o.broken;
     if (o.kind === 'door') o.blocksSight = !open;
     if (o.kind === 'window') markNavDirty(this.world);
     const cc = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
@@ -828,9 +837,13 @@ export class Battle {
     return true;
   }
 
+  // 出口が開いているか：窓は「枠」で判定する（ガラスが割れていても枠を閉めれば閉まった扱い）。
+  // はめ殺しのガラスが割れたものと、壊れて無くなった出口は、閉められないので開いた扱い
   exitOpen(id) {
     const o = objectById(this.world, id);
-    return !o || !!o.open; // 壊れて無くなった出口は開いた扱い
+    if (!o) return true;
+    if (o.kind === 'window' && !o.openable) return !!o.broken;
+    return !!o.open;
   }
 
   // 錠二が建物の内側で、最後の出口を自分の手で閉めた瞬間に密室が成立する

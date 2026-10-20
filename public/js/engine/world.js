@@ -216,7 +216,7 @@ export function crossesSlab(world, x0, y0, z0, x1, y1, z1) {
 export function soundFactor(world, x0, y0, x1, y1, z0 = EYE_H, z1 = EYE_H) {
   let f = 1;
   for (const o of world.objects) {
-    if (o.soundDamp >= 1) continue;
+    if (o.soundDamp >= 1 || o.open || o.broken) continue; // 開いた扉・窓、割れた窓は音を遮らない
     const r = segRectRange(x0, y0, x1, y1, o);
     if (!r || r[1] <= 1e-4 || r[0] >= 1 - 1e-4) continue;
     const za = z0 + (z1 - z0) * r[0], zb = z0 + (z1 - z0) * r[1];

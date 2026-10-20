@@ -8,7 +8,7 @@ import { buildObservation } from '../public/js/engine/perception.js';
 import { localParse } from '../public/js/engine/localParser.js';
 import { findPath, isWalkablePoint } from '../public/js/engine/world.js';
 import { makeItem } from '../public/js/engine/items.js';
-import { dist } from '../public/js/engine/vec.js';
+import { dist, pointInRect } from '../public/js/engine/vec.js';
 
 // 双方ローカル思考でターン制の戦闘を進める
 async function playTurns(b, maxTurns) {
@@ -270,7 +270,7 @@ test('高さ：床と天井は階をまたぐ視線を遮る', () => {
 });
 
 test('高さ：階段を使って2階へ上がり、2階の窓から飛び降りられる', () => {
-  const b = new Battle({ seed: 23, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  const b = new Battle({ seed: 23, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito', randomSpawn: false });
   b.cpu.x = 33; b.cpu.y = 3;
   b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'move', mode: 'run', targetType: 'object', targetId: 'house_left_2f' }] }));
   runFor(b, 12);
@@ -279,7 +279,7 @@ test('高さ：階段を使って2階へ上がり、2階の窓から飛び降り
   runFor(b, 6);
   assert.equal(b.player.floor, 0, '飛び降りていない');
   assert.ok(!b.buildingOf(b.player), '建物の外に出ていない');
-  assert.ok(!b.objectById('house_left_f2_window_s'), '窓を突き破っていない');
+  assert.ok(b.objectById('house_left_f2_window_s').broken, '窓を突き破っていない（ガラスが割れていない）');
 });
 
 test('扉：閉じた扉は歩いて通ると開き、閉める行動で閉まる', () => {
@@ -613,4 +613,40 @@ test('2階へ：「階段を上る」で2階まで上がり、遠い家の2階�
   assert.equal(p2.steps[0].mode, 'run', '遠い移動なのに歩きのまま');
   const p3 = compilePlan(b2, b2.player, localParse(b2, b2.player, '鈴木家の2階に歩いて行く'));
   assert.equal(p3.steps[0].mode, 'walk', '歩くと書いたのに走りになった');
+});
+
+test('窓：ガラスの割れと枠の開閉は別。割れても枠を閉めれば密室の判定では閉まった扱い', () => {
+  const { b, bd } = kitoRoom();
+  const win = b.objectById('house_right_window');
+  b.damageObject(win, 99, b.cpu);
+  assert.ok(b.world.objects.includes(win), '割れた窓が消えた');
+  assert.ok(win.broken && !win.open && !win.blocksMove, '割れた窓の状態がおかしい');
+  assert.equal(b.exitOpen(win.id), false, '枠が閉まっているのに開いた扱い');
+  b.setOpen(win, true, b.cpu);
+  assert.ok(win.open && win.broken);
+  assert.equal(b.exitOpen(win.id), true);
+  b.setOpen(win, false, b.player);
+  assert.equal(b.exitOpen(win.id), false);
+  // 割れた窓が残っていても、最後の扉を閉めれば密室になる
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }] }));
+  runFor(b, 3);
+  assert.ok(bd.sealed, '割れた窓のある家で密室にできない');
+});
+
+test('錠二：家の中で待ち伏せし、敵が入ってきたら扉を閉めて密室にできる（スタンドなら離れた所から閉められる）', () => {
+  const { b, bd } = kitoRoom();
+  const me = b.player, foe = b.cpu;
+  // 錠二は扉から2m離れた室内、敵は家の外（北側）
+  me.x = 28.3; me.y = 16; foe.x = 28.3; foe.y = 8; foe.facing = Math.PI / 2;
+  me.facing = -Math.PI / 2;
+  const plan = compilePlan(b, me, localParse(b, me, 'スタンドを出して、敵が入ってきたら扉を閉める'));
+  assert.deepEqual(plan.steps.map(s => s.action), ['stand_out', 'close']);
+  assert.equal(plan.steps[1].condition.kind, 'enemy_inside');
+  b.setPlan(me, plan);
+  b.setPlan(foe, compilePlan(b, foe, { steps: [{ action: 'move', mode: 'walk', targetType: 'point', x: 26, y: 17 }] }));
+  runFor(b, 1);
+  assert.equal(bd.sealed, null, '敵が入る前に密室になった');
+  runFor(b, 8);
+  assert.ok(bd.sealed, '敵が入ってきたのに密室にならない');
+  assert.ok(pointInRect(foe.x, foe.y, bd));
 });

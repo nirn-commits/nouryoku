@@ -660,6 +660,25 @@ export class Renderer {
         return;
       }
     }
+    if (o.kind === 'window' && o.broken) {
+      // 割れた窓：枠（閉まっていれば木枠の色、開いていれば水色）と、枠に残ったガラス片
+      const zt = z0 + Math.min(1.2, z1 - z0);
+      const x = o.x * P, y = this.sy(o.y, zt), w = Math.max(2, o.w * P), h = Math.max(2, o.h * P);
+      ctx.strokeStyle = o.open ? 'rgba(170,225,245,0.9)' : '#a07850';
+      ctx.lineWidth = o.open ? 2 : 3;
+      ctx.strokeRect(x, y, w, h);
+      ctx.fillStyle = 'rgba(190,230,255,0.75)';
+      const horiz = w >= h;
+      for (let i = 0; i < 3; i++) {
+        const k = (i + 0.5) / 3;
+        ctx.beginPath();
+        if (horiz) { ctx.moveTo(x + w * k - 3, y); ctx.lineTo(x + w * k + 3, y); ctx.lineTo(x + w * k, y + h * 0.9); }
+        else { ctx.moveTo(x, y + h * k - 3); ctx.lineTo(x, y + h * k + 3); ctx.lineTo(x + w * 0.9, y + h * k); }
+        ctx.closePath();
+        ctx.fill();
+      }
+      return;
+    }
     if (o.kind === 'window' && o.open) {
       ctx.strokeStyle = 'rgba(170,225,245,0.9)';
       ctx.lineWidth = 2;
