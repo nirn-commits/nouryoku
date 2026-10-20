@@ -202,6 +202,29 @@ export class Renderer {
         ctx.globalAlpha = Math.max(0, 1 - age / 1.2);
         ctx.fillText(f.text, f.x * P - 8, (f.y - age * 0.8) * P);
         ctx.globalAlpha = 1;
+      } else if (f.kind === 'mark') {
+        // 接触点の直角記号
+        ctx.globalAlpha = Math.max(0, 1 - age / 1.2);
+        ctx.strokeStyle = '#ffe8a3';
+        ctx.lineWidth = 2;
+        const s = Math.max(8, P * 0.5);
+        ctx.beginPath();
+        ctx.moveTo(f.x * P - s / 2, f.y * P - s / 2);
+        ctx.lineTo(f.x * P - s / 2, f.y * P + s / 2);
+        ctx.lineTo(f.x * P + s / 2, f.y * P + s / 2);
+        ctx.stroke();
+        ctx.strokeRect(f.x * P - s / 2, f.y * P + s / 6, s / 3, s / 3);
+        ctx.globalAlpha = 1;
+      } else if (f.kind === 'measure') {
+        // 移動完了時の距離表示（例「10.00」）
+        ctx.globalAlpha = Math.max(0, 1 - age / 1.2);
+        ctx.font = `bold ${Math.max(12, P * 0.6)}px monospace`;
+        const tw = ctx.measureText(f.text).width;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.fillRect(f.x * P - tw / 2 - 4, f.y * P - P * 0.6, tw + 8, P * 0.75);
+        ctx.fillStyle = '#ffe8a3';
+        ctx.fillText(f.text, f.x * P - tw / 2, f.y * P);
+        ctx.globalAlpha = 1;
       } else if (f.kind === 'flash') {
         ctx.strokeStyle = f.color;
         ctx.globalAlpha = Math.max(0, 1 - age / 0.8);
@@ -381,7 +404,20 @@ export class Renderer {
 
   drawChar(b, c, isMe) {
     const ctx = this.ctx, P = this.px;
-    const x = c.x * P, y = c.y * P, r = c.r * P;
+    const air = b.isAirborne(c);
+    // 弾き出し中の軌跡
+    if (c.launch) {
+      ctx.strokeStyle = 'rgba(255,232,163,0.7)';
+      ctx.lineWidth = Math.max(2, P * 0.15);
+      ctx.beginPath(); ctx.moveTo(c.launch.sx * P, c.launch.sy * P); ctx.lineTo(c.x * P, c.y * P); ctx.stroke();
+    }
+    if (air) {
+      // 空中：地面に影を落とし、本体は少し上に大きく描く
+      ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      ctx.beginPath(); ctx.ellipse(c.x * P, c.y * P, c.r * P, c.r * P * 0.6, 0, 0, Math.PI * 2); ctx.fill();
+    }
+    const lift = air ? Math.sin(Math.min(1, (b.t - c.air.since) / (c.air.landAt - c.air.since)) * Math.PI) * 1.2 : 0;
+    const x = c.x * P, y = (c.y - lift) * P, r = c.r * P * (1 + lift * 0.3);
     const s = c.status;
     if (!c.alive) {
       ctx.fillStyle = 'rgba(120,120,120,0.7)';
@@ -436,6 +472,7 @@ export class Renderer {
     if (s.stunUntil > b.t) tags.push('怯み');
     if (s.deafUntil > b.t) tags.push('無音');
     if (b.bushAt(c.x, c.y)) tags.push('潜伏');
+    if (air) tags.push('空中');
     ctx.fillText(`${isMe ? '自分' : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - bw / 2, y - r - 14);
     ctx.globalAlpha = 1;
   }

@@ -77,6 +77,32 @@ export const ABILITIES = {
     soundRadius: 10,
     observedHint: '敵の能力？：壁が生き物のように変形した（棘・新しい壁・崩落）。石材を操る？',
   },
+  perpendicular: {
+    id: 'perpendicular',
+    name: 'パーペンディキュラー',
+    desc: '接触面を境に、どちらか一方を「面から離れる垂直方向」へきっかり10m弾き出す。距離は常に10mで、短縮・延長・途中停止は不可。経路上の障害物で止まり、衝突の威力は重さに関係なく一定（人なら10ダメージ＋0.6秒怯み、物なら30の破壊力）。障害物に当たらず10m飛び切れば衝突ダメージはない。移動完了時に速度ゼロ。質量上限100kg。引き寄せは不可。',
+    activation: '対象に触れていること（スタンドの射程約2m）。何にも触れていない空中では発動不可だが、手に持った物（ナイフ）は接触扱い',
+    effects: {
+      self_launch: {
+        name: '自分を弾く', targets: ['self', 'object', 'direction'],
+        desc: '触れている面から自分を10m弾き出す。壁・柱・物に触れていれば（0.6m以内）その面の正面方向へ水平に飛ぶ（飛行中は攻撃を受けない）。開けた場所では真上に10m跳び、約1.8秒空中にいた後に落下して着地の衝撃5ダメージ。空中にいる間は近接攻撃・ナイフが届かず、壁越しに見渡せる。空中でナイフを持っていれば、それを基準に任意の水平方向へ10m移動できる（direction で指定。高所なので障害物を越える）。object を指定するとその面を使う。',
+      },
+      launch: {
+        name: '触れた物を弾く', targets: ['enemy', 'object'], range: 2, castTime: 0.4,
+        desc: '約2m以内の敵か物（100kg以下）に触れ、手から離れる方向へきっかり10m弾き出す。触れるまで0.4秒かかる。敵には接触の打撃3ダメージ。10m以内に壁・柱・物があればそこへ叩きつけられ（人10ダメージ＋怯み）、なければ飛ぶだけ。',
+      },
+      launch_held: {
+        name: '持った物を飛ばす', targets: ['enemy', 'point', 'direction'], range: 10, castTime: 0.3,
+        desc: '手に持ったナイフを、きっかり10m先まで弾き出す（10mで落ちる）。当たれば重さに関係なく12ダメージ。ナイフを1本使う。',
+      },
+    },
+    range: 2, radius: 0, duration: 0, castTime: 0.1, cooldown: 1.5, cost: 40,
+    recoil: 'なし（真上に跳んだ場合は落下と着地がある）',
+    weakness: '平らな開けた場所では真上にしか飛べない。移動距離が固定なので着地点を読まれやすい。射程が約2mと短く遠距離型に弱い。100kg超の相手（自販機・ドラム缶・車など）は飛ばせない。',
+    vfx: '接触点に直角記号「∟」、移動完了時に移動距離（例「10.00」）が表示される／「カチッ」という硬い音（半径6m）',
+    soundRadius: 6,
+    observedHint: '敵の能力？：触れた物や人が、直角に、きっかり同じ距離（約10m）だけ弾き出された。「10.00」という表示……距離が一定の能力？ 至近距離でしか使えない？',
+  },
   hush: {
     id: 'hush',
     name: '静寂',
@@ -95,6 +121,9 @@ export const ABILITIES = {
   },
 };
 
+// 能力値の表記（A〜E）
+export const STAT_LABELS = { power: '破壊力', speed: 'スピード', range: '射程距離', stamina: '持続力', precision: '精密動作性', growth: '成長性' };
+
 export const CHARACTERS = {
   makabe: {
     id: 'makabe',
@@ -105,6 +134,8 @@ export const CHARACTERS = {
     walk: 3.2, run: 5.6,
     power: 10, defense: 1.0, knives: 3,
     abilities: ['friction', 'vector'],
+    kg: 64,
+    stats: { power: 'C', speed: 'B', range: 'C', stamina: 'B', precision: 'A', growth: 'C' },
     personality: '冷静沈着な観察型。相手の動きを読み、足元をすくって隙を作ってから殴る。挑発には皮肉で返す。',
     lines: ['足元には気をつけるんだな', 'その一歩……「滑る」ぜ', 'やれやれ、まだやるのか？', '見えているぞ'],
   },
@@ -117,8 +148,27 @@ export const CHARACTERS = {
     walk: 3.0, run: 5.4,
     power: 11, defense: 0.95, knives: 3,
     abilities: ['masonry', 'hush'],
+    kg: 58,
+    stats: { power: 'B', speed: 'C', range: 'B', stamina: 'A', precision: 'C', growth: 'B' },
     personality: '寡黙で狡猾な待ち伏せ型。音を消して忍び寄り、壁を使って退路を断つ。言葉は少なく不気味。',
     lines: ['……静かに', '音もなく、終わらせる', 'この壁は、わたしの味方だ', '……どこを見ている'],
+  },
+  sogo: {
+    id: 'sogo',
+    name: '十河 矩比呂',
+    reading: 'そごう のりひろ',
+    nickname: 'ノリ',
+    stand: 'パーペンディキュラー',
+    color: '#f4a261',
+    hp: 95, sp: 100, spRegen: 5,
+    walk: 3.3, run: 5.8,
+    power: 11, defense: 1.0, knives: 3,
+    abilities: ['perpendicular'],
+    kg: 52,
+    stats: { power: 'B', speed: 'B（能力移動時A）', range: 'E（約2m）', stamina: 'C', precision: 'B', growth: 'B' },
+    profile: '工業高校電子機械科2年、17歳。171cm・52kg。通称「ノリ」。細身で猫背、黒縁眼鏡。学ランは前全開で、中にレトロゲーム機のTシャツ。胸ポケットにドライバーセット。',
+    personality: 'ナード系の不良。喧嘩は自分に有利な地形（壁・柱・物が近くにある場所）でしか買わず、不利なら迷わず逃げる。大人を信用しない。ぶっきらぼうで、数字や単位を混ぜて話す。理不尽には損得抜きで割って入る。',
+    lines: ['その距離なら届く。9.8mだ、ギリギリな', '10.00。誤差ゼロ', '開けた場所はお断りだ', '先払いだ。拳でな', '壁まで7m……計算済みだよ'],
   },
 };
 
@@ -143,6 +193,8 @@ export const RULES = {
   nearAwareness: 2.5,
   speechRadius: 15,
   budgetSeconds: 10,
+  launchImpact: 10, // パーペンディキュラーの衝突威力（重さに関係なく一定）
+  launchTouch: 3,
   maxSteps: 5,
   conditionTimeoutDefault: 5,
   conditionTimeoutMax: 8,

@@ -59,6 +59,12 @@ h2 { font-size: 1.1rem; border-left: 4px solid var(--gold); padding-left: 8px; }
 .map-card { background: var(--panel); border: 2px solid #444; border-radius: 8px; padding: 10px; cursor: pointer; font-size: .88rem; }
 .map-card.chosen { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold); }
 .map-card b { font-size: 1rem; }
+.opponent-row { text-align: center; margin-top: 14px; }
+.stats { border-collapse: collapse; margin: 6px 0; width: 100%; font-size: .82rem; }
+.stats th, .stats td { border: 1px solid #3d3450; padding: 2px 4px; text-align: center; font-weight: normal; }
+.stats th { color: var(--muted); }
+.stats td { color: var(--gold); font-weight: bold; }
+.profile { font-size: .8rem; color: #cfc6dc; }
 .start-row { text-align: center; margin: 18px 0; }
 .howto { background: var(--panel); border-radius: 8px; padding: 10px 16px; line-height: 1.7; font-size: .9rem; }
 .howto summary { cursor: pointer; color: var(--gold); font-weight: bold; }

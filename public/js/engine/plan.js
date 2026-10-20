@@ -113,6 +113,13 @@ function validateStep(b, c, raw, cursor) {
       if (step.effect === 'breach' && o.indestructible) return { error: `${o.name}は崩せない（外壁）` };
       if (step.ability === 'friction' && (!o || !o.movable)) return { error: `『摩擦操作』で物体を対象にできるのは動かせる物（木箱・机）のみ` };
       if (step.ability === 'vector' && (!o || !o.movable)) return { error: `『ベクトル反転』で弾けるのは動かせる物のみ` };
+      if (step.ability === 'perpendicular' && step.effect === 'launch') {
+        if (!o || !o.movable) return { error: `『パーペンディキュラー』で弾き出せるのは動かせる物のみ（${targetName(b, t)}は不可）` };
+        if ((o.kg ?? 0) > 100) return { error: `${o.name}は重すぎて弾き出せない（約${o.kg}kg、上限100kg）` };
+      }
+      if (step.ability === 'perpendicular' && step.effect === 'self_launch' && (!o || !o.blocksMove)) {
+        return { error: `${targetName(b, t)}は足場にできる面ではない` };
+      }
     }
   } else if (ttype === 'point') {
     const x = num(raw.x), y = num(raw.y);
@@ -690,12 +697,18 @@ const EXEC = {
     start(b, c, st) {
       const s = st.def;
       const ab = ABILITIES[s.ability];
-      if (c.cd[s.ability]) return `『${ab.name}』はクールダウン中（あと${(c.cd[s.ability] - b.t).toFixed(1)}秒）`;
+      if (c.cd[s.ability]) {
+        const left = c.cd[s.ability] - b.t;
+        // まもなく使えるなら待つ（それ以上は失敗）
+        if (left > 2) return `『${ab.name}』はクールダウン中（あと${left.toFixed(1)}秒）`;
+        st.data.phase = 'cooldown';
+        return null;
+      }
       if (c.sp < ab.cost) return `スタンドエネルギーが足りない（必要${ab.cost}）`;
       const res = resolveTarget(b, c, s.target, s);
       if (res.error) return res.error;
       st.data.aim = res;
-      st.data.until = b.t + ab.castTime;
+      st.data.until = b.t + (ab.effects[s.effect].castTime ?? ab.castTime);
       st.data.phase = 'cast';
       st.locked = true;
       c.windup = { kind: 'ability', until: st.data.until };
@@ -705,6 +718,11 @@ const EXEC = {
       const s = st.def;
       const ab = ABILITIES[s.ability];
       const D = st.data;
+      if (D.phase === 'cooldown') {
+        if (c.cd[s.ability]) return 'running';
+        const err = EXEC.ability.start(b, c, st);
+        return err ? { fail: err } : 'running';
+      }
       if (D.phase === 'cast') {
         const res = resolveTarget(b, c, s.target, s);
         if (!res.error && !res.self) D.aim = res;
@@ -729,7 +747,10 @@ function reachFor(next) {
   if (next.target.type !== 'enemy') return null;
   if (next.action === 'melee') return RULES.meleeRange - 0.2;
   if (next.action === 'throw') return 10;
-  if (next.action === 'ability') return Math.max(1, ABILITIES[next.ability].range - 0.5);
+  if (next.action === 'ability') {
+    const ab = ABILITIES[next.ability];
+    return Math.max(1, (ab.effects[next.effect].range ?? ab.range) - 0.5);
+  }
   return null;
 }
 
@@ -836,6 +857,13 @@ export function updateRunner(b, c) {
   c.desired.face = null;
   const s = c.status;
   if (s.proneUntil > b.t || s.stunUntil > b.t || s.recoverUntil > b.t) return;
+  // 弾き出されて飛んでいる間は何もできない。空中では能力（空中での方向転換）だけ使える
+  if (c.launch) return;
+  if (b.isAirborne(c)) {
+    const st = c.runner.step;
+    const next = st ? st.def : c.runner.plan && c.runner.plan.steps[c.runner.idx];
+    if (!next || !((next.action === 'ability' && next.ability === 'perpendicular') || next.action === 'wait' || next.action === 'look')) return;
+  }
 
   if (!c.runner.step) {
     if (c.pendingPlan) {

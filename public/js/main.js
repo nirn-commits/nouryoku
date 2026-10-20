@@ -1,6 +1,6 @@
 // 画面・入力・ゲームループ。Gemini はサーバー経由（/api/plan）で呼び、APIキーはブラウザに置かない
 import { Battle } from './engine/sim.js';
-import { CHARACTERS, ABILITIES, ACTIONS, RULES } from './engine/data.js';
+import { CHARACTERS, ABILITIES, ACTIONS, RULES, STAT_LABELS } from './engine/data.js';
 import { compilePlan } from './engine/plan.js';
 import { buildObservation } from './engine/perception.js';
 import { localParse } from './engine/localParser.js';
@@ -17,6 +17,7 @@ const state = {
   gemini: false,
   model: '',
   chosen: 'makabe',
+  opponent: 'random',
   mapId: 'town',
   battle: null,
   turn: null,
@@ -46,6 +47,14 @@ const EXAMPLES = {
     '駐車場の車を殴って防犯アラームを鳴らし、その隙に裏口へ回る',
     '物陰に隠れて、敵が見えたらナイフを投げる',
     '「出てこいよ、臆病者」と挑発して2秒待つ',
+  ],
+  sogo: [
+    '近くの壁際まで走って、敵が近づいてきたら弾き出して叩きつける',
+    '「その距離なら届く。9.8mだ、ギリギリな」と言って、ナイフを10m先へ弾き出す',
+    '敵を追いかけて殴り、柱に叩きつける',
+    '壁を蹴って離脱し、物陰に隠れる',
+    '真上に跳び上がって、空中で左へ方向転換',
+    '敵が殴りかかってきたら、能力で真上に跳ぶ',
   ],
   karasuma: [
     '周囲の音を消して、敵を歩いて追いかけて殴る',
@@ -126,17 +135,29 @@ function renderMapCards() {
 function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
-      <div class="char-head"><span class="dot"></span><div><b>${c.name}</b><div class="stand">スタンド『${c.stand}』</div></div></div>
+      <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">スタンド『${c.stand}』</div></div></div>
+      ${c.profile ? `<p class="profile">${c.profile}</p>` : ''}
       <p class="persona">${c.personality}</p>
-      <div class="meta">HP ${c.hp} / 歩き${c.walk}m/s・走り${c.run}m/s / ナイフ${c.knives}本</div>
+      ${c.stats ? `<table class="stats"><tr>${Object.values(STAT_LABELS).map(l => `<th>${l}</th>`).join('')}</tr><tr>${Object.keys(STAT_LABELS).map(k => `<td>${c.stats[k]}</td>`).join('')}</tr></table>` : ''}
+      <div class="meta">HP ${c.hp} / 体重${c.kg}kg / 歩き${c.walk}m/s・走り${c.run}m/s / ナイフ${c.knives}本</div>
       ${c.abilities.map(abilityHtml).join('')}
     </div>`).join('');
+  const sel = $('#opponent');
+  sel.innerHTML = '<option value="random">ランダム（自分以外）</option>' +
+    Object.values(CHARACTERS).map(c => `<option value="${c.id}" ${state.opponent === c.id ? 'selected' : ''}>${c.name}『${c.stand}』${c.id === state.chosen ? '（同キャラ対決）' : ''}</option>`).join('');
+  sel.value = state.opponent;
+}
+
+function pickOpponent() {
+  if (state.opponent !== 'random') return state.opponent;
+  const others = Object.keys(CHARACTERS).filter(id => id !== state.chosen);
+  return others[Math.floor(Math.random() * others.length)];
 }
 
 // ---------- 戦闘 ----------
 
 function startBattle() {
-  const cpuChar = state.chosen === 'makabe' ? 'karasuma' : 'makabe';
+  const cpuChar = pickOpponent();
   const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, cpuChar, mapId: state.mapId });
   state.battle = b;
   state.ended = false;
@@ -367,6 +388,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   renderCharCards();
   renderMapCards();
   await checkStatus();
+  $('#opponent').addEventListener('change', e => { state.opponent = e.target.value; });
   $('#map-cards').addEventListener('click', e => {
     const card = e.target.closest('.map-card');
     if (card) { state.mapId = card.dataset.id; renderMapCards(); }

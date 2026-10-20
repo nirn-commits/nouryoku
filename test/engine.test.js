@@ -24,7 +24,8 @@ async function playTurns(b, maxTurns) {
 
 test('ターン制で CPU 同士の戦闘が例外なく決着する', async () => {
   for (let seed = 1; seed <= 8; seed++) {
-    const b = new Battle({ seed, playerChar: seed % 2 ? 'makabe' : 'karasuma', cpuChar: seed % 2 ? 'karasuma' : 'makabe', mapId: seed % 2 ? 'town' : 'lot' });
+    const ids = ['makabe', 'karasuma', 'sogo'];
+    const b = new Battle({ seed, playerChar: ids[seed % 3], cpuChar: ids[(seed + 1 + (seed % 2)) % 3], mapId: seed % 2 ? 'town' : 'lot' });
     const tc = await playTurns(b, 80);
     assert.ok(b.over, `seed ${seed}（${b.mapId}）が80手以内に決着しない`);
     assert.equal(tc.phase, 'over');
@@ -205,4 +206,49 @@ test('住宅街：ローカル解析が新しい場所・物を指せる', () =>
     assert.ok(plan.steps.length, `${text}：手順がない（${plan.rejected}）`);
     assert.ok(plan.steps[0].target.id.startsWith(id), `${text}：対象が ${plan.steps[0].target.id}`);
   }
+});
+
+function sogoBattle() {
+  const b = new Battle({ seed: 3, mapId: 'lot', playerChar: 'sogo', cpuChar: 'makabe' });
+  b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
+  return b;
+}
+const runFor = (b, sec) => { for (let i = 0; i < sec * 30; i++) b.step(); };
+
+test('十河：触れた敵をきっかり10m弾き出し、途中に壁があれば叩きつける', () => {
+  // 開けた方向：10.00m 飛ぶだけで衝突ダメージなし
+  let b = sogoBattle();
+  b.player.x = 20; b.player.y = 20; b.cpu.x = 18.6; b.cpu.y = 20;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' }] }));
+  runFor(b, 1.5);
+  assert.ok(Math.abs(18.6 - b.cpu.x - 10) < 0.05, `移動距離 ${(18.6 - b.cpu.x).toFixed(2)}m`);
+  const openHp = b.cpu.hp;
+  // 壁の手前：途中で止まり、叩きつけの12ダメージが加わる
+  b = sogoBattle();
+  b.player.x = 14; b.player.y = 10; b.cpu.x = 15.5; b.cpu.y = 10;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' }] }));
+  runFor(b, 1.5);
+  assert.ok(b.cpu.x < 17.3, '壁で止まっていない');
+  assert.ok(b.log.some(l => l.text.includes('叩きつけで10ダメージ')), '叩きつけのダメージがない');
+  assert.ok(b.cpu.hp < openHp, `開けた方向より被害が小さい（${openHp} → ${b.cpu.hp}）`);
+});
+
+test('十河：開けた場所では真上に跳び、空中では殴りが届かない', () => {
+  const b = sogoBattle();
+  b.player.x = 20; b.player.y = 20; b.cpu.x = 21; b.cpu.y = 20; b.cpu.facing = Math.PI;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' }] }));
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 0.3 }, { action: 'melee', targetType: 'enemy' }] }));
+  runFor(b, 1);
+  assert.ok(b.isAirborne(b.player));
+  assert.equal(b.player.hp, b.player.maxHp, '空中で殴られた');
+  runFor(b, 1.5);
+  assert.ok(!b.isAirborne(b.player));
+  assert.equal(b.player.hp, b.player.maxHp - 5, '着地の衝撃がない');
+});
+
+test('十河：100kgを超える物は弾き出せない', () => {
+  const b = new Battle({ seed: 3, mapId: 'town', playerChar: 'sogo' });
+  const plan = compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'object', targetId: 'vending_1' }] });
+  assert.equal(plan.steps.length, 0);
+  assert.ok(plan.rejected[0].includes('100kg'));
 });

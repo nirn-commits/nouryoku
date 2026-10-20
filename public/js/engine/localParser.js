@@ -201,6 +201,9 @@ function toTarget(ref) {
   return { targetType: 'enemy' };
 }
 
+// パーペンディキュラー（十河）の言い回し
+const PERP_RE = /パーペンディキュラー|垂直|直角|弾き出|弾き飛ば|吹っ飛ば|吹き飛ば|ぶっ飛ば|叩きつけ|叩き付け|跳び上が|飛び上が|真上|壁を蹴|蹴って(跳|飛)|方向転換|能力で(跳|飛|移動|離脱|逃げ)|自分を(弾|飛)|離脱|(10|１０)\s*(m|ｍ|メートル)/;
+
 function parseClause(b, c, clause, has, ctx = {}) {
   const steps = [];
   const found = findObjectRef(b, c, clause);
@@ -213,6 +216,27 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const mentionsEnemy = /敵|相手|あいつ|奴|やつ/.test(clause);
 
   // --- 能力 ---
+  if (has.perpendicular && PERP_RE.test(clause)) {
+    const held = /ナイフ|ドライバー|持った物|手の物|手に持/.test(clause) && /飛ばす|飛ばし|弾き出|投げ|放つ|撃ち出/.test(clause);
+    if (held) {
+      steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch_held', ...(pt ? toTarget(pt) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir } : { targetType: 'enemy' }) });
+      return steps;
+    }
+    if (/方向転換|空中で/.test(clause)) {
+      steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'direction', direction: dir && dir !== 'cover' ? dir : 'away_from_enemy' });
+      return steps;
+    }
+    if (/跳び上が|飛び上が|真上|上へ跳|上に跳|壁を蹴|蹴って(跳|飛)|能力で(跳|飛|移動|離脱|逃げ)|弾けて|自分を(弾|飛)|(10|１０)\s*(m|ｍ|メートル)(跳|飛|移動)|離脱/.test(clause)) {
+      // 「壁を蹴って」のように特定の壁でなければ、今触れている面を自動で使う
+      if (obj && !obj.wall && b.objectById(obj.id)?.blocksMove) steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'object', targetId: obj.id });
+      else if (dir && dir !== 'cover' && !/真上|上へ跳|上に跳|跳び上が|飛び上が/.test(clause)) steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'direction', direction: dir });
+      else steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' });
+      return steps;
+    }
+    if (obj && b.objectById(obj.id)?.movable && !mentionsEnemy) steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'object', targetId: obj.id });
+    else steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
+    return steps;
+  }
   if (has.friction && /摩擦|滑ら|滑り|すべ|転倒|転ば|ツルツル|足を取|足元をすく|グリップ|足を重く|足止め/.test(clause)) {
     const effect = /グリップ|重く|足止め|鈍く|粘/.test(clause) ? 'grip' : 'slick';
     if (obj && b.objectById(obj.id)?.movable && effect === 'slick') steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(obj) });
@@ -334,7 +358,7 @@ export function localParse(b, c, text) {
   };
   const foreignRes = [];
   for (const [k, re] of Object.entries(foreign)) {
-    if (!has[k] && re.test(body)) {
+    if (!has[k] && re.test(body) && !(has.perpendicular && PERP_RE.test(body))) {
       raw.rejected.push(`『${ABILITIES[k].name}』に相当する能力は${c.name}にはない`);
       foreignRes.push(re);
     }
@@ -356,7 +380,12 @@ export function localParse(b, c, text) {
       }
     }
     if (foreignRes.some(re => re.test(clause))) continue;
-    if (/^(と|って|と言って|と言い)?(挑発|叫|言|呟|告げ|笑|宣言|問いかけ)/.test(clause) || /^(と|って)$/.test(clause)) continue;
+    // セリフにつながる言い回し（「〜と言って」「〜と挑発して」）は取り除き、続きを解析する
+    clause = clause.replace(/^(と|って)?(言って|言い|叫んで|叫び|挑発して|挑発し|呟いて|囁いて|告げて|笑って|宣言して|問いかけて)/, '').trim();
+    if (!clause || /^(と|って)?(挑発|叫|言|呟|囁|告げ|笑|宣言|問いかけ)[^、]{0,3}$/.test(clause) || /^(と|って)$/.test(clause)) {
+      if (cond) pendingCond = cond;
+      continue;
+    }
     const steps = clause ? parseClause(b, c, clause, has, ctx) : [];
     if (!steps.length) {
       if (cond) { pendingCond = cond; continue; }

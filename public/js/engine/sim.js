@@ -1,6 +1,6 @@
 // 戦闘シミュレーション本体：物理・知覚・ダメージ・ログ。勝敗はここで確定する
 import { CHARACTERS, ABILITIES, RULES } from './data.js';
-import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById } from './world.js';
+import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById, nearestWalkable } from './world.js';
 import { createWorld } from './maps.js';
 import { dist, angleTo, angDiff, circleRectPush, segRect, segCircle, distToRect, clamp, makeRng, pointInRect } from './vec.js';
 import { updateRunner, interruptStep, adoptPlan } from './plan.js';
@@ -64,11 +64,128 @@ export class Battle {
       if (Math.abs(angDiff(viewer.facing, a)) > RULES.visionFov / 2) return false;
     }
     // 植え込みの中は、すぐそばか同じ植え込みの中からでないと見えない
+    // 空中（真上に跳んだ状態）からは地上の遮蔽物を越えて見渡せ、空中の者も壁越しに見える
+    if (this.isAirborne(viewer)) return true;
+    if (this.chars.some(ch => ch !== viewer && this.isAirborne(ch) && ch.x === x && ch.y === y)) return true;
     if (!this.world.bushes) this.world.bushes = this.world.objects.filter(o => o.kind === 'bush');
     for (const o of this.world.bushes) {
       if (pointInRect(x, y, o) && d > 2.5 && !pointInRect(viewer.x, viewer.y, o)) return false;
     }
     return hasLOS(this.world, viewer.x, viewer.y, x, y);
+  }
+
+  isAirborne(c) {
+    return !!(c.air && c.air.landAt > this.t);
+  }
+
+  // ---------- パーペンディキュラー：きっかり10m弾き出す運動 ----------
+
+  // 人を弾き出す。kind: 'self'（自分の能力移動）/ 'target'（相手に弾かれた）/ 'aerial'（空中で障害物を越える）
+  launchChar(c, dx, dy, { source, kind, distance = 10 }) {
+    c.launch = { dx, dy, remaining: distance, total: distance, speed: 30, source, kind, sx: c.x, sy: c.y };
+    c.kbx = c.kby = 0;
+    c.kbSlam = null;
+    c.vx = c.vy = 0;
+  }
+
+  launchObject(o, dx, dy, source, distance = 10) {
+    o.launch = { dx, dy, remaining: distance, total: distance, speed: 30, source, sx: o.x, sy: o.y };
+    o.vx = o.vy = 0;
+    o.pushedBy = source ? source.id : null;
+  }
+
+  launchDone(x, y, traveled, viewerPos) {
+    this.fx.push({ kind: 'measure', x, y: y - 0.7, text: traveled.toFixed(2), t: this.t, visibleTo: this.visibleSet(viewerPos || { x, y }) });
+  }
+
+  visibleSet(pos) {
+    return new Set(this.chars.filter(c => this.canSee(c, pos.x, pos.y)).map(c => c.id));
+  }
+
+  // 衝突威力は重さに関係なく一定：人なら打撲（12ダメージ＋怯み）、物なら30の破壊力
+  launchImpact(hit, source, label) {
+    if (hit.char) {
+      this.damage(hit.char, RULES.launchImpact, { source, kind: 'launch_impact', label });
+      hit.char.status.stunUntil = Math.max(hit.char.status.stunUntil, this.t + 0.6);
+      interruptStep(this, hit.char, '叩きつけられて体勢を崩した', true);
+    } else if (hit.obj) {
+      this.damageObject(hit.obj, 30, source);
+    }
+  }
+
+  updateCharLaunch(c, dt) {
+    const L = c.launch;
+    const step = Math.min(L.speed * dt, L.remaining);
+    const n = Math.max(1, Math.ceil(step / 0.1));
+    let hit = null;
+    for (let i = 0; i < n; i++) {
+      const nx = c.x + (L.dx * step) / n, ny = c.y + (L.dy * step) / n;
+      if (L.kind !== 'aerial') {
+        for (const o of this.world.objects) {
+          if (o.blocksMove && circleRectPush(nx, ny, c.r, o)) { hit = { obj: o }; break; }
+        }
+        if (!hit) {
+          for (const other of this.chars) {
+            if (other !== c && other.alive && !this.isAirborne(other) && dist(nx, ny, other.x, other.y) < c.r + other.r) { hit = { char: other }; break; }
+          }
+        }
+      }
+      if (hit) break;
+      c.x = clamp(nx, c.r, this.world.w - c.r);
+      c.y = clamp(ny, c.r, this.world.h - c.r);
+      L.remaining -= step / n;
+    }
+    c.vx = c.vy = 0;
+    const traveled = L.total - Math.max(0, L.remaining);
+    if (hit || L.remaining <= 1e-6) {
+      c.launch = null;
+      if (L.kind === 'aerial') {
+        const p = nearestWalkable(this.world, c.x, c.y, 3);
+        if (p) { c.x = p.x; c.y = p.y; }
+      }
+      this.launchDone(c.x, c.y, traveled);
+      if (hit) {
+        const what = hit.obj ? hit.obj.name : hit.char.name;
+        this.emit({ text: `${c.name} は${what}に叩きつけられた！（${traveled.toFixed(2)}m）`, kind: 'combat', affected: c, pos: c, sound: 10, soundKind: 'impact', actor: L.source });
+        this.launchImpact({ char: c }, L.source, '叩きつけ');
+        if (hit.char) this.launchImpact(hit, L.source, `飛んできた${c.name}`);
+        else this.launchImpact(hit, L.source, '');
+      }
+    }
+  }
+
+  updateObjectLaunch(o, dt) {
+    const L = o.launch;
+    const step = Math.min(L.speed * dt, L.remaining);
+    const n = Math.max(1, Math.ceil(step / 0.1));
+    let hit = null;
+    for (let i = 0; i < n; i++) {
+      const moved = { ...o, x: o.x + (L.dx * step) / n, y: o.y + (L.dy * step) / n };
+      for (const p of this.world.objects) {
+        if (p === o || !p.blocksMove) continue;
+        if (moved.x < p.x + p.w && moved.x + o.w > p.x && moved.y < p.y + p.h && moved.y + o.h > p.y) { hit = { obj: p }; break; }
+      }
+      if (!hit) {
+        for (const ch of this.chars) {
+          if (ch.alive && !this.isAirborne(ch) && ch !== L.source && circleRectPush(ch.x, ch.y, ch.r, moved)) { hit = { char: ch }; break; }
+        }
+      }
+      if (hit) break;
+      o.x = moved.x; o.y = moved.y;
+      L.remaining -= step / n;
+    }
+    const traveled = L.total - Math.max(0, L.remaining);
+    if (hit || L.remaining <= 1e-6) {
+      o.launch = null;
+      const cc = { x: o.x + o.w / 2, y: o.y + o.h / 2 };
+      this.launchDone(cc.x, cc.y, traveled);
+      markNavDirty(this.world);
+      if (hit) {
+        this.emit({ text: `弾き出された${o.name}が${hit.obj ? hit.obj.name : hit.char.name}に激突した！（${traveled.toFixed(2)}m）`, kind: 'combat', pos: cc, sound: 10, soundKind: 'impact', actor: L.source, affected: hit.char || null });
+        this.launchImpact(hit, L.source, o.name);
+        this.damageObject(o, 30, L.source);
+      }
+    }
   }
 
   bushAt(x, y) {
@@ -175,6 +292,14 @@ export class Battle {
 
   damage(target, amount, { source = null, kind = 'hit', from = null, label = '' } = {}) {
     if (!target.alive || this.over) return 0;
+    if (this.isAirborne(target) && kind !== 'fall' && kind !== 'launch_impact') {
+      this.emit({ text: `${target.name} は空中にいて${label || '攻撃'}が届かない`, actor: source, affected: target, pos: target, kind: 'combat' });
+      return 0;
+    }
+    if (target.launch && target.launch.kind !== 'target' && kind !== 'launch_impact') {
+      this.emit({ text: `${target.name} は高速で移動していて${label || '攻撃'}が当たらない`, actor: source, affected: target, pos: target, kind: 'combat' });
+      return 0;
+    }
     if (target.status.invulnUntil > this.t && kind !== 'debris') {
       this.emit({ text: `${target.name} は${label || '攻撃'}を紙一重でかわした！`, actor: source, affected: target, pos: target, kind: 'combat' });
       return 0;
@@ -244,13 +369,13 @@ export class Battle {
     markNavDirty(w);
   }
 
-  spawnKnife(owner, x, y, tx, ty) {
+  spawnKnife(owner, x, y, tx, ty, { speed = RULES.knifeSpeed, damage = RULES.knifeDamage, maxRange = RULES.knifeRange } = {}) {
     const a = angleTo(x, y, tx, ty);
     const p = {
       id: `knife_${++projSeq}`, kind: 'knife', owner: owner.id,
       x: x + Math.cos(a) * 0.55, y: y + Math.sin(a) * 0.55,
-      vx: Math.cos(a) * RULES.knifeSpeed, vy: Math.sin(a) * RULES.knifeSpeed,
-      traveled: 0, damage: RULES.knifeDamage, born: this.t,
+      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+      traveled: 0, damage, maxRange, born: this.t,
     };
     this.world.projectiles.push(p);
     return p;
@@ -294,6 +419,21 @@ export class Battle {
     const s = c.status;
     for (const k in c.cd) if (c.cd[k] <= this.t) delete c.cd[k];
     c.sp = Math.min(c.maxSp, c.sp + c.def.spRegen * dt);
+
+    if (c.launch) {
+      this.updateCharLaunch(c, dt);
+      return;
+    }
+    if (c.air) {
+      if (c.air.landAt > this.t) { c.vx = c.vy = 0; return; }
+      // 落下して着地
+      c.air = null;
+      const p = nearestWalkable(this.world, c.x, c.y, 3);
+      if (p) { c.x = p.x; c.y = p.y; }
+      this.emit({ text: `${c.name} が落下して着地した`, kind: 'combat', actor: c, pos: c, sound: 8, soundKind: 'fall' });
+      this.damage(c, 5, { source: null, kind: 'fall', label: '着地の衝撃' });
+      s.stunUntil = Math.max(s.stunUntil, this.t + 0.3);
+    }
 
     const kbSpeed = Math.hypot(c.kbx, c.kby);
     const incapacitated = s.proneUntil > this.t || s.stunUntil > this.t || s.recoverUntil > this.t;
@@ -405,7 +545,8 @@ export class Battle {
   }
 
   updateObjects(dt) {
-    for (const o of this.world.objects) {
+    for (const o of this.world.objects.slice()) {
+      if (o.launch) { this.updateObjectLaunch(o, dt); continue; }
       if (!o.movable) continue;
       const sp = Math.hypot(o.vx, o.vy);
       if (sp < 0.05) { o.vx = o.vy = 0; continue; }
@@ -463,6 +604,7 @@ export class Battle {
       for (const c of this.chars) {
         if (!c.alive) continue;
         if (c.id === p.owner && this.t - p.born < 0.3) continue;
+        if (this.isAirborne(c) || (c.launch && c.launch.kind !== 'target')) continue;
         const t = segCircle(p.x, p.y, x1, y1, c.x, c.y, c.r);
         if (t !== null && t < best) { best = t; hit = { type: 'char', c }; }
       }
@@ -484,7 +626,7 @@ export class Battle {
       }
       p.traveled += Math.hypot(x1 - p.x, y1 - p.y);
       p.x = x1; p.y = y1;
-      if (p.traveled > RULES.knifeRange) {
+      if (p.traveled > (p.maxRange ?? RULES.knifeRange)) {
         w.pickups.push({ kind: 'knife', x: p.x, y: p.y });
         continue;
       }

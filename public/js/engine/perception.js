@@ -1,6 +1,6 @@
 // 観測情報の構築：AI（プレイヤー入力の解析・CPUの作戦）に渡すのは「その人物が知り得る情報」だけ
 import { ABILITIES, ACTIONS, CONDITIONS, DIRECTIONS, RULES } from './data.js';
-import { dist, rectCenter } from './vec.js';
+import { dist, rectCenter, distToRect } from './vec.js';
 
 const r1 = v => Math.round(v * 10) / 10;
 const deg = a => Math.round((((a * 180) / Math.PI) % 360 + 360) % 360);
@@ -13,6 +13,8 @@ function hpWord(c) {
 function stateWords(b, c) {
   const s = [];
   const t = b.t;
+  if (c.air && c.air.landAt > t) s.push(`空中（あと${(c.air.landAt - t).toFixed(1)}秒で落下・着地）`);
+  if (c.launch) s.push('弾き出されて高速移動中');
   if (c.status.proneUntil > t) s.push('転倒中');
   if (c.status.stunUntil > t) s.push('怯み');
   if (c.status.guardUntil > t) s.push('ガード中');
@@ -45,7 +47,7 @@ export function landmarks(b, c = null) {
     const item = { id: o.id, name: o.name, kind: o.kind, at: [r1(cc.x), r1(cc.y)] };
     if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
     if (!o.indestructible) item.hp = Math.max(0, Math.round(o.hp));
-    if (o.movable) item.movable = true;
+    if (o.movable) { item.movable = true; if (o.kg) item.kg = o.kg; }
     out.push(item);
   }
   return out;
@@ -90,7 +92,8 @@ export function buildObservation(b, c) {
   const self = {
     name: c.name, stand: c.stand,
     pos: [r1(c.x), r1(c.y)], facing_deg: deg(c.facing),
-    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), knives: c.knives,
+    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), knives: c.knives, kg: c.def.kg,
+    touching: b.world.objects.filter(o => o.blocksMove && distToRect(c.x, c.y, o) <= c.r + 0.6).map(o => o.id),
     inside: bd ? bd.name : '屋外',
     status: stateWords(b, c),
     cooldowns: Object.fromEntries(Object.entries(c.cd).map(([k, v]) => [k, r1(v - b.t)])),
