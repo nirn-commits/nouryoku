@@ -1,87 +1,99 @@
-// CPU の思考タイミング管理。Gemini（remote）に問い合わせている間も戦場の時間は進み、
-// 応答が遅い・失敗した場合はローカル思考で「安全な代替行動」を取る
+// ターン進行：入力ターン（時間停止）→ 双方の計画を同時に実行 → 次の入力ターン
+// CPU は入力ターン開始時点の自分の観測だけから計画を立てる（プレイヤーの入力内容は見ない）
+import { RULES } from './data.js';
 import { compilePlan, planFinished } from './plan.js';
 import { buildObservation } from './perception.js';
 import { localCpuPlan } from './localAI.js';
 
-export class CpuBrain {
-  constructor(battle, char, { remote = null, minInterval = 2.5, periodic = 7 } = {}) {
+export class TurnController {
+  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 15000 } = {}) {
     this.b = battle;
-    this.c = char;
-    this.remote = remote;
-    this.minInterval = minInterval;
-    this.periodic = periodic;
-    this.pending = null;
-    this.lastRequest = -99;
-    this.lastLocal = -99;
-    this.lastHeardCount = 0;
-    this.lastDamaged = -99;
-    this.status = 'idle';
+    this.cpuRemote = cpuRemote;
+    this.cpuTimeoutMs = cpuTimeoutMs;
+    this.turn = 0;
+    this.phase = 'input'; // input | resolving | execute | over
+    this.cpuPlanPromise = null;
+    this.cpuSource = null;
+    this.execStart = 0;
     this.remoteFailures = 0;
+    this.beginInput();
   }
 
-  triggers() {
-    const b = this.b, c = this.c;
-    if (planFinished(c)) return 'plan_done';
-    if (b.t - this.lastRequest < this.minInterval) return null;
-    if (c.lastDamagedAt > this.lastDamaged) return 'damaged';
-    if (c.memory.newlySpotted) return 'spotted';
-    const speech = c.memory.heard.filter(h => h.kind === 'speech').length;
-    if (speech > this.lastHeardCount) return 'heard_speech';
-    if (b.t - this.lastRequest > this.periodic) return 'periodic';
-    return null;
+  // 入力ターン開始：時間は止まり、CPU はこの時点の観測で作戦を考え始める
+  beginInput() {
+    const b = this.b;
+    if (b.over) { this.phase = 'over'; return; }
+    this.turn++;
+    this.phase = 'input';
+    b.emit({ text: `―― 第${this.turn}手：入力ターン ――`, kind: 'system', all: true });
+    this.cpuPlanPromise = this.planCpu();
   }
 
-  useLocal(reason) {
-    const plan = compilePlan(this.b, this.c, localCpuPlan(this.b, this.c), 'local');
-    plan.reason = reason;
-    this.b.setPlan(this.c, plan);
-  }
-
-  update() {
-    const b = this.b, c = this.c;
-    if (b.over || !c.alive) return;
-    const why = this.triggers();
-    if (!why) return;
-
-    if (this.pending) {
-      // 応答待ちで手持ちの計画が尽きた → 安全な代替行動
-      if (why === 'plan_done' && b.t - this.lastRequest > 0.6) this.useLocal('応答待ちの代替行動');
-      return;
-    }
-    // 直前の問い合わせから間もない場合は、AI に聞き直さずローカル思考でつなぐ
-    if (why === 'plan_done' && b.t - this.lastRequest < this.minInterval) {
-      if (b.t - this.lastLocal > 0.5) { this.lastLocal = b.t; this.useLocal('問い合わせ間隔の調整'); }
-      return;
-    }
-    this.lastRequest = b.t;
-    this.lastDamaged = c.lastDamagedAt;
-    c.memory.newlySpotted = false;
-    this.lastHeardCount = c.memory.heard.filter(h => h.kind === 'speech').length;
-
-    if (!this.remote || this.remoteFailures >= 3) {
-      this.useLocal(why);
-      return;
-    }
-    const obs = buildObservation(b, c);
-    obs.trigger = why;
-    this.status = 'thinking';
-    const battleRef = b;
-    this.pending = this.remote(obs)
-      .then(raw => {
-        if (battleRef.over || !c.alive) return;
-        const plan = compilePlan(battleRef, c, raw, 'gemini');
-        if (!plan.steps.length && !plan.speech) throw new Error('empty plan');
-        plan.reason = why;
-        battleRef.setPlan(c, plan);
-        this.remoteFailures = 0;
-        this.status = 'ok';
-      })
-      .catch(() => {
+  async planCpu() {
+    const b = this.b, c = b.cpu;
+    if (this.cpuRemote && this.remoteFailures < 3) {
+      const obs = buildObservation(b, c);
+      try {
+        const raw = await withTimeout(this.cpuRemote(obs), this.cpuTimeoutMs);
+        const plan = compilePlan(b, c, raw, 'gemini');
+        if (plan.steps.length || plan.speech) {
+          this.remoteFailures = 0;
+          return plan;
+        }
+      } catch {
         this.remoteFailures++;
-        this.status = 'fallback';
-        if (!battleRef.over && c.alive && planFinished(c)) this.useLocal('AI応答失敗の代替行動');
-      })
-      .finally(() => { this.pending = null; });
+      }
+    }
+    return compilePlan(b, c, localCpuPlan(b, c), 'local');
   }
+
+  // プレイヤーの計画が確定したら、CPU の計画を待って同時に実行を始める
+  async commit(playerPlan) {
+    if (this.phase !== 'input') return false;
+    this.phase = 'resolving';
+    const cpuPlan = await this.cpuPlanPromise;
+    const b = this.b;
+    if (b.over) { this.phase = 'over'; return false; }
+    b.emit({ text: `―― 第${this.turn}手：実行 ――`, kind: 'system', all: true });
+    b.setPlan(b.player, playerPlan);
+    b.setPlan(b.cpu, cpuPlan);
+    this.execStart = b.t;
+    this.phase = 'execute';
+    return true;
+  }
+
+  settled() {
+    const b = this.b;
+    if (b.world.projectiles.length) return false;
+    if (b.world.objects.some(o => o.movable && Math.hypot(o.vx, o.vy) > 0.05)) return false;
+    return b.chars.every(c => !c.alive || (Math.hypot(c.kbx, c.kby) < 0.2 && c.status.proneUntil <= b.t && c.status.stunUntil <= b.t));
+  }
+
+  // 実行中のみ時間を進める。両者の計画が終わり、場が落ち着いたら次の入力ターンへ
+  step() {
+    if (this.phase !== 'execute') return;
+    const b = this.b;
+    b.step();
+    if (b.over) { this.phase = 'over'; return; }
+    const elapsed = b.t - this.execStart;
+    const done = elapsed > 0.3 && b.chars.every(c => !c.alive || planFinished(c)) && this.settled();
+    if (done || elapsed > RULES.budgetSeconds + 3) {
+      for (const c of b.chars) {
+        if (!planFinished(c)) b.emit({ text: 'ターンの時間切れで残りの行動は打ち切られた', kind: 'fail', actor: c });
+        c.runner.plan = null;
+        c.runner.step = null;
+        c.pendingPlan = null;
+        c.windup = null;
+        c.status.guardUntil = 0;
+      }
+      this.beginInput();
+    }
+  }
+}
+
+function withTimeout(p, ms) {
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error('timeout')), ms);
+    p.then(v => { clearTimeout(t); resolve(v); }, e => { clearTimeout(t); reject(e); });
+  });
 }

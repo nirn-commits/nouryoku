@@ -1,27 +1,66 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Battle } from '../public/js/engine/sim.js';
-import { CpuBrain } from '../public/js/engine/controller.js';
+import { TurnController } from '../public/js/engine/controller.js';
+import { localCpuPlan } from '../public/js/engine/localAI.js';
 import { compilePlan } from '../public/js/engine/plan.js';
 import { buildObservation } from '../public/js/engine/perception.js';
 import { localParse } from '../public/js/engine/localParser.js';
 import { findPath, isWalkablePoint } from '../public/js/engine/world.js';
 
-function run(b, brains, seconds) {
-  while (!b.over && b.t < seconds) {
-    brains.forEach(x => x.update());
-    b.step();
+// 双方ローカル思考でターン制の戦闘を進める
+async function playTurns(b, maxTurns) {
+  const tc = new TurnController(b);
+  while (!b.over && tc.turn <= maxTurns) {
+    assert.equal(tc.phase, 'input');
+    const t0 = b.t;
+    const playerPlan = compilePlan(b, b.player, localCpuPlan(b, b.player));
+    assert.equal(b.t, t0, '入力ターン中に時間が進んだ');
+    await tc.commit(playerPlan);
+    while (tc.phase === 'execute') tc.step();
   }
+  return tc;
 }
 
-test('CPU 同士の戦闘が例外なく決着する', () => {
+test('ターン制で CPU 同士の戦闘が例外なく決着する', async () => {
   for (let seed = 1; seed <= 8; seed++) {
     const b = new Battle({ seed, playerChar: seed % 2 ? 'makabe' : 'karasuma', cpuChar: seed % 2 ? 'karasuma' : 'makabe' });
-    run(b, [new CpuBrain(b, b.player), new CpuBrain(b, b.cpu)], 300);
-    assert.ok(b.over, `seed ${seed} が300秒以内に決着しない`);
-    assert.ok(b.chars.some(c => !c.alive));
+    const tc = await playTurns(b, 60);
+    assert.ok(b.over, `seed ${seed} が60手以内に決着しない`);
+    assert.equal(tc.phase, 'over');
     for (const c of b.chars) assert.ok(Number.isFinite(c.x) && Number.isFinite(c.y));
   }
+});
+
+test('CPU の計画は入力ターン開始時点で立てられ、プレイヤーの計画を参照しない', async () => {
+  const b = new Battle({ seed: 4 });
+  let seen = null;
+  const tc = new TurnController(b, { cpuRemote: async obs => { seen = JSON.stringify(obs); return { interpretation: '', steps: [{ action: 'wait', targetType: 'none', duration: 1 }], rejected: [] }; } });
+  await new Promise(r => setTimeout(r, 0));
+  assert.ok(seen, '入力ターン開始時に CPU が考え始めていない');
+  const plan = compilePlan(b, b.player, { interpretation: '極秘の奇襲', steps: [{ action: 'wait', targetType: 'none', duration: 1 }] });
+  await tc.commit(plan);
+  assert.ok(!seen.includes('極秘の奇襲'));
+  assert.equal(tc.phase, 'execute');
+  while (tc.phase === 'execute') tc.step();
+  assert.equal(tc.phase, 'input');
+  assert.equal(tc.turn, 2);
+});
+
+test('追尾は動く敵を追いかけ、間合いに入ったら次の攻撃に移る', () => {
+  const b = new Battle({ seed: 9, playerChar: 'makabe', cpuChar: 'karasuma' });
+  b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
+  b.player.x = 6; b.player.y = 19; b.player.facing = 0;
+  b.cpu.x = 12; b.cpu.y = 19; b.cpu.facing = 0;
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'move', mode: 'walk', targetType: 'point', x: 20, y: 19 }] }));
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }] }));
+  let hit = false;
+  for (let i = 0; i < 30 * 8 && !hit; i++) {
+    b.step();
+    hit = b.cpu.hp < b.cpu.maxHp;
+  }
+  assert.ok(b.cpu.x > 14, '敵が動いていない');
+  assert.ok(hit, '追いついて殴れていない');
 });
 
 test('存在しない能力・他人の能力・戦場外の地点は計画から除外される', () => {
@@ -87,6 +126,8 @@ test('ローカル解析：仕様書の入力例', () => {
   b.player.memory.lastSeen = { x: 20, y: 10, t: 0 };
   const p1 = compilePlan(b, b.player, localParse(b, b.player, '左の家に駆け込み、窓から敵の位置を確認する'));
   assert.deepEqual(p1.steps.map(s => s.action), ['move', 'move', 'look']);
+  const p4 = compilePlan(b, b.player, localParse(b, b.player, '敵を追いかけて殴る'));
+  assert.deepEqual(p4.steps.map(s => s.action), ['chase', 'melee']);
   const p2 = compilePlan(b, b.player, localParse(b, b.player, '敵が近づいてきたら、足元の地面に能力を使って転倒させる'));
   assert.equal(p2.steps[0].ability, 'friction');
   assert.equal(p2.steps[0].condition.kind, 'enemy_within');

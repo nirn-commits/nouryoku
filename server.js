@@ -75,6 +75,11 @@ const PLAN_SCHEMA = {
 };
 
 const COMMON_RULES = `
+# 進行の仕組み
+- 戦闘はターン制。入力ターン（時間停止）に双方が同時に計画を立て、その後、両者の計画が同時に実行される。
+- 相手の今回の計画は分からない。実行中に相手も動くので、敵に近づく・追う時は move ではなく chase（追尾）を使う。
+- 状況に応じて動きたい時は condition（条件付き行動）を使う。
+
 # 出力の規則
 - steps[].action は rules.actions の id のみ。能力を使う場合は action="ability" とし、ability と effect に observation.self.abilities の id を正確に入れる。
 - targetType: enemy=敵 / self=自分 / object=戦場の物体・建物・扉（targetId に observation.map.landmarks の id）/ point=座標（x,y メートル）/ projectile=飛来物 / direction=方向（direction に rules.directions のいずれか。cover=物陰）/ none=対象なし。
@@ -104,7 +109,7 @@ observation（あなた自身が見聞きした情報だけ）をもとに、次
 - 相手の能力は observed_enemy_abilities に書かれた観察結果しか知らない。推理はしてよいが、確定事項として扱わない。
 - 敵が見えていなければ、最後に見た位置（enemy.last_seen）や物音（heard）から推測して行動する。
 - 自分の能力（self.abilities）の射程・クールダウン（self.cooldowns）・スタンドエネルギー（self.sp）を守る。
-- trigger は今回考え直すきっかけ（plan_done=手順を終えた / damaged=攻撃を受けた / spotted=敵を発見 / heard_speech=声が聞こえた / periodic=定期）。
+- recent_events には前のターンの出来事が入っている。前のターンに見聞きした相手の行動から、次の手を読む。
 - speech は相手に聞こえうる短いセリフ（任意。毎回は不要。キャラクターらしく、心理戦や挑発・はったりも可）。heard に相手の言葉があれば反応してよい。
 - rejected は通常は空配列でよい。
 ${COMMON_RULES}`;

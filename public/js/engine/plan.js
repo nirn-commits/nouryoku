@@ -5,7 +5,7 @@ import { nearestWalkable, hasLOS, isWalkablePoint } from './world.js';
 import { applyAbility } from './abilities.js';
 
 const DEFAULT_TARGET = {
-  move: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
+  move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
   push: 'object', pull: 'object', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
@@ -41,6 +41,7 @@ export function describeStep(b, s) {
   const cond = s.condition ? `［${condLabel(s.condition)}］` : '';
   switch (s.action) {
     case 'move': return `${cond}${tn}へ${s.mode === 'run' ? '走る' : '歩く'}`;
+    case 'chase': return `${cond}敵を${s.mode === 'run' ? '走って' : '歩いて'}追尾（最大${s.duration.toFixed(0)}秒${s.distance ? `・距離${s.distance}m` : ''}）`;
     case 'melee': return `${cond}${tn}を殴る`;
     case 'throw': return `${cond}${tn}へナイフを投げる`;
     case 'guard': return `${cond}ガード（${s.duration.toFixed(1)}秒）`;
@@ -74,7 +75,8 @@ function validateStep(b, c, raw, cursor) {
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
   if (ttype === 'none' && action !== 'wait' && action !== 'guard') ttype = DEFAULT_TARGET[action];
-  const step = { action, mode: raw.mode === 'run' ? 'run' : 'walk', target: { type: ttype }, raw };
+  const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
+  const step = { action, mode, target: { type: ttype }, raw };
 
   // 能力の照合：存在しない能力・他人の能力は許可しない
   if (action === 'ability') {
@@ -124,6 +126,7 @@ function validateStep(b, c, raw, cursor) {
 
   const d = num(raw.duration);
   if (action === 'guard') step.duration = clamp(d ?? 1.5, 0.3, 3);
+  else if (action === 'chase') step.duration = clamp(d ?? 4, 0.5, 8);
   else if (action === 'wait') step.duration = clamp(d ?? (raw.condition ? 0 : 1), 0, 6);
   else step.duration = 0;
 
@@ -156,6 +159,7 @@ function estimateCost(b, c, s, cursor) {
   };
   switch (s.action) {
     case 'move': cost = Math.max(0.3, (approxDist() * 1.25) / speed); break;
+    case 'chase': cost = s.duration; break;
     case 'melee': cost = 0.8 + clamp((approxDist() - 1.5) / c.def.run, 0, 2.5); break;
     case 'throw': cost = RULES.throwWindup + RULES.throwRecovery + 0.1; break;
     case 'guard': cost = s.duration; break;
@@ -190,7 +194,7 @@ export function compilePlan(b, c, raw, source = 'local') {
     const remaining = RULES.budgetSeconds - plan.budget;
     if (plan.steps.length >= RULES.maxSteps || remaining < 0.3) { plan.truncated.push(step.label); continue; }
     if (step.est > remaining) {
-      if (step.action === 'move' || step.action === 'wait' || step.action === 'guard') {
+      if (step.action === 'move' || step.action === 'wait' || step.action === 'guard' || step.action === 'chase') {
         // 移動・待機は予算の範囲で打ち切る
         step.maxTime = remaining;
         step.est = remaining;
@@ -431,6 +435,60 @@ const EXEC = {
     },
   },
 
+  chase: {
+    start(b, c, st) {
+      st.data.until = b.t + (st.def.maxTime ?? st.def.duration);
+      st.data.visited = new Set();
+      return null;
+    },
+    update(b, c, st) {
+      const s = st.def;
+      const D = st.data;
+      const e = b.enemyOf(c);
+      if (!e.alive) return 'done';
+      if (b.t > D.until) return 'done';
+      const next = c.runner.plan && c.runner.plan.steps[c.runner.idx];
+      const run = s.mode === 'run';
+      if (b.canSee(c, e.x, e.y)) {
+        D.lost = false;
+        D.path = D.lostTarget ? null : D.path;
+        D.lostTarget = null;
+        const d = dist(c.x, c.y, e.x, e.y);
+        // 次の手順の間合いに入ったら追尾を終えて次へ
+        const reach = next ? reachFor(next) : null;
+        if (reach !== null && d <= reach) {
+          selfLog(b, c, `${e.name} を間合いに捉えた`);
+          return 'done';
+        }
+        const keep = s.distance ?? (reach !== null ? Math.max(0.8, reach - 0.3) : 1.5);
+        D.repathAt = Math.min(D.repathAt ?? 0, b.t + 0.4);
+        const r = approach(b, c, st, e.x, e.y, keep, run);
+        if (r === 'arrived') { c.desired.vx = c.desired.vy = 0; faceTo(c, e.x, e.y); }
+        else if (r === 'stuck') { D.path = null; D.stuckCount = 0; }
+        return 'running';
+      }
+      // 見失った：最後に見た位置 → 最近の物音の位置 → 見回す
+      if (!D.lost) {
+        D.lost = true;
+        selfLog(b, c, '敵を見失った。痕跡を追う');
+      }
+      if (!D.lostTarget) {
+        const ls = c.memory.lastSeen;
+        const h = [...c.memory.heard].reverse().find(x => b.t - x.t < 8 && !D.visited.has(`${x.t}`));
+        if (ls && !D.visited.has('lastSeen')) D.lostTarget = { x: ls.x, y: ls.y, key: 'lastSeen' };
+        else if (h) D.lostTarget = { x: h.x, y: h.y, key: `${h.t}` };
+        D.path = null;
+      }
+      if (D.lostTarget) {
+        const r = approach(b, c, st, D.lostTarget.x, D.lostTarget.y, 0.6, run);
+        if (r !== 'moving') { D.visited.add(D.lostTarget.key); D.lostTarget = null; D.path = null; }
+        return 'running';
+      }
+      c.desired.face = c.facing + 2.5; // その場で見回す
+      return 'running';
+    },
+  },
+
   melee: {
     start(b, c, st) {
       const res = resolveTarget(b, c, st.def.target, st.def);
@@ -647,6 +705,15 @@ const EXEC = {
     },
   },
 };
+
+// 次の手順を敵に対して実行できる距離（追尾の終了判定に使う）
+function reachFor(next) {
+  if (next.target.type !== 'enemy') return null;
+  if (next.action === 'melee') return RULES.meleeRange - 0.2;
+  if (next.action === 'throw') return 10;
+  if (next.action === 'ability') return Math.max(1, ABILITIES[next.ability].range - 0.5);
+  return null;
+}
 
 function pushPull(sign) {
   return {

@@ -4,7 +4,7 @@ import { CHARACTERS, ABILITIES, ACTIONS, RULES } from './engine/data.js';
 import { compilePlan } from './engine/plan.js';
 import { buildObservation } from './engine/perception.js';
 import { localParse } from './engine/localParser.js';
-import { CpuBrain } from './engine/controller.js';
+import { TurnController } from './engine/controller.js';
 import { Renderer } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
 
@@ -17,13 +17,12 @@ const state = {
   model: '',
   chosen: 'makabe',
   battle: null,
-  brain: null,
+  turn: null,
   renderer: null,
   paused: false,
-  speed: 0.5,
+  speed: 1,
   acc: 0,
   last: 0,
-  typing: false,
   cmdSeq: 0,
   thinking: 0,
   hover: null,
@@ -37,11 +36,13 @@ const EXAMPLES = {
     '敵が近づいてきたら、足元の地面に能力を使って転倒させる',
     '飛んできたナイフの軌道を能力で逸らし、その隙に距離を詰める',
     '近くの木箱の摩擦を消してから、敵に向かって押し出す',
+    '敵を追いかけて殴る',
     '物陰に隠れて、敵が見えたらナイフを投げる',
     '「出てこいよ、臆病者」と挑発して2秒待つ',
   ],
   karasuma: [
-    '周囲の音を消して、敵に忍び寄って殴る',
+    '周囲の音を消して、敵を歩いて追いかけて殴る',
+    '3mの距離を保って敵を尾行する',
     '正面から攻撃すると見せかけて、背後の壁を破壊して瓦礫を落とす',
     '敵の目の前に壁を作って通路を塞ぎ、右の家に入る',
     '敵が壁際にいたら、その壁から棘を突き出す',
@@ -119,11 +120,12 @@ function startBattle() {
   state.acc = 0;
   state.paused = false;
   const cdef = CHARACTERS[cpuChar];
-  state.brain = new CpuBrain(b, b.cpu, {
-    remote: state.gemini
+  state.turn = new TurnController(b, {
+    cpuRemote: state.gemini
       ? obs => apiPlan({ role: 'cpu', observation: obs, character: { name: cdef.name, stand: cdef.stand, personality: cdef.personality } })
       : null,
   });
+  state.lastPhase = null;
   $('#title').classList.add('hidden');
   $('#result').classList.add('hidden');
   $('#battle').classList.remove('hidden');
@@ -145,17 +147,17 @@ function playerLog(text, kind = 'plan') {
 
 async function submitCommand() {
   const b = state.battle;
-  if (!b || b.over) return;
+  const turn = state.turn;
+  if (!b || b.over || turn.phase !== 'input' || state.thinking) return;
   const text = $('#cmd').value.trim();
-  if (!text) return;
   $('#cmd').value = '';
   const seq = ++state.cmdSeq;
-  playerLog(`▶ 指示：${text}`, 'command');
+  playerLog(text ? `▶ 指示：${text}` : '▶ 指示：（何もしない）', 'command');
   state.thinking++;
   updateThinking();
   let raw = null;
   let source = 'local';
-  if (state.gemini) {
+  if (state.gemini && text) {
     try {
       raw = await apiPlan({ role: 'player', text, observation: buildObservation(b, b.player) });
       source = 'gemini';
@@ -166,19 +168,41 @@ async function submitCommand() {
   state.thinking--;
   updateThinking();
   if (b !== state.battle || b.over) return;
-  if (seq !== state.cmdSeq) return; // より新しい指示が出ている
-  if (!raw) raw = localParse(b, b.player, text);
+  if (seq !== state.cmdSeq) return;
+  if (!raw) raw = text ? localParse(b, b.player, text) : { interpretation: 'その場で様子を見る', steps: [] };
   const plan = compilePlan(b, b.player, raw, source);
   if (plan.interpretation) playerLog(`解釈：${plan.interpretation}`);
   if (plan.steps.length) playerLog(`計画：${plan.steps.map(s => s.label).join(' → ')}（見積もり${plan.budget.toFixed(1)}秒）`);
   for (const r of plan.rejected) playerLog(`✕ 実行不可：${r}`, 'fail');
   if (plan.truncated.length) playerLog(`✕ 行動予算超過のため省略：${plan.truncated.join('、')}`, 'fail');
-  if (!plan.steps.length && !plan.speech) return;
-  b.setPlan(b.player, plan);
+  // 相手の計画が揃いしだい、双方の行動を同時に実行する
+  await turn.commit(plan);
 }
 
 function updateThinking() {
-  $('#send-btn').textContent = state.thinking > 0 ? '解析中…' : '送信';
+  updatePhase();
+}
+
+function updatePhase() {
+  const turn = state.turn;
+  if (!turn) return;
+  const phase = turn.phase;
+  const input = phase === 'input' && !state.thinking;
+  $('#cmd').disabled = !input;
+  $('#send-btn').disabled = !input;
+  $('#send-btn').textContent = state.thinking ? '解析中…' : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
+  const label = {
+    input: `第${turn.turn}手：入力ターン（時間停止中）`,
+    resolving: `第${turn.turn}手：相手の作戦を待っています…`,
+    execute: `第${turn.turn}手：双方の行動を実行中`,
+    over: '決着',
+  }[phase];
+  $('#phase-label').textContent = label;
+  $('#phase-label').className = `phase phase-${phase}`;
+  if (phase !== state.lastPhase) {
+    if (phase === 'input') $('#cmd').focus();
+    state.lastPhase = phase;
+  }
 }
 
 function updatePause() {
@@ -220,7 +244,7 @@ function renderSide() {
     ${vis || DEBUG ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
     <div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m` : ls ? `最後に見た位置 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})・${(b.t - ls.t).toFixed(0)}秒前` : '一度も姿を見ていない'}</div>
     <div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>
-    ${DEBUG ? `<div class="meta debug">[debug] CPU思考:${state.brain.status} 計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}`;
+    ${DEBUG ? `<div class="meta debug">[debug] CPU計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}`;
 
   const plan = me.runner.plan;
   $('#plan-source').textContent = plan ? (plan.source === 'gemini' ? 'Gemini' : 'ローカル解析') : '';
@@ -274,16 +298,18 @@ function loop(now) {
   state.last = now;
   const b = state.battle;
   if (b && !$('#battle').classList.contains('hidden')) {
-    if (!state.paused && !b.over) {
-      const slow = state.typing && $('#slowmo').checked && $('#cmd').value.length > 0 ? 0.2 : 1;
-      state.acc += dtReal * state.speed * slow;
+    // 時間が進むのは実行フェーズの間だけ
+    if (!state.paused && state.turn.phase === 'execute') {
+      state.acc += dtReal * state.speed;
       let n = 0;
-      while (state.acc >= RULES.dt && n++ < 10) {
-        state.brain.update();
-        b.step();
+      while (state.acc >= RULES.dt && n++ < 12 && state.turn.phase === 'execute') {
+        state.turn.step();
         state.acc -= RULES.dt;
       }
+    } else {
+      state.acc = 0;
     }
+    updatePhase();
     state.renderer.draw(b, { debug: DEBUG, hover: state.hover });
     renderSide();
     renderLog();
@@ -324,8 +350,6 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitCommand(); }
     if (e.key === 'Escape') $('#cmd').blur();
   });
-  $('#cmd').addEventListener('focus', () => { state.typing = true; });
-  $('#cmd').addEventListener('blur', () => { state.typing = false; });
   $('#examples').addEventListener('change', e => {
     if (e.target.value) { $('#cmd').value = e.target.value; e.target.value = ''; $('#cmd').focus(); }
   });

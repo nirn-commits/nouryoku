@@ -37,7 +37,7 @@ function splitClauses(text) {
   return text
     .replace(/(してから|それから|そのあと|その後|その隙に|そして|次に|ながら|つつ)/g, '、')
     // 「〜まで走って投げる」のように移動の後に別の行動が続く場合は分ける
-    .replace(/((?:走っ|駆け寄っ|近づい|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
+    .replace(/((?:走っ|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
     .split(/[、。,.\n!！?？]+/)
     .map(s => s.trim())
     .filter(Boolean);
@@ -188,6 +188,15 @@ function parseClause(b, c, clause, has) {
   }
   if (/避け|回避|かわ|躱|飛び退|跳び退|横に跳/.test(clause)) {
     steps.push({ action: 'dodge', targetType: 'direction', direction: dir && dir !== 'cover' ? dir : (/横/.test(clause) ? 'left' : 'away_from_enemy') });
+    return steps;
+  }
+  if (/追いかけ|追尾|追う|追っ|追い詰|尾行|追跡|ついて行|付いて行|後を付け|後をつけ|距離を詰め|間合いを詰め|接近|近づ|迫/.test(clause) && (mentionsEnemy || !obj)) {
+    const dm = clause.match(/(\d+(?:\.\d+)?)\s*(?:m|ｍ|メートル)/);
+    const tm = clause.match(/(\d+(?:\.\d+)?)\s*秒/);
+    steps.push({
+      action: 'chase', targetType: 'enemy', mode: /歩い|そっと|静かに|忍び/.test(clause) ? 'walk' : 'run',
+      ...(dm ? { distance: Number(dm[1]) } : {}), ...(tm ? { duration: Number(tm[1]) } : {}),
+    });
     return steps;
   }
   const isMove = /移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|進|戻|退|出る|出て|寄る/.test(clause);

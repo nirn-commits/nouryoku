@@ -64,7 +64,7 @@ export function localCpuPlan(b, c) {
 
     if (ready(b, c, 'friction') && d < 9 && rnd() < 0.7) {
       steps.push({ action: 'ability', ability: 'friction', effect: rnd() < 0.75 ? 'slick' : 'grip', targetType: 'enemy' });
-      steps.push({ action: 'move', mode: 'walk', targetType: 'enemy', distance: 1.5 });
+      steps.push({ action: 'chase', mode: 'walk', targetType: 'enemy' });
       steps.push({ action: 'melee', targetType: 'enemy' });
       return { interpretation: '（CPU・ローカル）足元を崩してから攻撃', speech, steps };
     }
@@ -75,14 +75,14 @@ export function localCpuPlan(b, c) {
 
     if (c.knives > 0 && d > 3 && d < 14 && hasLOS(b.world, c.x, c.y, e.x, e.y) && rnd() < 0.55) {
       steps.push({ action: 'throw', targetType: 'enemy' });
-      steps.push({ action: 'move', mode: 'run', targetType: 'enemy', distance: 1.5 });
+      steps.push({ action: 'chase', mode: 'run', targetType: 'enemy' });
       steps.push({ action: 'melee', targetType: 'enemy' });
       return { interpretation: '（CPU・ローカル）ナイフで牽制して接近', speech, steps };
     }
     if (ready(b, c, 'masonry') && d > 4 && d < 8 && rnd() < 0.3) {
       steps.push({ action: 'ability', ability: 'masonry', effect: 'raise', targetType: 'direction', direction: 'toward_enemy' });
     }
-    steps.push({ action: 'move', mode: d > 6 ? 'run' : 'walk', targetType: 'enemy', distance: 1.5 });
+    steps.push({ action: 'chase', mode: d > 6 ? 'run' : 'walk', targetType: 'enemy' });
     steps.push({ action: 'melee', targetType: 'enemy' });
     return { interpretation: '（CPU・ローカル）接近して攻撃', speech, steps };
   }

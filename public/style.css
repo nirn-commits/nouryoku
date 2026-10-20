@@ -116,3 +116,10 @@ kbd { background: #000; border: 1px solid #555; border-radius: 3px; padding: 0 4
 .overlay { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 50; }
 .overlay-box { background: var(--panel); border: 3px solid var(--gold); border-radius: 10px; padding: 24px 36px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
 .overlay-box h2 { border: none; font-size: 2rem; margin: 0; font-style: italic; }
+
+.phase { margin-top: 10px; padding: 6px 10px; border-radius: 4px; font-weight: bold; background: var(--panel); border-left: 4px solid #666; }
+.phase-input { border-color: var(--gold); color: var(--gold); }
+.phase-resolving { border-color: #9be7ff; color: #9be7ff; }
+.phase-execute { border-color: var(--danger); color: var(--danger); }
+.command textarea:disabled { opacity: .5; }
+button:disabled { opacity: .5; cursor: default; }

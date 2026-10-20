@@ -179,7 +179,9 @@ export class Battle {
     });
     this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', visibleTo: entry.visibleTo });
     // 怯み：構えや詠唱を中断させる
-    if (dmg >= 6 && !guarded) {
+    // 同じ瞬間に放たれる攻撃は相打ちにする（処理順で有利不利が出ないように）
+    const releasing = target.windup && target.windup.until <= this.t + RULES.dt + 1e-6;
+    if (dmg >= 6 && !guarded && !releasing) {
       target.status.stunUntil = Math.max(target.status.stunUntil, this.t + 0.25);
       interruptStep(this, target, '攻撃を受けて行動が中断された');
     }

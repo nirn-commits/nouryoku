@@ -3,6 +3,7 @@
 // 基本行動。cost は行動予算の見積もり（秒）
 export const ACTIONS = {
   move: { name: '移動', desc: '目的地・対象・方向へ経路に沿って移動する。mode=walk(静か)/run(速いが足音が大きい)', targets: ['point', 'object', 'enemy', 'direction'] },
+  chase: { name: '追尾', desc: '敵を追いかけ続ける（実行中に敵が動いても現在位置へ向かい直す）。見失ったら最後に見た位置→物音の位置を探す。次の手順が攻撃・投擲・能力なら、その間合いに入った時点で終了して次へ進む。最後の手順なら duration 秒（既定4・最大8）distance m（既定1.5）を保って追い続ける', targets: ['enemy'] },
   melee: { name: '近接攻撃', desc: 'スタンドで殴る（射程1.7m、届かなければ最大2.5秒追いかける）。対象が物体なら破壊を狙う', targets: ['enemy', 'object'] },
   throw: { name: '投擲', desc: 'ナイフを投げる（所持数に限りあり、軌道上の遮蔽物に当たる）。外れたナイフは地面に落ち拾える', targets: ['enemy', 'point', 'direction'] },
   guard: { name: 'ガード', desc: '正面からの攻撃を70%軽減する構え。duration秒（最大3秒）', targets: ['none', 'enemy', 'direction'] },

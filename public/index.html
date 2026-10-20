@@ -18,13 +18,15 @@
     <details class="howto">
       <summary>遊び方</summary>
       <ul>
-        <li>戦闘は時間が流れ続けます（疑似リアルタイム）。入力欄に文字を打っている間は時間がゆっくりになります（設定で変更可）。</li>
-        <li>入力欄に行動を書いて <kbd>Enter</kbd> で送信。新しい指示を出すと、それまでの計画は打ち切られます（振りかぶり中の攻撃などは最後まで実行）。</li>
+        <li>戦闘は「入力ターン（時間停止）→ 双方の行動を同時に実行 → 次の入力ターン」の繰り返しです。</li>
+        <li>入力ターンでは、相手も同じ時点の戦況から作戦を立てています（お互いの計画は見えません）。</li>
+        <li>入力欄に行動を書いて <kbd>Enter</kbd> で決定。空欄のまま決定すると「その場で様子を見る」になります。</li>
+        <li>相手は実行中も動くので、近づくなら「追尾」（例：追いかけて殴る）が有効です。「〜したら」で条件付きの行動も書けます。</li>
         <li>1回の指示で実行できるのは最大5手順・約10秒分まで。超過分は実行されません。</li>
         <li>「」で囲んだ部分はセリフとして扱われ、相手に聞こえれば相手の判断材料になります。</li>
         <li>敵は<b>見えている時しか</b>画面に表示されません。物音は波紋で表示されます。</li>
         <li>フィールドをクリックすると、その座標や物体名が入力欄に挿入されます。</li>
-        <li><kbd>Space</kbd>（入力欄の外）で一時停止／再開。</li>
+        <li>実行中は <kbd>Space</kbd>（入力欄の外）で一時停止／再開できます。</li>
       </ul>
     </details>
   </section>
@@ -38,23 +40,24 @@
           <div id="pause-badge" class="pause-badge hidden">一時停止中</div>
           <div id="tooltip" class="tooltip hidden"></div>
         </div>
+        <div id="phase-label" class="phase"></div>
         <div class="command">
           <textarea id="cmd" rows="2" placeholder="例：左の家に駆け込み、窓から敵の位置を確認する「どこに隠れた？」"></textarea>
           <div class="cmd-side">
-            <button id="send-btn" class="big">送信</button>
+            <button id="send-btn" class="big">決定</button>
             <select id="examples"><option value="">例文…</option></select>
           </div>
         </div>
         <div class="controls">
           <button id="pause-btn">一時停止</button>
-          <label>速度
+          <label>再生速度
             <select id="speed">
               <option value="0.25">0.25×</option>
-              <option value="0.5" selected>0.5×</option>
-              <option value="1">1×</option>
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="2">2×</option>
             </select>
           </label>
-          <label><input type="checkbox" id="slowmo" checked> 入力中は時間を遅くする（×0.2）</label>
           <span id="time-label" class="time"></span>
           <button id="quit-btn" class="small">タイトルへ</button>
         </div>
