@@ -12,13 +12,22 @@ function buildLot(seed) {
   world.spawns = { player: { x: 2.5, y: 21 }, cpu: { x: 33.5, y: 3 } };
 
   addHouse(world, {
-    id: 'house_left', name: '左の家', aliases: ['左の家'], x: 3, y: 3, w: 10, h: 8,
+    id: 'house_left', name: '左の家', aliases: ['左の家'], x: 3, y: 3, w: 10, h: 8, floors: 2,
     openings: [
       { side: 'S', a: 3.5, b: 5.4, type: 'door', id: 'house_left_door', name: '左の家の入口' },
       { side: 'E', a: 3, b: 4.6, type: 'window', id: 'house_left_window', name: '左の家の窓' },
       { side: 'N', a: 6, b: 7.4, type: 'window', id: 'house_left_window_n', name: '左の家の北窓' },
     ],
+    stairs: { x: 3.4, y: 3.5, w: 1.2, h: 2.4 },
+    upper: {
+      openings: [
+        { side: 'E', a: 3, b: 4.6, type: 'window', id: 'house_left_f2_window_e', name: '左の家の2階の東窓' },
+        { side: 'S', a: 6, b: 7.5, type: 'window', id: 'house_left_f2_window_s', name: '左の家の2階の南窓' },
+        { side: 'N', a: 2, b: 3.5, type: 'window', id: 'house_left_f2_window_n', name: '左の家の2階の北窓' },
+      ],
+    },
   });
+  addObj(world, 'table', { id: 'bed_left', name: '左の家の2階のベッド', floor: 1, x: 9, y: 4, w: 2, h: 1, height: 0.5 });
   addHouse(world, {
     id: 'house_right', name: '右の家', aliases: ['右の家'], x: 23, y: 13, w: 10, h: 8,
     openings: [
@@ -79,7 +88,17 @@ function buildTown(seed) {
       { side: 'E', a: 2, b: 3.5, type: 'window', id: 'house_sato_window', name: '佐藤家の東窓' },
       { side: 'N', a: 5, b: 6.5, type: 'window', id: 'house_sato_window_n', name: '佐藤家の北窓' },
     ],
+    floors: 2,
+    stairs: { x: 10.4, y: 3.4, w: 1.2, h: 2.4 },
+    upper: {
+      openings: [
+        { side: 'S', a: 1, b: 2.5, type: 'window', id: 'house_sato_f2_window_s', name: '佐藤家の2階の南窓' },
+        { side: 'E', a: 4, b: 5.5, type: 'window', id: 'house_sato_f2_window_e', name: '佐藤家の2階の東窓' },
+        { side: 'W', a: 2, b: 3.5, type: 'window', id: 'house_sato_f2_window_w', name: '佐藤家の2階の西窓' },
+      ],
+    },
   });
+  addObj(world, 'table', { id: 'bed_sato', name: '佐藤家の2階のベッド', floor: 1, x: 4, y: 7.5, w: 2, h: 1, height: 0.5 });
   addObj(world, 'table', { id: 'table_sato', name: '佐藤家の座卓', x: 5, y: 5, w: 1.6, h: 0.9 });
   addFence(world, { id: 'fence_sato_s', name: '佐藤家の塀・南', x: 0.5, y: 13, len: 13.5, horiz: true, gaps: [[5.5, 8]] });
   addFence(world, { id: 'fence_sato_e', name: '佐藤家の塀・東', x: 14, y: 0.5, len: 12.5, horiz: false });
@@ -91,7 +110,17 @@ function buildTown(seed) {
       { side: 'W', a: 2, b: 3.5, type: 'window', id: 'house_suzuki_window', name: '鈴木家の西窓' },
       { side: 'E', a: 3, b: 4.5, type: 'window', id: 'house_suzuki_window_e', name: '鈴木家の東窓' },
     ],
+    floors: 2,
+    stairs: { x: 17.4, y: 7.2, w: 1.2, h: 2.4 },
+    upper: {
+      openings: [
+        { side: 'S', a: 6, b: 7.5, type: 'window', id: 'house_suzuki_f2_window_s', name: '鈴木家の2階の南窓' },
+        { side: 'N', a: 2, b: 3.5, type: 'window', id: 'house_suzuki_f2_window_n', name: '鈴木家の2階の北窓' },
+        { side: 'E', a: 2, b: 3.5, type: 'window', id: 'house_suzuki_f2_window_e', name: '鈴木家の2階の東窓' },
+      ],
+    },
   });
+  addObj(world, 'table', { id: 'bed_suzuki', name: '鈴木家の2階のベッド', floor: 1, x: 19.5, y: 4, w: 2, h: 1, height: 0.5 });
   addObj(world, 'shelf', { id: 'shelf_suzuki', name: '鈴木家の本棚', x: 23.5, y: 3.6, w: 1.8, h: 0.6 });
   addFence(world, { id: 'fence_suzuki_s', name: '鈴木家の塀・南', x: 15.5, y: 13, len: 12, horiz: true, gaps: [[4.5, 7.5]] });
   addFence(world, { id: 'fence_suzuki_w', name: '鈴木家の塀・西', x: 15.5, y: 0.5, len: 12.5, horiz: false });
@@ -129,7 +158,7 @@ function buildTown(seed) {
 
   // ---- 大通り：路上駐車・トラック・電柱 ----
   addObj(world, 'car', { id: 'car_street', name: '路上駐車の車', x: jitter(10, 1), y: 18.7, w: 4.4, h: 1.9 });
-  addObj(world, 'car', { id: 'truck_site', name: '工事車両のトラック', x: 40, y: 18.6, w: 6.5, h: 2.3 });
+  addObj(world, 'car', { id: 'truck_site', name: '工事車両のトラック', x: 40, y: 18.6, w: 6.5, h: 2.3, height: 3 });
   [[8, 17.3], [21, 17.3], [40, 24.3], [53, 24.3], [27.7, 3], [27.3, 32]].forEach(([x, y], i) => {
     addObj(world, 'pole', { id: `pole_${i + 1}`, name: `電柱${i + 1}`, x, y, w: 0.4, h: 0.4 });
   });
@@ -138,9 +167,9 @@ function buildTown(seed) {
   addHouse(world, {
     id: 'store', name: 'コンビニ', kind: 'store', aliases: ['コンビニ', '店', 'お店', '店内'], x: 4, y: 28, w: 14, h: 8, wallHp: 60,
     openings: [
-      { side: 'N', a: 0.4, b: 5, type: 'window', id: 'store_glass_1', name: 'コンビニのガラス窓（西）', hp: 8 },
-      { side: 'N', a: 5, b: 7, type: 'door', id: 'store_door', name: 'コンビニの自動ドア' },
-      { side: 'N', a: 7, b: 13.6, type: 'window', id: 'store_glass_2', name: 'コンビニのガラス窓（東）', hp: 8 },
+      { side: 'N', a: 0.4, b: 5, type: 'window', id: 'store_glass_1', name: 'コンビニのガラス窓（西）', hp: 8, fixed: true },
+      { side: 'N', a: 5, b: 7, type: 'door', id: 'store_door', name: 'コンビニの入口ドア' },
+      { side: 'N', a: 7, b: 13.6, type: 'window', id: 'store_glass_2', name: 'コンビニのガラス窓（東）', hp: 8, fixed: true },
       { side: 'S', a: 10, b: 11.6, type: 'door', id: 'store_backdoor', name: 'コンビニの裏口' },
     ],
   });
@@ -164,7 +193,17 @@ function buildTown(seed) {
       { side: 'E', a: 2, b: 3.5, type: 'window', id: 'house_takahashi_window', name: '高橋家の東窓' },
       { side: 'S', a: 5, b: 6.5, type: 'window', id: 'house_takahashi_window_s', name: '高橋家の南窓' },
     ],
+    floors: 2,
+    stairs: { x: 43.4, y: 34.2, w: 1.2, h: 2.4 },
+    upper: {
+      openings: [
+        { side: 'N', a: 5, b: 6.5, type: 'window', id: 'house_takahashi_f2_window_n', name: '高橋家の2階の北窓' },
+        { side: 'W', a: 2, b: 3.5, type: 'window', id: 'house_takahashi_f2_window_w', name: '高橋家の2階の西窓' },
+        { side: 'S', a: 2, b: 3.5, type: 'window', id: 'house_takahashi_f2_window_s', name: '高橋家の2階の南窓' },
+      ],
+    },
   });
+  addObj(world, 'table', { id: 'bed_takahashi', name: '高橋家の2階のベッド', floor: 1, x: 37, y: 31, w: 2, h: 1, height: 0.5 });
   addObj(world, 'table', { id: 'table_takahashi', name: '高橋家の食卓', x: 41, y: 33, w: 1.6, h: 0.9 });
   addFence(world, { id: 'fence_taka_n', name: '高橋家の塀・北', x: 34.3, y: 27, len: 12.7, horiz: true, gaps: [[4, 7]] });
   addFence(world, { id: 'fence_taka_w', name: '高橋家の塀・西', x: 34.3, y: 27, len: 12.5, horiz: false });

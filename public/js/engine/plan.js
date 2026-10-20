@@ -1,12 +1,12 @@
 // 行動計画：AI/解析器が出した「生の計画」を検証して実行可能な形に変換し、時間経過に沿って実行する
 import { ACTIONS, ABILITIES, CONDITIONS, DIRECTIONS, RULES } from './data.js';
-import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter } from './vec.js';
-import { nearestWalkable, hasLOS, isWalkablePoint } from './world.js';
+import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter, pointInRect } from './vec.js';
+import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt } from './world.js';
 import { applyAbility } from './abilities.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
-  push: 'object', pull: 'object', look: 'enemy', wait: 'none', ability: 'enemy',
+  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
 const DIR_LABEL = {
@@ -49,6 +49,9 @@ export function describeStep(b, s) {
     case 'guard': return `${cond}ガード（${s.duration.toFixed(1)}秒）`;
     case 'dodge': return `${cond}${tn}へ回避`;
     case 'push': return `${cond}${tn}を押す`;
+    case 'open': return `${cond}${tn}を開ける`;
+    case 'close': return `${cond}${tn}を閉める${s.ability === 'hotel' ? '（ホテル・カリフォルニア）' : ''}`;
+    case 'jump_down': return `${cond}${s.target.type === 'object' ? tn : '2階の窓'}から飛び降りる`;
     case 'pull': return `${cond}${tn}を引く`;
     case 'look': return `${cond}${tn}を観察`;
     case 'wait': return `${cond}待機${s.duration ? `（${s.duration.toFixed(1)}秒）` : ''}`;
@@ -77,7 +80,7 @@ function validateStep(b, c, raw, cursor) {
   const action = str(raw.action);
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
-  if (ttype === 'none' && action !== 'wait' && action !== 'guard') ttype = DEFAULT_TARGET[action];
+  if (ttype === 'none' && action !== 'wait' && action !== 'guard' && action !== 'jump_down') ttype = DEFAULT_TARGET[action];
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw };
 
@@ -97,6 +100,8 @@ function validateStep(b, c, raw, cursor) {
     }
     step.ability = abId;
     step.effect = effect;
+    // ホテル・カリフォルニアは「自分の手で最後の出口を閉める」ことで成立するので、行動としては「閉める」
+    if (abId === 'hotel') step.action = 'close';
   } else if (!ACTIONS[action].targets.includes(ttype)) {
     return { error: `${ACTIONS[action].name}は「${ttype}」を対象にできない` };
   }
@@ -108,11 +113,12 @@ function validateStep(b, c, raw, cursor) {
     t.id = id;
     const o = b.objectById(id);
     if ((action === 'push' || action === 'pull') && (!o || !o.movable)) return { error: `${targetName(b, t)}は動かせない` };
+    if (step.action === 'open' || step.action === 'close') {
+      if (!o || !(o.kind === 'door' || o.kind === 'window')) return { error: `${targetName(b, t)}は開け閉めできる扉・窓ではない` };
+      if (!o.openable) return { error: `${o.name}は開かない（割ることはできる）` };
+    }
+    if (action === 'jump_down' && (!o || o.kind !== 'window' || o.floor !== 1)) return { error: `飛び降りられるのは2階の窓だけ（${targetName(b, t)}は不可）` };
     if (action === 'ability') {
-      if (step.ability === 'masonry' && (!o || o.kind !== 'wall')) return { error: `『壁面変形』の対象は壁のみ（${targetName(b, t)}は不可）` };
-      if (step.effect === 'breach' && o.indestructible) return { error: `${o.name}は崩せない（外壁）` };
-      if (step.ability === 'friction' && (!o || !o.movable)) return { error: `『摩擦操作』で物体を対象にできるのは動かせる物（木箱・机）のみ` };
-      if (step.ability === 'vector' && (!o || !o.movable)) return { error: `『ベクトル反転』で弾けるのは動かせる物のみ` };
       if (step.ability === 'perpendicular' && step.effect === 'launch') {
         if (!o || !o.movable) return { error: `『パーペンディキュラー』で弾き出せるのは動かせる物のみ（${targetName(b, t)}は不可）` };
         if ((o.kg ?? 0) > 100) return { error: `${o.name}は重すぎて弾き出せない（約${o.kg}kg、上限100kg）` };
@@ -126,6 +132,7 @@ function validateStep(b, c, raw, cursor) {
     if (x === null || y === null) return { error: '地点の座標が指定されていない' };
     if (x < 0 || y < 0 || x > b.world.w || y > b.world.h) return { error: `地点(${x}, ${y})は戦場の外` };
     t.x = x; t.y = y;
+    if (raw.floor === 0 || raw.floor === 1) t.floor = raw.floor;
   } else if (ttype === 'direction') {
     t.dir = DIRECTIONS.includes(raw.direction) ? raw.direction : (action === 'dodge' ? 'away_from_enemy' : 'toward_enemy');
   } else if (ttype === 'projectile') {
@@ -175,6 +182,8 @@ function estimateCost(b, c, s, cursor) {
     case 'guard': cost = s.duration; break;
     case 'dodge': cost = 0.4; break;
     case 'push': case 'pull': cost = 0.6 + clamp((approxDist() - 1) / c.def.walk, 0, 3); break;
+    case 'open': case 'close': cost = 0.6 + clamp((approxDist() - 1) / speed, 0, 4); break;
+    case 'jump_down': cost = 1.2 + (s.target.type === 'object' ? clamp((approxDist() - 1) / speed, 0, 4) : 1); break;
     case 'look': cost = 0.6; break;
     case 'wait': cost = s.duration; break;
     case 'ability': cost = ABILITIES[s.ability].castTime + 0.25; break;
@@ -273,27 +282,31 @@ export function resolveTarget(b, c, t, step = {}) {
   switch (t.type) {
     case 'enemy': {
       const pe = b.perceivedEnemy(c);
-      if (pe) return { x: pe.x, y: pe.y, char: pe.visible ? pe.char : null, visible: pe.visible };
+      if (pe) return { x: pe.x, y: pe.y, f: pe.floor ?? 0, char: pe.visible ? pe.char : null, visible: pe.visible };
       // 姿を見ていなければ、直近に聞こえた物音の位置を推定位置として使う
       const h = [...c.memory.heard].reverse().find(x => b.t - x.t < 10);
-      if (h) return { x: h.x, y: h.y, char: null, visible: false, guess: true };
+      if (h) return { x: h.x, y: h.y, f: h.floor ?? 0, char: null, visible: false, guess: true };
       return { error: '敵の位置が分からない（姿も物音も捉えていない）' };
     }
     case 'self':
     case 'none':
-      return { x: c.x, y: c.y, self: true };
-    case 'point':
-      return { x: t.x, y: t.y };
+      return { x: c.x, y: c.y, f: c.floor, self: true };
+    case 'point': {
+      // 階の指定がなければ、2階の床がある場所で自分が2階にいる時だけ2階
+      const f = t.floor ?? (c.floor === 1 && upperFloorAt(b.world, t.x, t.y) ? 1 : 0);
+      return { x: t.x, y: t.y, f };
+    }
     case 'direction': {
       if (t.dir === 'cover') {
         const cv = findCover(b, c);
-        if (cv) return { x: cv.x, y: cv.y };
+        if (cv) return { x: cv.x, y: cv.y, f: 0 };
       }
       const a = dirVector(b, c, t.dir === 'cover' ? 'away_from_enemy' : t.dir);
       const d = step.distance ?? (step.action === 'dodge' ? RULES.dodgeDistance : 5);
       return {
         x: clamp(c.x + Math.cos(a) * d, 0.8, b.world.w - 0.8),
         y: clamp(c.y + Math.sin(a) * d, 0.8, b.world.h - 0.8),
+        f: c.floor,
         angle: a,
       };
     }
@@ -301,21 +314,22 @@ export function resolveTarget(b, c, t, step = {}) {
       const o = b.objectById(t.id);
       if (o) {
         const n = nearestPointOnRect(c.x, c.y, o);
-        return { x: n.x, y: n.y, obj: o, center: rectCenter(o) };
+        return { x: n.x, y: n.y, f: o.floor, obj: o, center: rectCenter(o) };
       }
       const bd = b.world.buildings.find(x => x.id === t.id);
       if (bd) {
+        // 建物そのもの：1階の中央付近（既に中にいれば今の場所）
+        if (pointInRect(c.x, c.y, bd)) return { x: c.x, y: c.y, f: c.floor, building: bd };
         const p = nearestWalkable(b.world, bd.x + bd.w / 2, bd.y + bd.h / 2 + 1, 3) || { x: bd.x + bd.w / 2, y: bd.y + bd.h / 2 };
-        return { x: p.x, y: p.y, building: bd };
+        return { x: p.x, y: p.y, f: 0, building: bd };
       }
-      const door = b.world.buildings.flatMap(x => x.doors).find(d => d.id === t.id);
-      if (door) return { x: door.x, y: door.y, door };
       const area = b.world.areas.find(a => a.id === t.id);
       if (area) {
-        // 区域：中心付近の歩ける場所（自分が既に中にいれば今の場所）
-        if (c.x >= area.x && c.x <= area.x + area.w && c.y >= area.y && c.y <= area.y + area.h) return { x: c.x, y: c.y, area };
-        const p = nearestWalkable(b.world, area.x + area.w / 2, area.y + area.h / 2, 5) || { x: area.x + area.w / 2, y: area.y + area.h / 2 };
-        return { x: p.x, y: p.y, area };
+        // 区域：中心付近の歩ける場所（自分が既に中にいれば今の場所）。「〇〇の2階」は2階
+        const f = area.floor ?? 0;
+        if (c.floor === f && c.x >= area.x && c.x <= area.x + area.w && c.y >= area.y && c.y <= area.y + area.h) return { x: c.x, y: c.y, f, area };
+        const p = nearestWalkable(b.world, area.x + area.w / 2, area.y + area.h / 2, 5, f) || { x: area.x + area.w / 2, y: area.y + area.h / 2 };
+        return { x: p.x, y: p.y, f, area };
       }
       return { error: '対象が既に存在しない' };
     }
@@ -378,15 +392,16 @@ function facingOk(c, x, y, tol = 0.35) {
 }
 
 // 経路に沿って目標へ向かう。'arrived' | 'moving' | 'stuck'
-function approach(b, c, st, tx, ty, stopDist, run) {
+// tf：目的地の階。階が違えば階段を経由する
+function approach(b, c, st, tx, ty, stopDist, run, tf = c.floor) {
   const D = st.data;
   const d = dist(c.x, c.y, tx, ty);
-  if (d <= stopDist) return 'arrived';
-  const needPath = !D.path || D.repathAt <= b.t || dist(D.goalX, D.goalY, tx, ty) > 1 || b.world.navDirty;
+  if (d <= stopDist && c.floor === tf) return 'arrived';
+  const needPath = !D.path || D.repathAt <= b.t || dist(D.goalX, D.goalY, tx, ty) > 1 || D.goalF !== tf || D.pathFloor !== c.floor || b.world.navDirty;
   if (needPath) {
-    const p = b.path(c, tx, ty);
+    const p = b.path(c, tx, ty, tf);
     D.repathAt = b.t + 0.7;
-    D.goalX = tx; D.goalY = ty;
+    D.goalX = tx; D.goalY = ty; D.goalF = tf; D.pathFloor = c.floor;
     if (!p || !p.points.length) return 'stuck';
     D.path = p.points;
     if (p.partial && !D.partialNoted) {
@@ -395,12 +410,21 @@ function approach(b, c, st, tx, ty, stopDist, run) {
       selfLog(b, c, '目的地まで通れる経路がない。可能な限り近づく', 'fail');
     }
   }
-  while (D.path.length && dist(c.x, c.y, D.path[0].x, D.path[0].y) < 0.3) D.path.shift();
-  if (!D.path.length) return D.partial ? 'stuck' : 'arrived';
+  while (D.path.length && D.path[0].stairTo === undefined && dist(c.x, c.y, D.path[0].x, D.path[0].y) < 0.3) D.path.shift();
+  if (!D.path.length) return D.partial ? 'stuck' : c.floor === tf ? 'arrived' : 'stuck';
   const wp = D.path[0];
+  if (wp.stairTo !== undefined && dist(c.x, c.y, wp.x, wp.y) < 0.45) {
+    // 階段を上り下りする（約1秒）
+    c.climb = { until: b.t + 1.0, to: wp.stairTo };
+    D.path.shift();
+    D.pathFloor = wp.stairTo;
+    selfLog(b, c, `階段を${wp.stairTo > c.floor ? '上る' : '下りる'}`);
+    return 'moving';
+  }
+  const dd = c.floor === tf ? d : dist(c.x, c.y, wp.x, wp.y) + 2;
   const a = angleTo(c.x, c.y, wp.x, wp.y);
   let speed = run ? c.def.run : c.def.walk;
-  speed = Math.min(speed, (d - stopDist) * 3 + 0.6); // 減速
+  speed = Math.min(speed, (dd - stopDist) * 3 + 0.6); // 減速
   c.desired.vx = Math.cos(a) * speed;
   c.desired.vy = Math.sin(a) * speed;
 
@@ -418,9 +442,10 @@ function approach(b, c, st, tx, ty, stopDist, run) {
 
 function moveGoal(b, c, st, res) {
   const s = st.def;
-  if (res.obj && !res.obj.blocksMove) {
-    // 植え込みなど通れる物体は、その中に入る
-    return { x: res.center.x, y: res.center.y, stop: 0.3 };
+  const f = res.f ?? 0;
+  if (res.obj && (!res.obj.blocksMove || res.obj.kind === 'door')) {
+    // 植え込み・階段など通れる物体はその中に、扉はその位置へ
+    return { x: res.center.x, y: res.center.y, stop: 0.3, f };
   }
   if (res.obj) {
     // 物体のそば（自分のいる側）
@@ -428,12 +453,12 @@ function moveGoal(b, c, st, res) {
     const cc = res.center;
     let nx = n.x - cc.x, ny = n.y - cc.y;
     const l = Math.hypot(nx, ny) || 1;
-    const p = nearestWalkable(b.world, n.x + (nx / l) * 0.7, n.y + (ny / l) * 0.7, 2.5);
-    return { x: p ? p.x : n.x, y: p ? p.y : n.y, stop: 0.35 };
+    const p = nearestWalkable(b.world, n.x + (nx / l) * 0.7, n.y + (ny / l) * 0.7, 2.5, f);
+    return { x: p ? p.x : n.x, y: p ? p.y : n.y, stop: 0.35, f };
   }
-  if (s.target.type === 'enemy') return { x: res.x, y: res.y, stop: s.distance ?? 1.3 };
-  const p = nearestWalkable(b.world, res.x, res.y, 3) || res;
-  return { x: p.x, y: p.y, stop: 0.3 };
+  if (s.target.type === 'enemy') return { x: res.x, y: res.y, stop: s.distance ?? 1.3, f };
+  const p = nearestWalkable(b.world, res.x, res.y, 3, f) || res;
+  return { x: p.x, y: p.y, stop: 0.3, f };
 }
 
 const EXEC = {
@@ -449,10 +474,10 @@ const EXEC = {
       const s = st.def;
       if (s.target.type === 'enemy') {
         const pe = b.perceivedEnemy(c);
-        if (pe && pe.visible) { st.data.goal.x = pe.x; st.data.goal.y = pe.y; }
+        if (pe && pe.visible) { st.data.goal.x = pe.x; st.data.goal.y = pe.y; st.data.goal.f = pe.floor; }
       }
       const g = st.data.goal;
-      const r = approach(b, c, st, g.x, g.y, g.stop, s.mode === 'run');
+      const r = approach(b, c, st, g.x, g.y, g.stop, s.mode === 'run', g.f);
       if (r === 'arrived') return 'done';
       if (r === 'stuck') return { fail: '経路が塞がれていて進めない' };
       if (b.t > st.data.deadline) return s.maxTime ? 'done' : { fail: '時間内に到達できなかった' };
@@ -480,14 +505,15 @@ const EXEC = {
         D.lostTarget = null;
         const d = dist(c.x, c.y, e.x, e.y);
         // 次の手順の間合いに入ったら追尾を終えて次へ
-        const reach = next ? reachFor(next) : null;
-        if (reach !== null && d <= reach) {
+        const reach = next ? reachFor(next, c) : null;
+        if (reach !== null && d <= reach && e.floor === c.floor) {
           selfLog(b, c, `${e.name} を間合いに捉えた`);
           return 'done';
         }
         const keep = s.distance ?? (reach !== null ? Math.max(0.8, reach - 0.3) : 1.5);
         D.repathAt = Math.min(D.repathAt ?? 0, b.t + 0.4);
-        const r = approach(b, c, st, e.x, e.y, keep, run);
+        if (reach !== null && e.floor !== c.floor && d <= reach) { /* 別の階：階段へ回る */ }
+        const r = approach(b, c, st, e.x, e.y, keep, run, e.floor);
         if (r === 'arrived') { c.desired.vx = c.desired.vy = 0; faceTo(c, e.x, e.y); }
         else if (r === 'stuck') { D.path = null; D.stuckCount = 0; }
         return 'running';
@@ -500,12 +526,12 @@ const EXEC = {
       if (!D.lostTarget) {
         const ls = c.memory.lastSeen;
         const h = [...c.memory.heard].reverse().find(x => b.t - x.t < 8 && !D.visited.has(`${x.t}`));
-        if (ls && !D.visited.has('lastSeen')) D.lostTarget = { x: ls.x, y: ls.y, key: 'lastSeen' };
-        else if (h) D.lostTarget = { x: h.x, y: h.y, key: `${h.t}` };
+        if (ls && !D.visited.has('lastSeen')) D.lostTarget = { x: ls.x, y: ls.y, f: ls.floor ?? 0, key: 'lastSeen' };
+        else if (h) D.lostTarget = { x: h.x, y: h.y, f: h.floor ?? 0, key: `${h.t}` };
         D.path = null;
       }
       if (D.lostTarget) {
-        const r = approach(b, c, st, D.lostTarget.x, D.lostTarget.y, 0.6, run);
+        const r = approach(b, c, st, D.lostTarget.x, D.lostTarget.y, 0.6, run, D.lostTarget.f);
         if (r !== 'moving') { D.visited.add(D.lostTarget.key); D.lostTarget = null; D.path = null; }
         return 'running';
       }
@@ -527,18 +553,18 @@ const EXEC = {
       const D = st.data;
       const e = b.enemyOf(c);
       if (D.phase === 'approach') {
-        let tx, ty, reach;
+        let tx, ty, reach, tf;
         if (D.obj) {
           if (!b.world.objects.includes(D.obj)) return { fail: '対象が既に壊れている' };
           const n = nearestPointOnRect(c.x, c.y, D.obj);
-          tx = n.x; ty = n.y; reach = 1.0;
+          tx = n.x; ty = n.y; reach = 1.0; tf = D.obj.floor;
         } else {
           const pe = resolveTarget(b, c, { type: 'enemy' });
           if (pe.error) return { fail: '敵を見失った' };
-          tx = pe.x; ty = pe.y; reach = RULES.meleeRange - 0.15;
-          if (!pe.visible && dist(c.x, c.y, tx, ty) < 1.2) return { fail: '敵を見失った' };
+          tx = pe.x; ty = pe.y; tf = pe.f; reach = meleeRange(c) - 0.15;
+          if (!pe.visible && dist(c.x, c.y, tx, ty) < 1.2 && c.floor === tf) return { fail: '敵を見失った' };
         }
-        const r = approach(b, c, st, tx, ty, reach, true);
+        const r = approach(b, c, st, tx, ty, reach, true, tf);
         if (r === 'arrived') {
           D.phase = 'windup';
           D.until = b.t + RULES.meleeWindup;
@@ -561,7 +587,7 @@ const EXEC = {
         } else {
           const d = dist(c.x, c.y, e.x, e.y);
           const ang = Math.abs(angDiff(c.facing, angleTo(c.x, c.y, e.x, e.y)));
-          if (e.alive && d <= RULES.meleeRange + e.r * 0.5 && ang <= RULES.meleeArc) {
+          if (e.alive && e.floor === c.floor && d <= meleeRange(c) + e.r * 0.5 && ang <= (c.def.meleeArc ?? RULES.meleeArc)) {
             if (e.status.invulnUntil <= b.t) b.emit({ text: `${c.name} の『${c.stand}』の拳が ${e.name} を捉えた！`, kind: 'combat', actor: c, affected: e, pos: e, sound: 4 });
             const a = angleTo(c.x, c.y, e.x, e.y);
             const dealt = b.damage(e, c.def.power, { source: c, kind: 'melee', from: c, label: '拳' });
@@ -645,6 +671,70 @@ const EXEC = {
     },
     update(b, c, st) {
       return b.t >= st.data.until ? 'done' : 'running';
+    },
+  },
+
+  open: openClose(true),
+  close: openClose(false),
+
+  // 2階の窓から飛び降りる：窓まで行き、閉まっていれば突き破って外へ
+  jump_down: {
+    start(b, c, st) {
+      let o = st.def.target.type === 'object' ? b.objectById(st.def.target.id) : null;
+      if (!o) {
+        const bd = b.buildingOf(c);
+        const wins = bd && c.floor === 1 ? b.world.objects.filter(x => x.kind === 'window' && x.floor === 1 && x.building === bd.id) : [];
+        o = wins.sort((a, z) => distToRect(c.x, c.y, a) - distToRect(c.x, c.y, z))[0];
+        // 割れて無くなった窓（開口部）も使える
+        if (!o && bd && c.floor === 1) {
+          const gone = (bd.exits || []).map(id => ({ id })).filter(x => !b.objectById(x.id) && x.id.includes('f2_window'));
+          if (gone.length) st.data.goneId = gone[0].id;
+        }
+        if (!o && !st.data.goneId) return '2階の窓のそばにいない';
+      }
+      st.data.obj = o;
+      st.data.phase = 'approach';
+      st.data.deadline = b.t + 6;
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      const o = D.obj;
+      if (!o) return { fail: '窓が見つからない' };
+      const bd = b.world.buildings.find(x => x.id === o.building);
+      const cc = rectCenter(o);
+      if (D.phase === 'approach') {
+        const n = nearestPointOnRect(c.x, c.y, o);
+        if (c.floor === 1 && dist(c.x, c.y, n.x, n.y) <= 0.75) {
+          D.phase = 'jump';
+          D.until = b.t + 0.3;
+          st.locked = true;
+          return 'running';
+        }
+        const r = approach(b, c, st, n.x, n.y, 0.7, true, 1);
+        if (r === 'stuck' || b.t > D.deadline) return { fail: `${o.name}に近づけなかった` };
+        return 'running';
+      }
+      if (D.phase === 'jump') {
+        faceTo(c, cc.x, cc.y);
+        if (b.t < D.until) return 'running';
+        // 窓の外側の向き
+        const out = o.w > o.h ? { x: 0, y: Math.sign(cc.y - (bd.y + bd.h / 2)) } : { x: Math.sign(cc.x - (bd.x + bd.w / 2)), y: 0 };
+        const tx = cc.x + out.x * 1.2, ty = cc.y + out.y * 1.2;
+        if (bd.sealed) {
+          b.burn(c);
+          return { fail: '窓の外は炎の壁で、飛び出せない' };
+        }
+        if (b.world.objects.includes(o) && !o.open) {
+          b.emit({ text: `${c.name} が${o.name}を突き破った！`, kind: 'combat', actor: c, pos: { ...cc, floor: 1 }, sound: 12, soundKind: 'glass' });
+          b.destroyObject(o, c);
+          b.damage(c, 2, { source: null, kind: 'fall', label: 'ガラス' });
+        }
+        c.x = tx; c.y = ty;
+        b.startDrop(c);
+        return 'done';
+      }
+      return 'done';
     },
   },
 
@@ -734,7 +824,7 @@ const EXEC = {
         c.cd[s.ability] = b.t + ab.cooldown;
         c.sp -= ab.cost;
         D.phase = 'recover';
-        D.until = b.t + (s.ability === 'vector' ? 0.2 : 0.1);
+        D.until = b.t + 0.1;
         return 'running';
       }
       return b.t >= D.until ? 'done' : 'running';
@@ -742,16 +832,61 @@ const EXEC = {
   },
 };
 
+function meleeRange(c) {
+  return c.def.meleeRange ?? RULES.meleeRange;
+}
+
 // 次の手順を敵に対して実行できる距離（追尾の終了判定に使う）
-function reachFor(next) {
+function reachFor(next, c) {
   if (next.target.type !== 'enemy') return null;
-  if (next.action === 'melee') return RULES.meleeRange - 0.2;
+  if (next.action === 'melee') return meleeRange(c) - 0.2;
   if (next.action === 'throw') return 10;
   if (next.action === 'ability') {
     const ab = ABILITIES[next.ability];
     return Math.max(1, (ab.effects[next.effect].range ?? ab.range) - 0.5);
   }
   return null;
+}
+
+// 扉・窓の開け閉め（閉める時、錠二なら密室の成立を判定する）
+function openClose(open) {
+  return {
+    start(b, c, st) {
+      const o = b.objectById(st.def.target.id);
+      if (!o) return open ? '既に壊れていて開いている' : '壊れていて閉められない';
+      if (!!o.open === open) return open ? `${o.name}は既に開いている` : `${o.name}は既に閉まっている`;
+      st.data.obj = o;
+      st.data.phase = 'approach';
+      st.data.deadline = b.t + 6;
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      const o = D.obj;
+      if (!b.world.objects.includes(o)) return { fail: '対象が壊れた' };
+      const n = nearestPointOnRect(c.x, c.y, o);
+      if (D.phase === 'approach') {
+        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= 1.0) {
+          D.phase = 'act';
+          D.until = b.t + 0.35;
+          st.locked = true;
+          return 'running';
+        }
+        // 閉める時は部屋の内側から（自分が今いる側）近づく
+        const r = approach(b, c, st, n.x, n.y, 0.9, st.def.mode === 'run', o.floor);
+        if (r === 'stuck' || b.t > D.deadline) return { fail: `${o.name}に近づけなかった` };
+        return 'running';
+      }
+      if (D.phase === 'act') {
+        faceTo(c, n.x, n.y);
+        if (b.t < D.until) return 'running';
+        if (!!o.open === open) return 'done';
+        if (!b.setOpen(o, open, c)) return { fail: open ? '開けられなかった' : '人がいて閉められない' };
+        return 'done';
+      }
+      return 'done';
+    },
+  };
 }
 
 function pushPull(sign) {
@@ -771,13 +906,13 @@ function pushPull(sign) {
       if (!b.world.objects.includes(o)) return { fail: '対象が既に壊れている' };
       const n = nearestPointOnRect(c.x, c.y, o);
       if (D.phase === 'approach') {
-        if (distToRect(c.x, c.y, o) <= 0.75) {
+        if (distToRect(c.x, c.y, o) <= 0.75 && c.floor === o.floor) {
           D.phase = 'act';
           D.until = b.t + 0.3;
           st.locked = true;
           return 'running';
         }
-        const r = approach(b, c, st, n.x, n.y, 0.7, st.def.mode === 'run');
+        const r = approach(b, c, st, n.x, n.y, 0.7, st.def.mode === 'run', o.floor);
         if (r === 'stuck' || b.t > D.deadline) return { fail: `${o.name}に近づけなかった` };
         return 'running';
       }
@@ -786,12 +921,11 @@ function pushPull(sign) {
         if (b.t < D.until) return 'running';
         const cc = rectCenter(o);
         const a = angleTo(c.x, c.y, cc.x, cc.y) + (sign < 0 ? Math.PI : 0);
-        const slick = o.slickUntil > b.t;
-        const sp = (sign > 0 ? 7 : 4) / (o.mass || 1) * (slick ? 2.2 : 1);
+        const sp = (sign > 0 ? 7 : 4) / (o.mass || 1);
         o.vx = Math.cos(a) * sp;
         o.vy = Math.sin(a) * sp;
         o.pushedBy = c.id;
-        b.emit({ text: `${c.name} が${o.name}を${sign > 0 ? '押し出した' : '引き寄せた'}${slick ? '（滑るように勢いよく動く！）' : ''}`, kind: 'env', actor: c, pos: cc, sound: 6 });
+        b.emit({ text: `${c.name} が${o.name}を${sign > 0 ? '押し出した' : '引き寄せた'}`, kind: 'env', actor: c, pos: { ...cc, floor: o.floor }, sound: 6 });
         D.phase = 'recover';
         D.until = b.t + 0.3;
         return 'running';
@@ -858,7 +992,7 @@ export function updateRunner(b, c) {
   const s = c.status;
   if (s.proneUntil > b.t || s.stunUntil > b.t || s.recoverUntil > b.t) return;
   // 弾き出されて飛んでいる間は何もできない。空中では能力（空中での方向転換）だけ使える
-  if (c.launch) return;
+  if (c.launch || c.climb) return;
   if (b.isAirborne(c)) {
     const st = c.runner.step;
     const next = st ? st.def : c.runner.plan && c.runner.plan.steps[c.runner.idx];

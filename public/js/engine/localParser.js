@@ -122,8 +122,10 @@ function findObjectRef(b, c, clause) {
     const a = m2 && w.areas.find(x => x.id === id);
     if (a) { area = { ...a, idx: m2.index }; break; }
   }
+  const floorWanted = /2階|二階|２階/.test(clause) ? 1 : /1階|一階|１階/.test(clause) ? 0 : null;
   // 「コンビニの棚」「公園の植え込み」のように場所が添えられていれば、その中の物を優先する
-  const pick = list => {
+  const pick = list0 => {
+    const list = floorWanted === null ? list0 : list0.filter(o => (o.floor ?? 0) === floorWanted).concat(list0.length && !list0.some(o => (o.floor ?? 0) === floorWanted) ? list0 : []);
     if (!list.length) return null;
     for (const place of [house, area]) {
       if (!place) continue;
@@ -148,14 +150,18 @@ function findObjectRef(b, c, clause) {
     const o = pick(w.objects.filter(test));
     if (o) return { type: 'object', id: o.id, kind: o.kind };
   }
+  if (/階段/.test(clause)) {
+    const o = pick(w.objects.filter(x => x.kind === 'stairs'));
+    if (o) return { type: 'object', id: o.id };
+  }
   if (/窓|ガラス/.test(clause)) {
     const o = pick(w.objects.filter(x => x.kind === 'window'));
     if (o) return { type: 'object', id: o.id };
   }
-  if (/入口|扉|ドア|玄関|裏口|自動ドア/.test(clause)) {
-    let doors = w.buildings.filter(x => !house || x.id === house.id).flatMap(x => x.doors);
-    if (/裏口/.test(clause)) doors = doors.filter(d => /裏口/.test(d.name)).concat(doors.length ? [] : doors);
-    const d = nearestBy(doors.map(d => ({ ...d, center: d })), c.x, c.y);
+  if (/入口|扉|ドア|玄関|裏口/.test(clause)) {
+    let doors = w.objects.filter(o => o.kind === 'door' && (!house || o.building === house.id));
+    if (/裏口/.test(clause) && doors.some(d => /裏口/.test(d.name))) doors = doors.filter(d => /裏口/.test(d.name));
+    const d = pick(doors);
     if (d) return { type: 'object', id: d.id };
   }
   if (/中央の壁|真ん中の壁/.test(clause) && b.objectById('center_wall_1')) return { type: 'object', id: 'center_wall_1' };
@@ -164,6 +170,16 @@ function findObjectRef(b, c, clause) {
     if (/塀/.test(clause)) walls = walls.filter(o => o.style === 'block');
     const o = pick(walls);
     if (o) return { type: 'object', id: o.id, wall: true };
+  }
+  // 「2階へ上がる」「佐藤家の2階」→ 2階の区域。「1階へ降りる」→ 今いる建物の階段（1階側）
+  if (floorWanted === 1) {
+    const bd2 = (house && house.floors >= 2 ? house : null) || (b.buildingOf(c)?.floors >= 2 ? b.buildingOf(c) : null)
+      || nearestBy(w.buildings.filter(x => x.floors >= 2).map(x => ({ ...x, center: { x: x.x + x.w / 2, y: x.y + x.h / 2 } })), c.x, c.y);
+    if (bd2 && w.areas.some(a => a.id === `${bd2.id}_2f`)) return { type: 'object', id: `${bd2.id}_2f`, area: true };
+  }
+  if (floorWanted === 0 && c.floor === 1) {
+    const bdc = b.buildingOf(c);
+    if (bdc && bdc.stairs) return { type: 'object', id: bdc.stairs.id };
   }
   // 「コンビニの駐車場」のように建物名と区域名が両方ある時は、後ろにある方（文の主語）を採る
   if (house && (!area || house.idx >= area.idx)) return { type: 'object', id: house.id };
@@ -208,8 +224,8 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const steps = [];
   const found = findObjectRef(b, c, clause);
   if (found) ctx.lastObj = found;
-  // 「〜の摩擦を消して押し出す」の「押し出す」のように目的語が省かれたら、直前に出てきた物を指す
-  const obj = found || (/押|引|壊|殴|叩|弾|滑ら|摩擦/.test(clause) ? ctx.lastObj : null);
+  // 「木箱に近づいて押し出す」の「押し出す」のように目的語が省かれたら、直前に出てきた物を指す
+  const obj = found || (/押|引|壊|殴|叩|弾|閉め|開け/.test(clause) ? ctx.lastObj : null);
   const pt = pointRef(clause);
   const dir = dirRef(clause);
   const run = /走|駆け|急い|ダッシュ|全力|一気|飛び込/.test(clause);
@@ -237,37 +253,33 @@ function parseClause(b, c, clause, has, ctx = {}) {
     else steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
     return steps;
   }
-  if (has.friction && /摩擦|滑ら|滑り|すべ|転倒|転ば|ツルツル|足を取|足元をすく|グリップ|足を重く|足止め/.test(clause)) {
-    const effect = /グリップ|重く|足止め|鈍く|粘/.test(clause) ? 'grip' : 'slick';
-    if (obj && b.objectById(obj.id)?.movable && effect === 'slick') steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(obj) });
-    else if (pt) steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(pt) });
-    else steps.push({ action: 'ability', ability: 'friction', effect, targetType: 'enemy' });
+  // --- 扉・窓・階 ---
+  const bdHere = b.buildingOf(c);
+  const exitsOf = (bd, open) => (bd ? bd.exits : [])
+    .map(id => b.objectById(id)).filter(o => o && o.openable && !!o.open === open)
+    .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y));
+  if (has.hotel && /密室|閉じ込め|全部閉め|すべて閉め|全て閉め|出口を.*閉め/.test(clause)) {
+    const exits = exitsOf(bdHere, true);
+    if (!exits.length) return steps;
+    for (const o of exits.slice(0, 4)) steps.push({ action: 'close', targetType: 'object', targetId: o.id });
     return steps;
   }
-  if (has.vector && /逸ら|そら|反転|跳ね返|弾き返|ベクトル|軌道|押し戻|吹き飛ば|弾き飛ば|弾く/.test(clause)) {
-    if (/ナイフ|飛来|飛んで|飛び道具|投げ/.test(clause)) steps.push({ action: 'ability', ability: 'vector', effect: 'redirect', targetType: 'projectile', direction: 'toward_enemy' });
-    else if (obj && b.objectById(obj.id)?.movable) steps.push({ action: 'ability', ability: 'vector', effect: 'repel', ...toTarget(obj) });
-    else steps.push({ action: 'ability', ability: 'vector', effect: 'repel', targetType: 'enemy' });
+  if (/飛び降り|跳び降り|窓から(外へ|下へ)?(飛|跳)/.test(clause)) {
+    const o = obj && b.objectById(obj.id);
+    if (o && o.kind === 'window' && o.floor === 1) steps.push({ action: 'jump_down', targetType: 'object', targetId: o.id });
+    else steps.push({ action: 'jump_down', targetType: 'none' });
     return steps;
   }
-  if (has.masonry && /壁/.test(clause) && /棘|トゲ|とげ|スパイク|突き出/.test(clause) && obj && obj.wall) {
-    steps.push({ action: 'ability', ability: 'masonry', effect: 'spike', targetType: 'object', targetId: obj.id });
+  if (/閉め|閉じ/.test(clause)) {
+    const o = obj && b.objectById(obj.id);
+    const target = o && (o.kind === 'door' || o.kind === 'window') ? o : exitsOf(bdHere, true)[0];
+    if (target) steps.push({ action: 'close', targetType: 'object', targetId: target.id });
     return steps;
   }
-  if (has.masonry && /壁/.test(clause) && /崩|破壊|壊|瓦礫|穴/.test(clause) && obj && obj.wall) {
-    steps.push({ action: 'ability', ability: 'masonry', effect: 'breach', targetType: 'object', targetId: obj.id });
-    return steps;
-  }
-  if (has.masonry && /(壁|バリケード|盾).*(作|生や|立て|築|出|隆起|塞)|塞ぐ|塞い|遮る/.test(clause)) {
-    if (pt) steps.push({ action: 'ability', ability: 'masonry', effect: 'raise', ...toTarget(pt) });
-    else if (/目の前|前に|自分の前|盾/.test(clause)) steps.push({ action: 'ability', ability: 'masonry', effect: 'raise', targetType: 'direction', direction: 'toward_enemy' });
-    else steps.push({ action: 'ability', ability: 'masonry', effect: 'raise', targetType: 'enemy' });
-    return steps;
-  }
-  if (has.hush && /音を消|静寂|無音|静かに|サイレン|音を奪|耳を|聞こえなく|消音/.test(clause)) {
-    if (/耳|聞こえなく|聴覚/.test(clause) && mentionsEnemy) steps.push({ action: 'ability', ability: 'hush', effect: 'deafen', targetType: 'enemy' });
-    else if (pt) steps.push({ action: 'ability', ability: 'hush', effect: 'silence_zone', ...toTarget(pt) });
-    else steps.push({ action: 'ability', ability: 'hush', effect: 'silence_zone', targetType: 'self' });
+  if (/開け|開く|開いて/.test(clause) && !/こじ開/.test(clause)) {
+    const o = obj && b.objectById(obj.id);
+    const target = o && (o.kind === 'door' || o.kind === 'window') ? o : exitsOf(bdHere, false)[0];
+    if (target) steps.push({ action: 'open', targetType: 'object', targetId: target.id });
     return steps;
   }
 
@@ -314,7 +326,7 @@ function parseClause(b, c, clause, has, ctx = {}) {
     });
     return steps;
   }
-  const isMove = /ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|回る|回って|進|戻|退|出る|出て|寄る/.test(clause);
+  const isMove = /上が|上る|登る|降り|下り|ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|回る|回って|進|戻|退|出る|出て|寄る/.test(clause);
   const isLook = /確認|見る|見て|覗|観察|様子|探す|探し|偵察|見張|警戒/.test(clause);
   if (isMove) {
     const mode = run || /逃げ|駆け込/.test(clause) ? 'run' : 'walk';
@@ -354,11 +366,12 @@ export function localParse(b, c, text) {
   const has = Object.fromEntries(Object.keys(ABILITIES).map(k => [k, c.def.abilities.includes(k)]));
   // 持っていない能力への言及
   const foreign = {
-    friction: /摩擦|ツルツル|滑らせ|転倒させ|転ばせ/, vector: /ベクトル|軌道.*(逸|変|そら)|逸らし|跳ね返|弾き飛ば/, masonry: /壁を(変形|生や|作|出)|棘|トゲ|壁を隆起/, hush: /音を消|静寂|無音|聞こえなく/,
+    perpendicular: /パーペンディキュラー|直角に弾|(10|１０)\s*(m|ｍ|メートル)(弾|飛)|弾き出/,
+    hotel: /ホテル・カリフォルニア|密室|炎で囲/,
   };
   const foreignRes = [];
   for (const [k, re] of Object.entries(foreign)) {
-    if (!has[k] && re.test(body) && !(has.perpendicular && PERP_RE.test(body))) {
+    if (!has[k] && re.test(body)) {
       raw.rejected.push(`『${ABILITIES[k].name}』に相当する能力は${c.name}にはない`);
       foreignRes.push(re);
     }

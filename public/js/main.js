@@ -16,7 +16,7 @@ const DEBUG = params.has('debug');
 const state = {
   gemini: false,
   model: '',
-  chosen: 'makabe',
+  chosen: 'sogo',
   opponent: 'random',
   mapId: 'town',
   battle: null,
@@ -36,36 +36,23 @@ const state = {
 };
 
 const EXAMPLES = {
-  makabe: [
-    '左の家に駆け込み、窓から敵の位置を確認する',
-    '敵が近づいてきたら、足元の地面に能力を使って転倒させる',
-    '飛んできたナイフの軌道を能力で逸らし、その隙に距離を詰める',
-    '近くの木箱の摩擦を消してから、敵に向かって押し出す',
-    '敵を追いかけて殴る',
-    '公園の植え込みに隠れて、敵が近づいてきたら足元を滑らせる',
-    'コンビニの商品棚の摩擦を消して、敵に向かって押し出す',
-    '駐車場の車を殴って防犯アラームを鳴らし、その隙に裏口へ回る',
-    '物陰に隠れて、敵が見えたらナイフを投げる',
-    '「出てこいよ、臆病者」と挑発して2秒待つ',
-  ],
   sogo: [
     '近くの壁際まで走って、敵が近づいてきたら弾き出して叩きつける',
     '「その距離なら届く。9.8mだ、ギリギリな」と言って、ナイフを10m先へ弾き出す',
     '敵を追いかけて殴り、柱に叩きつける',
     '壁を蹴って離脱し、物陰に隠れる',
     '真上に跳び上がって、空中で左へ方向転換',
-    '敵が殴りかかってきたら、能力で真上に跳ぶ',
+    '佐藤家の2階へ上がって、2階の窓から道路を見張る',
+    '2階の窓から飛び降りて逃げる',
+    '扉を開けて外へ走る',
   ],
-  karasuma: [
-    '周囲の音を消して、敵を歩いて追いかけて殴る',
-    '工事現場の柱の陰に隠れて、敵が近づいてきたら棘を突き出す',
-    '植え込みに潜んで待ち伏せし、敵が見えたらナイフを投げる',
-    '3mの距離を保って敵を尾行する',
-    '正面から攻撃すると見せかけて、背後の壁を破壊して瓦礫を落とす',
-    '敵の目の前に壁を作って通路を塞ぎ、右の家に入る',
-    '敵が壁際にいたら、その壁から棘を突き出す',
-    '敵の耳を聞こえなくしてから、背後に回り込む',
-    '「……どこを見ている」と囁いて、物陰に隠れる',
+  kito: [
+    '敵を追いかけて殴る',
+    '家に入って扉を閉め、敵が来たら殴る',
+    '出口を全部閉めて密室にする「入れ」',
+    '開けられた窓を閉め直してから、敵を追いかけて殴る',
+    '敵を家の中へ追い込んで、扉を閉める',
+    '「話はいい」と言って、距離を詰めて殴る',
   ],
 };
 
@@ -125,6 +112,20 @@ function abilityHtml(id) {
     <div class="weak">弱点：${a.weakness}</div></div>`;
 }
 
+// キャラクター画像：public/img/<id>.png（本体）と <id>_stand.png（スタンド）を置くと表示される
+const portraitOk = {};
+function preloadPortraits() {
+  for (const id of Object.keys(CHARACTERS).flatMap(k => [k, `${k}_stand`])) {
+    const img = new Image();
+    img.onload = () => { portraitOk[id] = true; renderCharCards(); };
+    img.src = `img/${id}.png`;
+  }
+}
+
+function portrait(id, cls) {
+  return portraitOk[id] ? `<img class="portrait ${cls}" src="img/${id}.png" alt="">` : '';
+}
+
 function renderMapCards() {
   $('#map-cards').innerHTML = Object.values(MAPS).map(m => `
     <div class="map-card ${state.mapId === m.id ? 'chosen' : ''}" data-id="${m.id}">
@@ -135,6 +136,7 @@ function renderMapCards() {
 function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
+      <div class="portraits">${portrait(c.id, 'card')}${portrait(`${c.id}_stand`, 'card')}</div>
       <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">スタンド『${c.stand}』</div></div></div>
       ${c.profile ? `<p class="profile">${c.profile}</p>` : ''}
       <p class="persona">${c.personality}</p>
@@ -268,28 +270,29 @@ function renderSide() {
   if (me.status.proneUntil > b.t) st.push('転倒');
   if (me.status.stunUntil > b.t) st.push('怯み');
   if (me.status.guardUntil > b.t) st.push('ガード');
-  if (me.status.deafUntil > b.t) st.push('聴覚喪失');
-  if (b.zoneAt('silence', me.x, me.y)) st.push('無音の中');
+  const room = b.buildingOf(me);
+  if (room && room.sealed) st.push('<b style="color:#ff9b54">密室（炎に囲まれている）</b>');
+  if (b.isAirborne(me)) st.push('空中');
   const cds = me.def.abilities.map(id => {
     const left = me.cd[id] ? me.cd[id] - b.t : 0;
     return `<span class="${left > 0 ? 'cd' : 'ready'}">『${ABILITIES[id].name}』${left > 0 ? `${left.toFixed(1)}s` : '可'}</span>`;
   }).join(' ');
   $('#self-card').style.setProperty('--c', me.color);
   $('#self-card').innerHTML = `
-    <h3>${me.name} <small>『${me.stand}』</small></h3>
+    ${portrait(me.charId, 'mini')}<h3>${me.name} <small>『${me.stand}』</small></h3>
     ${bar('hp', me.hp, me.maxHp, `HP ${Math.round(me.hp)}/${me.maxHp}`)}
     ${bar('sp', me.sp, me.maxSp, `スタンドエネルギー ${Math.round(me.sp)}`)}
-    <div class="meta">ナイフ ${me.knives}本 ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${b.buildingOf(me)?.name || '屋外'}</div>
+    <div class="meta">ナイフ ${me.knives}本 ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
     <div class="meta">${cds}</div>
     <div class="meta">${st.join('・')}</div>`;
 
   const vis = foe.alive && b.canSee(me, foe.x, foe.y);
   const ls = me.memory.lastSeen;
   $('#enemy-card').style.setProperty('--c', foe.color);
-  $('#enemy-card').innerHTML = `
+  $('#enemy-card').innerHTML = `${portrait(foe.charId, 'mini')}
     <h3>敵：${foe.name} ${vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}</h3>
     ${vis || DEBUG ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
-    <div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m` : ls ? `最後に見た位置 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})・${(b.t - ls.t).toFixed(0)}秒前` : '一度も姿を見ていない'}</div>
+    <div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後に見た位置 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前` : '一度も姿を見ていない'}</div>
     <div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>
     ${DEBUG ? `<div class="meta debug">[debug] CPU計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}`;
 
@@ -368,11 +371,11 @@ function loop(now) {
 // ---------- フィールドのクリック：座標や物体名を入力欄へ ----------
 
 function describePoint(b, x, y) {
-  const o = b.world.objects.find(ob => pointInRect(x, y, ob, 0.25) && !ob.id.startsWith('outer_'));
+  const f = b.player.floor;
+  const o = b.world.objects.find(ob => ob.floor === f && pointInRect(x, y, ob, 0.25) && !ob.id.startsWith('outer_'))
+    || b.world.objects.find(ob => pointInRect(x, y, ob, 0.25) && !ob.id.startsWith('outer_'));
   if (o) return o.name;
-  const door = b.world.buildings.flatMap(bd => bd.doors).find(d => dist(d.x, d.y, x, y) < 0.8);
-  if (door) return door.name;
-  return `(${x.toFixed(1)}, ${y.toFixed(1)})`;
+  return `(${x.toFixed(1)}, ${y.toFixed(1)})${f === 1 ? '（2階）' : ''}`;
 }
 
 function insertText(t) {
@@ -387,6 +390,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   state.renderer = new Renderer($('#field'));
   renderCharCards();
   renderMapCards();
+  preloadPortraits();
   await checkStatus();
   $('#opponent').addEventListener('change', e => { state.opponent = e.target.value; });
   $('#map-cards').addEventListener('click', e => {
@@ -426,13 +430,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   field.addEventListener('click', e => {
     const b = state.battle;
     if (!b) return;
-    const p = state.renderer.toWorld(e.clientX, e.clientY);
+    const p = state.renderer.toWorld(e.clientX, e.clientY, b.player.floor * 3);
     insertText(describePoint(b, p.x, p.y));
   });
   field.addEventListener('mousemove', e => {
     const b = state.battle;
     if (!b) return;
-    const p = state.renderer.toWorld(e.clientX, e.clientY);
+    const p = state.renderer.toWorld(e.clientX, e.clientY, b.player.floor * 3);
     state.hover = p;
     const tip = $('#tooltip');
     tip.textContent = describePoint(b, p.x, p.y);

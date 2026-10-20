@@ -393,7 +393,7 @@ async function checkGemini() {
   const rules = JSON.stringify(rulesSummary());
   const tests = [
     ['プレイヤー解析', playerPrompt(), `# ルール\n${rules}\n\n# 戦況（プレイヤーキャラクターの観測）\n${JSON.stringify(buildObservation(b, b.player))}\n\n# プレイヤーの行動指示\n北東へダッシュして、敵が見えたらナイフを投げる「そこか！」`],
-    ['CPU思考', cpuPrompt(CHARACTERS.karasuma), `# ルール\n${rules}\n\n# あなたの観測\n${JSON.stringify(buildObservation(b, b.cpu))}`],
+    ['CPU思考', cpuPrompt(CHARACTERS.kito), `# ルール\n${rules}\n\n# あなたの観測\n${JSON.stringify(buildObservation(b, b.cpu))}`],
   ];
   let ok = true;
   for (const [label, sys, user] of tests) {

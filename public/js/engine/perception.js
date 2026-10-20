@@ -15,6 +15,7 @@ function stateWords(b, c) {
   const t = b.t;
   if (c.air && c.air.landAt > t) s.push(`空中（あと${(c.air.landAt - t).toFixed(1)}秒で落下・着地）`);
   if (c.launch) s.push('弾き出されて高速移動中');
+  if (c.climb) s.push('階段を上り下り中');
   if (c.status.proneUntil > t) s.push('転倒中');
   if (c.status.stunUntil > t) s.push('怯み');
   if (c.status.guardUntil > t) s.push('ガード中');
@@ -30,22 +31,31 @@ function stateWords(b, c) {
 export function landmarks(b, c = null) {
   const out = [];
   for (const bd of b.world.buildings) {
-    out.push({ id: bd.id, name: bd.name, kind: 'building', at: [r1(bd.x + bd.w / 2), r1(bd.y + bd.h / 2)], size: [bd.w, bd.h] });
-    for (const d of bd.doors) out.push({ id: d.id, name: d.name, kind: 'door', at: [r1(d.x), r1(d.y)] });
+    const item = { id: bd.id, name: bd.name, kind: 'building', at: [r1(bd.x + bd.w / 2), r1(bd.y + bd.h / 2)], size: [bd.w, bd.h], floors: bd.floors };
+    // 出口（扉・窓）のうち開いている数（壊れた出口は開いた扱い）。個々の出口は近くの物として載る
+    item.exits_open = `${bd.exits.filter(id => { const o = b.objectById(id); return !o || o.open; }).length}/${bd.exits.length}`;
+    if (bd.sealed) item.sealed = '密室（外周を炎が囲んでいる。人も飛び道具も出入りできない）';
+    out.push(item);
   }
   for (const a of b.world.areas) {
-    out.push({ id: a.id, name: a.name, kind: 'area', at: [r1(a.x + a.w / 2), r1(a.y + a.h / 2)], size: [r1(a.w), r1(a.h)] });
+    out.push({ id: a.id, name: a.name, kind: 'area', at: [r1(a.x + a.w / 2), r1(a.y + a.h / 2)], size: [r1(a.w), r1(a.h)], ...(a.floor ? { floor: a.floor } : {}) });
   }
   for (const o of b.world.objects) {
     if (o.id.startsWith('outer_')) continue;
     const cc = rectCenter(o);
+    const exit = o.kind === 'door' || o.kind === 'window' || o.kind === 'stairs';
     if (c) {
       const d = dist(c.x, c.y, cc.x, cc.y);
-      const wallLike = o.kind === 'wall' && !o.created;
-      if (d > (wallLike ? 12 : 25)) continue;
+      const wallLike = o.kind === 'wall';
+      if (d > (wallLike ? 10 : exit ? 22 : 20)) continue;
+      if (wallLike && o.floor !== c.floor) continue; // 別の階の壁は省く
     }
     const item = { id: o.id, name: o.name, kind: o.kind, at: [r1(cc.x), r1(cc.y)] };
+    if (o.floor) item.floor = o.floor;
+    if (o.kind === 'door' || o.kind === 'window') item.state = o.openable ? (o.open ? 'open' : 'closed') : 'fixed';
+    if (o.height >= 0.5 && o.kind !== 'wall' && !exit) item.height = o.height;
     if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
+    if (o.kind === 'wall' && o.style === 'block') item.height = o.height;
     if (!o.indestructible) item.hp = Math.max(0, Math.round(o.hp));
     if (o.movable) { item.movable = true; if (o.kg) item.kg = o.kg; }
     out.push(item);
@@ -80,7 +90,11 @@ export function rulesSummary() {
       car: '車。遮蔽物になる。衝撃を与えると防犯アラームが鳴り、遠くまで聞こえる（陽動に使える）',
       hole: '掘削穴。通れないが視線は通る',
       movable: '木箱・ドラム缶・商品棚・自販機・机・三角コーンは押せる（重い物ほど動きにくい）',
-      area: 'kind=area は区域。move の対象にすると中心付近へ向かう',
+      area: 'kind=area は区域。move の対象にすると中心付近へ向かう。「〇〇の2階」の区域を対象にすると階段を使って2階へ行く',
+      floors: '高さがある。1階分は3m。2階建ての家は階段で上り下りする（約1秒）。床・天井は階をまたぐ視線を遮る。2階の窓からは塀や車越しに道路を見下ろせ、地上からは低い塀（1.8m）や車（1.5m）の陰に隠れられる。飛び道具も高さを持ち、2階から投げ下ろせる',
+      door: '扉は閉まっていると通れず見通せない。歩いてぶつかると自動で開ける（少し手間取る）。open/close で開け閉めできる。窓も開け閉めでき、開いた窓は通り抜けられる（コンビニのガラス窓は開かず、割るしかない）',
+      jump_down: '2階の窓から jump_down で外へ飛び降りられる（着地の衝撃あり）',
+      point_floor: 'point を2階の地点にしたい時は floor=1 を付ける',
     },
   };
 }
@@ -91,27 +105,26 @@ export function buildObservation(b, c) {
   const bd = b.buildingOf(c);
   const self = {
     name: c.name, stand: c.stand,
-    pos: [r1(c.x), r1(c.y)], facing_deg: deg(c.facing),
+    pos: [r1(c.x), r1(c.y)], floor: c.floor + 1, facing_deg: deg(c.facing),
     hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), knives: c.knives, kg: c.def.kg,
     touching: b.world.objects.filter(o => o.blocksMove && distToRect(c.x, c.y, o) <= c.r + 0.6).map(o => o.id),
-    inside: bd ? bd.name : '屋外',
+    inside: bd ? `${bd.name}の${c.floor + 1}階${bd.sealed ? '（密室：炎に囲まれている）' : ''}` : '屋外',
     status: stateWords(b, c),
     cooldowns: Object.fromEntries(Object.entries(c.cd).map(([k, v]) => [k, r1(v - b.t)])),
-    deaf: c.status.deafUntil > b.t,
     abilities: abilityCatalog(c),
   };
   let enemy;
   if (visible) {
     const ebd = b.buildingOf(e);
     enemy = {
-      name: e.name, visible: true, pos: [r1(e.x), r1(e.y)], distance: r1(dist(c.x, c.y, e.x, e.y)),
-      facing_deg: deg(e.facing), condition: hpWord(e), state: stateWords(b, e), inside: ebd ? ebd.name : '屋外',
+      name: e.name, visible: true, pos: [r1(e.x), r1(e.y)], floor: e.floor + 1, distance: r1(dist(c.x, c.y, e.x, e.y)),
+      facing_deg: deg(e.facing), condition: hpWord(e), state: stateWords(b, e), inside: ebd ? `${ebd.name}の${e.floor + 1}階` : '屋外',
     };
   } else {
     const ls = c.memory.lastSeen;
     enemy = {
       name: e.name, visible: false,
-      last_seen: ls ? { pos: [r1(ls.x), r1(ls.y)], seconds_ago: r1(b.t - ls.t) } : null,
+      last_seen: ls ? { pos: [r1(ls.x), r1(ls.y)], floor: (ls.floor ?? 0) + 1, seconds_ago: r1(b.t - ls.t) } : null,
     };
   }
   const heard = c.memory.heard
@@ -124,9 +137,6 @@ export function buildObservation(b, c) {
   const projectiles = b.world.projectiles
     .filter(p => b.canSee(c, p.x, p.y))
     .map(p => ({ id: p.id, kind: p.kind, pos: [r1(p.x), r1(p.y)], velocity: [r1(p.vx), r1(p.vy)], mine: p.owner === c.id }));
-  const zones = b.world.zones
-    .filter(z => z.owner === c.id || (z.kind !== 'silence' && b.canSee(c, z.x, z.y)))
-    .map(z => ({ kind: z.kind, pos: [r1(z.x), r1(z.y)], radius: z.r, mine: z.owner === c.id, remaining: r1(z.until - b.t) }));
   const recent = b.log
     .filter(l => l.visibleTo.has(c.id) && b.t - l.t < 12)
     .slice(-10)
@@ -138,8 +148,7 @@ export function buildObservation(b, c) {
     enemy,
     heard,
     visible_projectiles: projectiles,
-    known_zones: zones,
-    knives_on_ground: b.world.pickups.filter(p => b.canSee(c, p.x, p.y)).map(p => [r1(p.x), r1(p.y)]),
+    knives_on_ground: b.world.pickups.filter(p => b.canSee(c, p.x, p.y, (p.floor ?? 0) * 3 + 0.1)).map(p => [r1(p.x), r1(p.y)]),
     observed_enemy_abilities: c.memory.observed.slice(),
     recent_events: recent,
     map: { size: [b.world.w, b.world.h], landmarks: landmarks(b, c), note: '細かい物体は近く（約25m以内）のものだけ載っている' },

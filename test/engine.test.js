@@ -24,8 +24,8 @@ async function playTurns(b, maxTurns) {
 
 test('ターン制で CPU 同士の戦闘が例外なく決着する', async () => {
   for (let seed = 1; seed <= 8; seed++) {
-    const ids = ['makabe', 'karasuma', 'sogo'];
-    const b = new Battle({ seed, playerChar: ids[seed % 3], cpuChar: ids[(seed + 1 + (seed % 2)) % 3], mapId: seed % 2 ? 'town' : 'lot' });
+    const ids = ['sogo', 'kito'];
+    const b = new Battle({ seed, playerChar: ids[seed % 2], cpuChar: ids[(seed >> 1) % 2], mapId: seed % 3 ? 'town' : 'lot' });
     const tc = await playTurns(b, 80);
     assert.ok(b.over, `seed ${seed}（${b.mapId}）が80手以内に決着しない`);
     assert.equal(tc.phase, 'over');
@@ -49,7 +49,7 @@ test('CPU の計画は入力ターン開始時点で立てられ、プレイヤ�
 });
 
 test('追尾は動く敵を追いかけ、間合いに入ったら次の攻撃に移る', () => {
-  const b = new Battle({ seed: 9, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
+  const b = new Battle({ seed: 9, playerChar: 'sogo', cpuChar: 'kito', mapId: 'lot' });
   b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
   b.player.x = 6; b.player.y = 19; b.player.facing = 0;
   b.cpu.x = 12; b.cpu.y = 19; b.cpu.facing = 0;
@@ -65,15 +65,15 @@ test('追尾は動く敵を追いかけ、間合いに入ったら次の攻撃�
 });
 
 test('存在しない能力・他人の能力・戦場外の地点は計画から除外される', () => {
-  const b = new Battle({ seed: 3, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
+  const b = new Battle({ seed: 3, playerChar: 'sogo', cpuChar: 'kito', mapId: 'lot' });
   const plan = compilePlan(b, b.player, {
     interpretation: 't',
     steps: [
       { action: 'ability', ability: 'time_stop', targetType: 'self' },
-      { action: 'ability', ability: 'masonry', effect: 'raise', targetType: 'point', x: 5, y: 5 },
+      { action: 'ability', ability: 'hotel', effect: 'seal', targetType: 'object', targetId: 'house_left_door' },
       { action: 'move', targetType: 'point', x: 999, y: 5 },
       { action: 'fly', targetType: 'none' },
-      { action: 'ability', ability: 'friction', effect: 'grip', targetType: 'object', targetId: 'crate_a' },
+      { action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'self' },
       { action: 'look', targetType: 'enemy' },
     ],
     rejected: [],
@@ -123,30 +123,21 @@ test('建物の外から中への経路は壁を通らない', () => {
 });
 
 test('ローカル解析：仕様書の入力例', () => {
-  const b = new Battle({ seed: 1, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
-  b.player.memory.lastSeen = { x: 20, y: 10, t: 0 };
+  const b = new Battle({ seed: 1, playerChar: 'sogo', cpuChar: 'kito', mapId: 'lot' });
+  b.player.memory.lastSeen = { x: 20, y: 10, floor: 0, t: 0 };
   const p1 = compilePlan(b, b.player, localParse(b, b.player, '左の家に駆け込み、窓から敵の位置を確認する'));
   assert.deepEqual(p1.steps.map(s => s.action), ['move', 'move', 'look']);
   const p4 = compilePlan(b, b.player, localParse(b, b.player, '敵を追いかけて殴る'));
   assert.deepEqual(p4.steps.map(s => s.action), ['chase', 'melee']);
-  const p2 = compilePlan(b, b.player, localParse(b, b.player, '敵が近づいてきたら、足元の地面に能力を使って転倒させる'));
-  assert.equal(p2.steps[0].ability, 'friction');
+  const p2 = compilePlan(b, b.player, localParse(b, b.player, '敵が近づいてきたら、能力で弾き出す'));
+  assert.equal(p2.steps[0].ability, 'perpendicular');
   assert.equal(p2.steps[0].condition.kind, 'enemy_within');
   const p3 = compilePlan(b, b.player, localParse(b, b.player, '「覚悟しろ」と叫んで時間を止める'));
   assert.equal(p3.speech, '覚悟しろ');
   assert.ok(p3.rejected.some(r => r.includes('時間を止める')));
-});
-
-test('走って摩擦低下の領域に入ると転倒する', () => {
-  const b = new Battle({ seed: 2, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
-  b.player.x = 10; b.player.y = 19; b.player.facing = 0;
-  b.cpu.x = 14; b.cpu.y = 19; b.cpu.facing = Math.PI;
-  b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
-  b.world.zones.push({ kind: 'slick', x: 12, y: 19, r: 1.8, until: 99, owner: 'player' });
-  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'move', mode: 'run', targetType: 'point', x: 8, y: 19 }] }));
-  for (let i = 0; i < 60; i++) b.step();
-  assert.ok(b.cpu.status.proneUntil > 0, '転倒していない');
-  assert.ok(b.cpu.memory.observed.length > 0, '能力の観察情報が記録されていない');
+  const p5 = compilePlan(b, b.player, localParse(b, b.player, '左の家の2階へ上がって、2階の窓から飛び降りる'));
+  assert.deepEqual(p5.steps.map(s => s.action), ['move', 'jump_down']);
+  assert.equal(p5.steps[0].target.id, 'house_left_2f');
 });
 
 test('住宅街：物体が重ならず、主要な場所すべてへ出現地点から歩いて行ける', () => {
@@ -157,6 +148,7 @@ test('住宅街：物体が重ならず、主要な場所すべてへ出現地�
     for (let j = i + 1; j < solid.length; j++) {
       const a = solid[i], c = solid[j];
       if (a.kind === 'wall' && c.kind === 'wall') continue; // 壁の角どうしは重なってよい
+      if (a.floor !== c.floor) continue; // 別の階の物どうし
       const overlap = a.x < c.x + c.w - 0.01 && a.x + a.w > c.x + 0.01 && a.y < c.y + c.h - 0.01 && a.y + a.h > c.y + 0.01;
       assert.ok(!overlap, `${a.name} と ${c.name} が重なっている`);
     }
@@ -194,7 +186,7 @@ test('住宅街：車に衝撃を与えると防犯アラームが遠くまで�
 });
 
 test('住宅街：ローカル解析が新しい場所・物を指せる', () => {
-  const b = new Battle({ seed: 14, mapId: 'town', playerChar: 'makabe' });
+  const b = new Battle({ seed: 14, mapId: 'town', playerChar: 'sogo', cpuChar: 'kito' });
   const cases = [
     ['コンビニに駆け込む', 'store'],
     ['公園の植え込みに隠れる', 'bush_'],
@@ -209,7 +201,7 @@ test('住宅街：ローカル解析が新しい場所・物を指せる', () =>
 });
 
 function sogoBattle() {
-  const b = new Battle({ seed: 3, mapId: 'lot', playerChar: 'sogo', cpuChar: 'makabe' });
+  const b = new Battle({ seed: 3, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
   b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
   return b;
 }
@@ -229,13 +221,13 @@ test('十河：触れた敵をきっかり10m弾き出し、途中に壁があ�
   b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' }] }));
   runFor(b, 1.5);
   assert.ok(b.cpu.x < 17.3, '壁で止まっていない');
-  assert.ok(b.log.some(l => l.text.includes('叩きつけで10ダメージ')), '叩きつけのダメージがない');
+  assert.ok(b.log.some(l => /叩きつけで\d+ダメージ/.test(l.text)), '叩きつけのダメージがない');
   assert.ok(b.cpu.hp < openHp, `開けた方向より被害が小さい（${openHp} → ${b.cpu.hp}）`);
 });
 
 test('十河：開けた場所では真上に跳び、空中では殴りが届かない', () => {
   const b = sogoBattle();
-  b.player.x = 20; b.player.y = 20; b.cpu.x = 21; b.cpu.y = 20; b.cpu.facing = Math.PI;
+  b.player.x = 20; b.player.y = 20; b.cpu.x = 21.2; b.cpu.y = 20; b.cpu.facing = Math.PI;
   b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' }] }));
   b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 0.3 }, { action: 'melee', targetType: 'enemy' }] }));
   runFor(b, 1);
@@ -251,4 +243,108 @@ test('十河：100kgを超える物は弾き出せない', () => {
   const plan = compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'object', targetId: 'vending_1' }] });
   assert.equal(plan.steps.length, 0);
   assert.ok(plan.rejected[0].includes('100kg'));
+});
+
+// ---------- 高さ・階 ----------
+
+test('高さ：2階の窓からは塀越しに道路が見え、地上からは塀の陰が見えない', () => {
+  const b = new Battle({ seed: 21, mapId: 'town', playerChar: 'sogo', cpuChar: 'kito' });
+  const viewer = b.player;
+  // 佐藤家の南の塀（y=13、高さ1.8m）の向こう、大通りの低い所
+  const tx = 4.75, ty = 15.5;
+  viewer.x = 4.75; viewer.y = 11.6; viewer.floor = 0; viewer.facing = Math.PI / 2; // 庭（地上）
+  assert.equal(b.canSee(viewer, tx, ty, 0.6), false, '地上から塀越しに低い所が見えている');
+  viewer.y = 9.2; viewer.floor = 1; // 2階の南窓（x 4〜5.5）のそば
+  assert.ok(b.canSee(viewer, tx, ty, 0.6), '2階の窓から道路が見えない');
+});
+
+test('高さ：床と天井は階をまたぐ視線を遮る', () => {
+  const b = new Battle({ seed: 22, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  b.player.x = 8; b.player.y = 8; b.player.floor = 0; b.player.facing = 0;
+  b.cpu.x = 10; b.cpu.y = 8; b.cpu.floor = 1;
+  assert.equal(b.canSee(b.player, b.cpu.x, b.cpu.y), false, '1階から天井越しに2階が見えている');
+  b.player.floor = 1;
+  assert.equal(b.canSee(b.player, b.cpu.x, b.cpu.y), true);
+});
+
+test('高さ：階段を使って2階へ上がり、2階の窓から飛び降りられる', () => {
+  const b = new Battle({ seed: 23, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  b.cpu.x = 33; b.cpu.y = 3;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'move', mode: 'run', targetType: 'object', targetId: 'house_left_2f' }] }));
+  runFor(b, 12);
+  assert.equal(b.player.floor, 1, '2階に上がれていない');
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'jump_down', targetType: 'object', targetId: 'house_left_f2_window_s' }] }));
+  runFor(b, 6);
+  assert.equal(b.player.floor, 0, '飛び降りていない');
+  assert.ok(!b.buildingOf(b.player), '建物の外に出ていない');
+  assert.ok(!b.objectById('house_left_f2_window_s'), '窓を突き破っていない');
+});
+
+test('扉：閉じた扉は歩いて通ると開き、閉める行動で閉まる', () => {
+  const b = new Battle({ seed: 24, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  b.cpu.x = 33; b.cpu.y = 3;
+  const door = b.objectById('house_left_door');
+  assert.equal(door.open, false);
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'move', mode: 'run', targetType: 'object', targetId: 'house_left' }] }));
+  runFor(b, 8);
+  assert.ok(door.open, '扉が開いていない');
+  assert.ok(b.buildingOf(b.player), '家に入れていない');
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'close', targetType: 'object', targetId: 'house_left_door' }] }));
+  runFor(b, 4);
+  assert.equal(door.open, false, '扉が閉まっていない');
+});
+
+// ---------- 鬼頭 錠二：ホテル・カリフォルニア ----------
+
+function kitoRoom() {
+  const b = new Battle({ seed: 25, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  const bd = b.world.buildings.find(x => x.id === 'house_right');
+  // 右の家：扉1つ・窓2つ。扉だけ開けておく
+  for (const id of bd.exits) { const o = b.objectById(id); o.open = false; o.blocksMove = true; if (o.kind === 'door') o.blocksSight = true; }
+  const door = b.objectById('house_right_door');
+  b.setOpen(door, true, null);
+  b.player.x = 28; b.player.y = 14.2; b.player.floor = 0;
+  b.cpu.x = 26; b.cpu.y = 18; b.cpu.floor = 0;
+  return { b, bd, door };
+}
+
+test('錠二：内側で最後の出口を自分で閉めると密室が成立し、相手は外へ出られない', () => {
+  const { b, bd } = kitoRoom();
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }] }));
+  runFor(b, 3);
+  assert.ok(bd.sealed, '密室が成立していない');
+  // 窓を開けて出ようとしても炎で出られない
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [
+    { action: 'open', targetType: 'object', targetId: 'house_right_window' },
+    { action: 'move', mode: 'run', targetType: 'point', x: 20, y: 17 },
+  ] }));
+  const hp = b.cpu.hp;
+  runFor(b, 6);
+  assert.ok(b.buildingOf(b.cpu), '相手が外に出られてしまった');
+  assert.ok(b.cpu.hp < hp, '炎に触れても傷を負っていない');
+  assert.ok(bd.sealed, '一部の出口を開けただけで解除された');
+});
+
+test('錠二：出口がすべて同時に開くと解除される／外からは閉じ込められない', () => {
+  const { b, bd } = kitoRoom();
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }] }));
+  runFor(b, 3);
+  assert.ok(bd.sealed);
+  for (const id of bd.exits) b.setOpen(b.objectById(id), true, b.cpu);
+  b.step();
+  assert.equal(bd.sealed, null, '全出口が開いても解除されない');
+  // 外から閉めても成立しない
+  const { b: b2, bd: bd2, door: door2 } = kitoRoom();
+  b2.player.x = 28; b2.player.y = 11.8;
+  b2.setOpen(door2, false, b2.player);
+  assert.equal(bd2.sealed, null, '外から閉めて密室が成立した');
+});
+
+test('十河：屋内で真上に跳ぶと天井にぶつかる', () => {
+  const b = new Battle({ seed: 26, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  b.player.x = 8; b.player.y = 8.5; b.cpu.x = 33; b.cpu.y = 3;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' }] }));
+  runFor(b, 1.5);
+  assert.ok(b.log.some(l => l.text.includes('天井に激突')));
+  assert.ok(b.player.hp < b.player.maxHp);
 });

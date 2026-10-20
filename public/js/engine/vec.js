@@ -49,6 +49,28 @@ export function segRect(x0, y0, x1, y1, r, pad = 0) {
   return tmin;
 }
 
+// 線分と矩形が重なる区間 [t入, t出]（0..1 に切り詰め）。重ならなければ null
+export function segRectRange(x0, y0, x1, y1, r, pad = 0) {
+  let tmin = 0, tmax = 1;
+  const d = [x1 - x0, y1 - y0];
+  const p = [x0, y0];
+  const lo = [r.x - pad, r.y - pad];
+  const hi = [r.x + r.w + pad, r.y + r.h + pad];
+  for (let i = 0; i < 2; i++) {
+    if (Math.abs(d[i]) < 1e-9) {
+      if (p[i] < lo[i] || p[i] > hi[i]) return null;
+    } else {
+      let t1 = (lo[i] - p[i]) / d[i];
+      let t2 = (hi[i] - p[i]) / d[i];
+      if (t1 > t2) [t1, t2] = [t2, t1];
+      tmin = Math.max(tmin, t1);
+      tmax = Math.min(tmax, t2);
+      if (tmin > tmax) return null;
+    }
+  }
+  return [tmin, tmax];
+}
+
 // 線分と円の交差。最初に触れる t を返す
 export function segCircle(x0, y0, x1, y1, cx, cy, r) {
   const dx = x1 - x0, dy = y1 - y0;
