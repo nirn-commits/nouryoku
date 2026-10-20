@@ -478,7 +478,11 @@ function renderSide() {
       return `<div class="step ${cls}">${i + 1}. ${s.label}${phase}</div>`;
     }).join('') + (me.pendingPlan ? '<div class="meta">次の計画を待機中（現在の動作の完了後に切り替え）</div>' : '');
   }
-  $('#time-label').textContent = `経過 ${b.t.toFixed(1)}秒`;
+  // 時間制限（警察到着）と、判定に使う与ダメージ
+  const left = Math.max(0, RULES.timeLimit - b.t);
+  const tl = $('#time-label');
+  tl.textContent = `経過 ${b.t.toFixed(1)}秒／警察到着まで ${left.toFixed(0)}秒／与ダメージ 自分側 ${b.teamDealt(me.team)}：相手側 ${b.teamDealt(1 - me.team)}`;
+  tl.classList.toggle('siren', b.t >= RULES.policeWarn);
 }
 
 function renderLog() {
@@ -517,7 +521,10 @@ function showResult() {
   const team = b.teamSize > 1;
   $('#result-title').textContent = b.winnerTeam === null ? '相打ち' : won ? '勝利！' : '敗北……';
   const names = b.winnerTeam === null ? '' : b.chars.filter(c => c.team === b.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
-  $('#result-body').textContent = b.winnerTeam === null ? '全員再起不能' : `${names}${team ? 'のチーム' : ''}の勝ち（${b.t.toFixed(1)}秒）`;
+  const score = `与えたダメージ ${b.teamDealt(b.player.team)} 対 ${b.teamDealt(1 - b.player.team)}`;
+  $('#result-body').textContent = b.endReason === 'police'
+    ? (b.winnerTeam === null ? `警察が到着し、両者その場から逃げた（${score}で引き分け）` : `警察が到着。${names}${team ? 'のチーム' : ''}の判定勝ち（${score}）`)
+    : b.winnerTeam === null ? '全員再起不能' : `${names}${team ? 'のチーム' : ''}の勝ち（${b.t.toFixed(1)}秒）`;
   setTimeout(() => $('#result').classList.remove('hidden'), 1800);
 }
 

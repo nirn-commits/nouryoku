@@ -1,6 +1,6 @@
 // Gemini が使えない・間に合わない時の CPU 思考（ルールベース）。
 // 使う情報は本人の知覚（perceivedEnemy・記憶・見えている物）だけで、相手の行動計画は参照しない
-import { ABILITIES } from './data.js';
+import { ABILITIES, RULES } from './data.js';
 import { ITEM_KINDS } from './items.js';
 import { dist, distToRect, pointInRect } from './vec.js';
 
@@ -214,9 +214,23 @@ function chooseFocus(b, c) {
   c.focusId = best ? best.e.id : null;
 }
 
+// 警察が近づいていて判定で負けている（同点含む）なら、攻撃の無い計画を攻めの計画に差し替える
+function hurry(b, c, plan) {
+  if (b.t < RULES.policeWarn - 15 || b.teamDealt(c.team) > b.teamDealt(1 - c.team)) return plan;
+  const attacks = (plan.steps || []).some(st => ['melee', 'throw', 'ability'].includes(st.action) && st.effect !== 'silence_self' && st.effect !== 'recall' && st.effect !== 'deploy');
+  if (attacks) return plan;
+  const ab = c.def.abilities;
+  const steps = ab.includes('seventh')
+    ? [{ action: 'chase', targetType: 'enemy', mode: 'run', distance: 7, duration: 4 }, { action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 }]
+    : ab.includes('echo')
+      ? [{ action: 'ability', ability: 'echo', effect: 'scratch', targetType: 'enemy', count: 8 }, { action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }]
+      : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }];
+  return { interpretation: '（CPU・ローカル）警察が来る前に判定を取り返すため攻める', speech: null, steps };
+}
+
 // スタンドの出し入れ：殴り合いの前に出して間合いを伸ばし、エネルギーが減ったら戻す
 export function localCpuPlan(b, c) {
-  const plan = basePlan(b, c);
+  const plan = hurry(b, c, basePlan(b, c));
   if (!c.def.standRange || !plan.steps) return plan;
   const steps = plan.steps;
   const melee = steps.some(st => st.action === 'melee' && (st.targetType || 'enemy') === 'enemy');

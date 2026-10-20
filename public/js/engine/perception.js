@@ -179,6 +179,12 @@ export function buildObservation(b, c) {
 
   return {
     time: r1(b.t),
+    // ガン待ち対策の時間制限：警察到着時点で、相手に与えたダメージが多い側の判定勝ち（同点は引き分け＝両者の負け扱い）
+    time_limit: {
+      police_arrives_in: r1(Math.max(0, RULES.timeLimit - b.t)),
+      damage_dealt: { my_team: b.teamDealt(c.team), enemy_team: b.teamDealt(1 - c.team) },
+      note: '警察が来た時点でダメージを多く与えていた側の判定勝ち。待っているだけでは勝てない',
+    },
     self,
     ...(team ? { mode: '2対2のチーム戦。enemies の全員を倒せば勝ち。味方（allies）と協力する。targetType=enemy の targetId に敵の id を入れると狙う敵を選べる。targetType=ally で味方の所へ移動できる', enemies: b.enemiesOf(c).map(describeEnemy), allies } : {}),
     enemy,

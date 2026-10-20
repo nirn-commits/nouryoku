@@ -12,6 +12,7 @@ const SOUND_LABEL = {
   footsteps: '足音', footsteps_run: '駆ける足音', speech: '声', impact: '衝撃音', crash: '崩れる音',
   glass: 'ガラスの音', fall: '倒れる音', throw: '風切り音', swing: '風切り音', ability: '異音', combat: '物音',
   env: '物音', damage: '打撃音', rustle: '葉擦れの音', alarm: '防犯アラーム', door: '扉の音',
+  flick: '弾く音', ricochet: '金属音', siren: 'サイレン', stand: '気配',
 };
 
 const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
@@ -76,6 +77,12 @@ function onomatopoeia(f) {
     default: return strong ? (f.seq % 2 ? 'ドゴォ' : 'バキィ') : f.seq % 2 ? 'ボゴッ' : 'ドスッ';
   }
 }
+
+// 音の種類ごとの色
+const SOUND_COLOR = {
+  speech: '#ffffff', footsteps: '#ffe08a', footsteps_run: '#ffd166', impact: '#ff9b54', crash: '#ff7b54', damage: '#ff7b54',
+  glass: '#9be7ff', alarm: '#ff4d6d', door: '#c7b8ff', ricochet: '#e8e8f0', flick: '#e8e8f0', default: '#ffe08a',
+};
 
 export class Renderer {
   constructor(canvas) {
@@ -362,19 +369,20 @@ export class Renderer {
       ctx.stroke();
     }
 
-    // 物音
+    // 物音：聞こえた音（姿の見えない所の音は推定位置）に、広がる輪と種類を出す
     for (const h of me.memory.heard) {
       const age = b.t - h.t;
-      if (age > 2.5) continue;
+      if (age > 3.2) continue;
       const hz = (h.floor ?? 0) * FLOOR_H;
-      ctx.strokeStyle = `rgba(255,230,120,${0.8 * (1 - age / 2.5)})`;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.ellipse(h.x * P, this.sy(h.y, hz), (0.4 + age * 0.8) * P, (0.4 + age * 0.8) * P * 0.7, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = `rgba(255,230,120,${1 - age / 2.5})`;
-      ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
-      ctx.fillText(`♪${SOUND_LABEL[h.kind] || '物音'}${h.floor ? '（2階）' : ''}`, h.x * P + 6, this.sy(h.y, hz) - 6);
+      this.drawSoundMark(h.x * P, this.sy(h.y, hz), age, 3.2, h.kind, `${SOUND_LABEL[h.kind] || '物音'}${h.floor ? '（2階）' : ''}`, true);
+    }
+    // 防犯アラームが鳴り続けている車
+    for (const o of b.world.objects) {
+      if (o.kind !== 'car' || !(o.alarmUntil > b.t)) continue;
+      const cx = o.x + o.w / 2, cy = o.y + o.h / 2;
+      if (!debug && !b.canHear(me, cx, cy, 40, 1)) continue;
+      const ph = (b.t * 1.5) % 1;
+      this.drawSoundMark(cx * P, this.sy(cy, 1.6), ph, 1, 'alarm', '防犯アラーム', false);
     }
 
     // 敵の最後の目撃位置（味方からの報告を含む）
@@ -409,6 +417,19 @@ export class Renderer {
         ctx.fillStyle = f.color;
         ctx.fillText(f.text, f.x * P - 8, fy - age * 0.8 * P - P);
         ctx.globalAlpha = 1;
+      } else if (f.kind === 'sound') {
+        // 見えている所で鳴った音：届く範囲（半径）を一瞬だけ示す
+        if (age < 0.9) {
+          const r = Math.min(f.radius, 25);
+          ctx.strokeStyle = SOUND_COLOR[f.sk] || SOUND_COLOR.default;
+          ctx.globalAlpha = 0.5 * (1 - age / 0.9);
+          ctx.setLineDash([4, 6]);
+          ctx.lineWidth = 1.5;
+          ctx.beginPath(); ctx.ellipse(f.x * P, this.sy(f.y, (f.z ?? 1) - 1), r * P * Math.min(1, age * 4 + 0.2), r * P * Math.min(1, age * 4 + 0.2), 0, 0, Math.PI * 2); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.globalAlpha = 1;
+          if (f.sk !== 'alarm') this.drawSoundMark(f.x * P, fy, age, 0.9, f.sk, SOUND_LABEL[f.sk] || '物音', false); // アラームは車の印で示す
+        }
       } else if (f.kind === 'hit') {
         this.drawHit(f, age, fy);
       } else if (f.kind === 'ko') {
@@ -874,6 +895,31 @@ export class Renderer {
     ctx.fillStyle = c.color;
     ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
     ctx.fillText(`${c.name}（窓越し）`, (c.x + 0.4) * P, this.sy(c.y, z + 1.7));
+  }
+
+  // 音の印：波紋3重＋音の種類の札（推定位置なら「?」付き）
+  drawSoundMark(x, y, age, dur, kind, label, approx) {
+    const ctx = this.ctx, P = this.px;
+    const k = age / dur;
+    const color = SOUND_COLOR[kind] || SOUND_COLOR.default;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      const kk = (k * 1.6 + i * 0.25) % 1;
+      ctx.globalAlpha = Math.max(0, (1 - kk) * (1 - k * 0.6));
+      ctx.beginPath(); ctx.ellipse(x, y, (0.3 + kk * 1.4) * P, (0.3 + kk * 1.4) * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    ctx.globalAlpha = Math.max(0, 1 - Math.max(0, k - 0.6) * 2.5);
+    ctx.font = `bold ${Math.max(11, P * 0.45)}px sans-serif`;
+    const text = `♪ ${label}${approx ? '？' : ''}`;
+    const tw = ctx.measureText(text).width + 10;
+    const bx = x + P * 0.4, by = y - P * 1.1;
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(bx, by, tw, Math.max(15, P * 0.62));
+    ctx.fillStyle = color;
+    ctx.fillText(text, bx + 5, by + Math.max(11, P * 0.47));
+    ctx.restore();
   }
 
   // 打撃の瞬間：衝撃の閃光・集中線・擬音

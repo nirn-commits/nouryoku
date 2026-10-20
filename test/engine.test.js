@@ -555,3 +555,27 @@ test('スタンド：七海は群体なので出し入れの行動を使えず�
   runFor(b, 1);
   assert.equal(b.player.standBody, null);
 });
+
+test('時間制限：警察が来た時点で与ダメージの多い側の判定勝ち、両者待つだけなら引き分け', () => {
+  const b = new Battle({ seed: 61, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  b.player.x = 4; b.player.y = 17; b.cpu.x = 33; b.cpu.y = 3;
+  const wait = c => b.setPlan(c, compilePlan(b, c, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+  b.damage(b.cpu, 5, { source: b.player, kind: 'melee' });
+  let warned = false;
+  while (!b.over) {
+    for (const c of b.chars) if (!c.runner.step) wait(c);
+    b.step();
+    if (b.log.some(l => l.text.includes('サイレン'))) warned = true;
+  }
+  assert.ok(warned, 'サイレンが鳴っていない');
+  assert.equal(b.endReason, 'police');
+  assert.ok(Math.abs(b.t - 180) < 0.1);
+  assert.equal(b.winnerTeam, 0, 'ダメージを与えた側が判定勝ちになっていない');
+  const b2 = new Battle({ seed: 62, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  b2.player.x = 4; b2.player.y = 17; b2.cpu.x = 33; b2.cpu.y = 3;
+  while (!b2.over) {
+    for (const c of b2.chars) if (!c.runner.step) b2.setPlan(c, compilePlan(b2, c, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+    b2.step();
+  }
+  assert.equal(b2.winnerTeam, null, '両者待つだけなのに勝敗がついた');
+});

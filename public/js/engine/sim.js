@@ -391,16 +391,23 @@ export class Battle {
     if (pos && sound && this.captureSound(pos, sound, soundKind || kind, obsText || text, this.chars.includes(pos) ? pos : null)) sound = 0;
     const visibleTo = new Set();
     const heardBy = new Set();
+    const soundSeen = new Set(); // 音の出どころが見えていて、音も聞こえた人（音の輪を正確な位置に出す）
     for (const c of this.chars) {
-      if (all || c === actor || c === affected) { visibleTo.add(c.id); continue; }
       const pz = pos ? this.zOf(pos, actor || affected || c) : 0;
+      if (all || c === actor || c === affected) {
+        visibleTo.add(c.id);
+        if (pos && sound && (c === actor || c === affected)) soundSeen.add(c.id);
+        continue;
+      }
       const seen = pos && this.canSee(c, pos.x, pos.y, pz);
       const heard = pos && sound && this.canHear(c, pos.x, pos.y, sound, pz);
       if (seen || heard) visibleTo.add(c.id);
       if (heard && !seen) heardBy.add(c.id);
+      if (heard && seen) soundSeen.add(c.id);
       if (heard && seen && soundKind === 'alarm') this.recordSound(c, pos, soundKind, obsText || text);
     }
     const entry = { t: this.t, text, obsText, kind, actor: actor ? actor.id : null, visibleTo, heardBy };
+    if (pos && sound && soundSeen.size) this.fx.push({ kind: 'sound', x: pos.x, y: pos.y, z: this.zOf(pos), radius: sound, sk: soundKind || kind, t: this.t, visibleTo: soundSeen });
     this.log.push(entry);
     if (kind === 'ability' && pos) this.fx.push({ kind: 'flash', seq: ++this.fxSeq, x: pos.x, y: pos.y, t: this.t, color: actor ? actor.color : '#fff', charId: actor ? actor.charId : null, visibleTo });
     if (this.log.length > 400) this.log.shift();
@@ -477,6 +484,28 @@ export class Battle {
     return null;
   }
 
+  // チームが相手に与えたダメージの合計（判定に使う）
+  teamDealt(team) {
+    return Math.round(this.chars.filter(c => c.team === team).reduce((s, c) => s + (c.dealt || 0), 0));
+  }
+
+  // 通報で警察が来る：サイレン（全員に聞こえる）→ 到着で判定
+  updatePolice() {
+    if (!this.policeWarned && this.t >= RULES.policeWarn) {
+      this.policeWarned = true;
+      this.emit({ text: `遠くからパトカーのサイレンが近づいてくる……（あと${RULES.timeLimit - RULES.policeWarn}秒で警察が到着。その時点で相手に多くダメージを与えていた側の判定勝ち）`, kind: 'system', all: true });
+      for (const c of this.chars) if (c.alive) this.recordSound(c, { x: this.world.w / 2, y: this.world.h + 5, floor: 0 }, 'siren', null);
+    }
+    if (this.t < RULES.timeLimit) return;
+    const d0 = this.teamDealt(0), d1 = this.teamDealt(1);
+    this.over = true;
+    this.endReason = 'police';
+    this.winnerTeam = d0 > d1 ? 0 : d1 > d0 ? 1 : null;
+    this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive) || this.chars.find(c => c.team === this.winnerTeam);
+    const name = t => this.chars.filter(c => c.team === t).map(c => c.name).join('・');
+    this.emit({ text: `警察が到着！ 全員がその場から散った。判定：${name(0)} ${d0} 対 ${name(1)} ${d1}（与えたダメージ）→ ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
+  }
+
   teamAlive(team) {
     return this.chars.some(c => c.team === team && c.alive);
   }
@@ -498,6 +527,7 @@ export class Battle {
       return 0;
     }
     let dmg = amount * target.def.defense;
+    const scoring = source && source.team !== target.team;
     let guarded = false;
     if (from && target.status.guardUntil > this.t && (kind === 'melee' || kind === 'thrown')) {
       const a = angleTo(target.x, target.y, from.x, from.y);
@@ -505,6 +535,7 @@ export class Battle {
     }
     if (target.status.proneUntil > this.t) dmg *= 1.3;
     dmg = Math.max(1, Math.round(dmg));
+    if (scoring) source.dealt = (source.dealt || 0) + Math.min(dmg, target.hp);
     target.hp = Math.max(0, target.hp - dmg);
     target.lastDamagedAt = this.t;
     const entry = this.emit({
@@ -608,6 +639,8 @@ export class Battle {
     this.updateProjectiles(dt);
     this.fx = this.fx.filter(f => this.t - f.t < (f.kind === 'ko' ? 2.5 : 1.2));
 
+    this.updatePolice();
+    if (this.over) return;
     const t0 = this.teamAlive(0), t1 = this.teamAlive(1);
     if (!t0 || !t1) {
       this.over = true;

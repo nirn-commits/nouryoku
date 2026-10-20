@@ -175,3 +175,6 @@ button:disabled { opacity: .5; cursor: default; }
 .stand-tips li { margin-bottom: 4px; }
 .stand-tips .ex { color: #9be7ff; cursor: pointer; font-size: 12px; }
 .stand-tips .ex:hover { text-decoration: underline; }
+
+.time.siren { color: #ff4d6d; font-weight: bold; animation: siren 1s steps(2) infinite; }
+@keyframes siren { 50% { color: #6cf; } }
