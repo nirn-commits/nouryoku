@@ -862,3 +862,18 @@ test('鷺沼：撒いた玉を走って踏むと転び、牽制射撃は続け�
   runFor(b2, 2.5);
   assert.ok(balls - b2.player.balls >= 3, '牽制射撃で続けて撃っていない');
 });
+
+test('観戦モード：プレイヤーのキャラも CPU が考えて動き、決着まで進む', async () => {
+  const b = new Battle({ seed: 95, mapId: 'town', playerChar: 'sogo', allyChar: 'nanami', cpuChar: 'kito', cpu2Char: 'saginuma', spectate: true });
+  assert.ok(b.player.isCPU);
+  const tc = new TurnController(b);
+  let moved = false;
+  const x0 = b.player.x;
+  while (!b.over && tc.turn <= 70) {
+    await tc.commit(compilePlan(b, b.player, { steps: [] }));
+    while (tc.phase === 'execute') tc.step();
+    if (Math.abs(b.player.x - x0) > 1) moved = true;
+  }
+  assert.ok(b.over, '観戦モードで決着しない');
+  assert.ok(moved, 'プレイヤーのキャラが CPU として動いていない');
+});

@@ -45,7 +45,8 @@ function makeChar(id, charId, x, y, isCPU, team) {
 export class Battle {
   // 1対1：playerChar 対 cpuChar。2対2：allyChar（味方CPU）と cpu2Char を加える
   // randomSpawn：開始位置を毎回ランダムにする（false なら地図ごとの決まった位置）
-  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true } = {}) {
+  // spectate：観戦モード。プレイヤーのキャラも CPU が操作する
+  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true, spectate = false } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
     this.mapId = mapId;
@@ -58,7 +59,8 @@ export class Battle {
     this.winner = null;
     this.winnerTeam = null;
     const sp = randomSpawn ? this.randomSpawns() || this.world.spawns : this.world.spawns;
-    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, false, 0);
+    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, spectate, 0);
+    this.spectate = spectate;
     this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true, 1);
     this.chars = [this.player, this.cpu];
     if (allyChar) this.chars.push(this.ally = makeChar('ally', allyChar, ...this.spawnNear(sp.player), true, 0));

@@ -227,7 +227,8 @@ export class Renderer {
     return modes;
   }
 
-  draw(b, { debug = false, hover = null, viewer = null } = {}) {
+  draw(b, { debug = false, hover = null, viewer = null, spectate = false } = {}) {
+    this.spectate = spectate;
     const ctx = this.ctx;
     // 前のフレームが途中で失敗していても、描画の状態を初期化してから描く
     ctx.globalAlpha = 1;
@@ -1137,7 +1138,7 @@ export class Renderer {
       ctx.fillText('再起不能', (c.x - 0.8) * P, this.sy(c.y, groundZ + 0.8));
       return;
     }
-    if (isMe) {
+    if (isMe && !this.spectate) {
       // 視界の扇形（足元の高さ）
       ctx.fillStyle = 'rgba(255,255,220,0.05)';
       ctx.beginPath();
@@ -1233,7 +1234,7 @@ export class Renderer {
     const barW = P * 1.2;
     ctx.fillStyle = '#000';
     ctx.fillRect(x - barW / 2, headY - 10, barW, 5);
-    ctx.fillStyle = isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
+    ctx.fillStyle = this.spectate ? (c.team === 0 ? '#4cc9f0' : '#ff6b6b') : isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
     ctx.fillRect(x - barW / 2, headY - 10, barW * (c.hp / c.maxHp), 5);
     ctx.fillStyle = '#fff';
     ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
@@ -1244,7 +1245,8 @@ export class Renderer {
     if (c.climb) tags.push('階段');
     if ((c.floor === 0 && b.bushAt(c.x, c.y)) || s.hideUntil > b.t) tags.push('潜伏');
     if (air) tags.push('空中');
-    ctx.fillText(`${isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
+    const label = this.spectate ? `${b.teamSize > 1 ? (c.team === 0 ? 'A:' : 'B:') : ''}${c.name}` : isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name;
+    ctx.fillText(`${label}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
     ctx.globalAlpha = 1;
   }
 

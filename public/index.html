@@ -24,6 +24,9 @@
       <a href="fx.html" target="_blank">切り出し位置を確認する</a>
     </div>
     <div class="opponent-row">
+      <label>遊び方：
+        <select id="control"><option value="play">自分で操作する</option><option value="watch">CPU同士を観戦する</option></select>
+      </label>
       <label>形式：
         <select id="mode"><option value="2v2">2対2（味方CPUと組む）</option><option value="1v1">1対1</option></select>
       </label>
@@ -83,6 +86,7 @@
               <option value="0.5">0.5×</option>
               <option value="1" selected>1×</option>
               <option value="2">2×</option>
+              <option value="4">4×</option>
             </select>
           </label>
           <span id="time-label" class="time"></span>

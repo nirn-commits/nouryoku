@@ -14,6 +14,8 @@ import { Sound } from './audio.js';
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
 const DEBUG = params.has('debug');
+// 全員の情報を見せるか（デバッグ時と観戦モード）
+const omni = () => DEBUG || state.spectate;
 
 const state = {
   gemini: false,
@@ -23,6 +25,8 @@ const state = {
   opponent2: 'random',
   ally: 'random',
   mode: '2v2',
+  control: 'play', // play=自分で操作 / watch=CPU同士を観戦
+  spectate: false,
   sfx: (() => { try { return localStorage.getItem('sfx') !== 'off'; } catch { return true; } })(),
   freezeUntil: 0, // ヒットストップ（実時間）
   slow: { until: 0, factor: 1 }, // スローモーション（実時間）
@@ -332,7 +336,10 @@ function pickLineup() {
 
 function startBattle() {
   const lineup = pickLineup();
-  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, ...lineup, mapId: state.mapId });
+  state.spectate = state.control === 'watch';
+  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, ...lineup, mapId: state.mapId, spectate: state.spectate });
+  document.querySelector('.command').classList.toggle('hidden', state.spectate);
+  $('#stand-tips').classList.toggle('hidden', state.spectate);
   state.battle = b;
   state.ended = false;
   state.logSeen = new WeakSet();
@@ -420,15 +427,15 @@ function updatePhase() {
   $('#send-btn').disabled = !input;
   $('#send-btn').textContent = state.thinking ? `解析中… ${Math.floor((performance.now() - state.thinkingSince) / 1000)}秒` : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
   const label = {
-    input: state.battle && !state.battle.player.alive ? `第${turn.turn}手：観戦中（味方の戦いを見守っています）` : `第${turn.turn}手：入力ターン（時間停止中）`,
-    resolving: `第${turn.turn}手：相手の作戦を待っています…`,
+    input: state.spectate ? `第${turn.turn}手：観戦中（CPUが作戦を考えています）` : state.battle && !state.battle.player.alive ? `第${turn.turn}手：観戦中（味方の戦いを見守っています）` : `第${turn.turn}手：入力ターン（時間停止中）`,
+    resolving: state.spectate ? `第${turn.turn}手：観戦中（CPUが作戦を考えています）` : `第${turn.turn}手：相手の作戦を待っています…`,
     execute: `第${turn.turn}手：全員の行動を実行中`,
     over: '決着',
   }[phase];
   $('#phase-label').textContent = label;
   $('#phase-label').className = `phase phase-${phase}`;
   if (phase !== state.lastPhase) {
-    if (phase === 'input') $('#cmd').focus();
+    if (phase === 'input' && !state.spectate) $('#cmd').focus();
     state.lastPhase = phase;
   }
 }
@@ -458,7 +465,7 @@ function renderSide() {
   }).join(' ');
   $('#self-card').style.setProperty('--c', me.color);
   $('#self-card').innerHTML = `
-    ${portrait(me.charId, 'mini')}<h3>${me.name} <small>『${me.stand}』</small></h3>
+    ${portrait(me.charId, 'mini')}<h3>${state.spectate ? 'チームA：' : ''}${me.name} <small>『${me.stand}』</small></h3>
     ${bar('hp', me.hp, me.maxHp, `HP ${Math.round(me.hp)}/${me.maxHp}`)}
     ${bar('sp', me.sp, me.maxSp, `スタンドエネルギー ${Math.round(me.sp)}`)}
     <div class="meta">${me.held ? `手に${me.held.name}` : '素手'} ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
@@ -473,7 +480,7 @@ function renderSide() {
     const ap = ally.runner.plan;
     const cur = ap && ap.steps[Math.max(0, ally.runner.idx - 1)];
     allyCard.style.setProperty('--c', ally.color);
-    allyCard.innerHTML = `${portrait(ally.charId, 'mini')}<h3>味方：${ally.name} <small>『${ally.stand}』</small></h3>
+    allyCard.innerHTML = `${portrait(ally.charId, 'mini')}<h3>${state.spectate ? 'チームA：' : '味方：'}${ally.name} <small>『${ally.stand}』</small></h3>
       ${ally.alive ? bar('hp', ally.hp, ally.maxHp, `HP ${Math.round(ally.hp)}/${ally.maxHp}`) : '<div class="meta"><b>再起不能</b></div>'}
       ${ally.alive ? `<div class="meta">距離 ${dist(me.x, me.y, ally.x, ally.y).toFixed(1)}m・${abd ? `${abd.name}の${ally.floor + 1}階` : '屋外'}${ally.held ? `・${ally.held.name}` : ''}</div>
       <div class="meta">狙い：${b.enemyOf(ally).name}／${cur && ally.runner.step ? `行動中：${cur.label}` : '待機'}</div>` : ''}`;
@@ -484,10 +491,10 @@ function renderSide() {
     const ls = me.memory.seen[foe.id];
     const target = foe.alive && b.enemyOf(me) === foe && foes.filter(f => f.alive).length > 1;
     return `<div class="foe" style="--c:${foe.color}">${portrait(foe.charId, 'mini')}
-    <h3>敵：${foe.name} ${!foe.alive ? '<span class="tag">再起不能</span>' : vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}${target ? ' <span class="tag focus">狙い</span>' : ''}</h3>
-    ${foe.alive && (vis || DEBUG) ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
+    <h3>${state.spectate ? 'チームB：' : '敵：'}${foe.name} ${!foe.alive ? '<span class="tag">再起不能</span>' : vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}${target ? ' <span class="tag focus">狙い</span>' : ''}</h3>
+    ${foe.alive && (vis || omni()) ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
     ${foe.alive ? `<div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後の目撃 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前${ls.via ? `（${ls.via}の報告）` : ''}` : '一度も姿を見ていない'}</div>` : ''}
-    ${DEBUG ? `<div class="meta debug">[debug] 計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}</div>`;
+    ${omni() ? `<div class="meta debug">計画：${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}</div>`;
   }).join('') + `<div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>`;
 
   const plan = me.runner.plan;
@@ -505,7 +512,7 @@ function renderSide() {
   // 時間制限（警察到着）と、判定に使う与ダメージ
   const left = Math.max(0, RULES.timeLimit - b.t);
   const tl = $('#time-label');
-  tl.textContent = `経過 ${b.t.toFixed(1)}秒／警察到着まで ${left.toFixed(0)}秒／与ダメージ 自分側 ${b.teamDealt(me.team)}：相手側 ${b.teamDealt(1 - me.team)}`;
+  tl.textContent = `経過 ${b.t.toFixed(1)}秒／警察到着まで ${left.toFixed(0)}秒／与ダメージ ${state.spectate ? 'チームA' : '自分側'} ${b.teamDealt(me.team)}：${state.spectate ? 'チームB' : '相手側'} ${b.teamDealt(1 - me.team)}`;
   tl.classList.toggle('siren', b.t >= RULES.policeWarn);
 }
 
@@ -513,7 +520,7 @@ function renderLog() {
   const b = state.battle;
   const me = b.player;
   const team = new Set(b.chars.filter(c => c.team === me.team && (c === me || !me.alive)).map(c => c.id));
-  const entries = b.log.filter(l => DEBUG || [...team].some(id => l.visibleTo.has(id)));
+  const entries = b.log.filter(l => omni() || [...team].some(id => l.visibleTo.has(id)));
   // 表示済みの記録は覚えておき、新しいものだけ足す（観戦に切り替わっても重複しない）
   const fresh = entries.slice(-60).filter(l => !state.logSeen.has(l));
   if (!fresh.length) return;
@@ -522,7 +529,7 @@ function renderLog() {
   for (const l of fresh) {
     const p = document.createElement('p');
     p.className = `k-${l.kind}`;
-    const text = team.has(l.actor) || DEBUG ? l.text : l.obsText || l.text;
+    const text = team.has(l.actor) || omni() ? l.text : l.obsText || l.text;
     p.innerHTML = `<span class="t">${l.t.toFixed(1)}</span> ${escapeHtml(text)}`;
     if (l.heardBy.has(me.id) && l.kind !== 'speech') p.innerHTML += ' <span class="heard">（音）</span>';
     log.prepend(p);
@@ -532,7 +539,7 @@ function renderLog() {
       const seName = ac && ABILITY_SE[ac.def.abilities[0]];
       if (seName) playSe(seName, 0.8, 'ability');
       const c = ac;
-      if (c && (c.team === me.team || DEBUG || b.canSee(me, c.x, c.y))) showCutin(c, text);
+      if (c && (c.team === me.team || omni() || b.canSee(me, c.x, c.y))) showCutin(c, text);
     }
   }
   while (log.children.length > 200) log.lastChild.remove();
@@ -546,6 +553,13 @@ function showResult() {
   const b = state.battle;
   state.ended = true;
   const won = b.winnerTeam === b.player.team;
+  if (state.spectate) {
+    const names = t => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
+    $('#result-title').textContent = b.winnerTeam === null ? '引き分け' : `${b.teamSize > 1 ? (b.winnerTeam === 0 ? 'チームA' : 'チームB') : names(b.winnerTeam)}の勝ち`;
+    $('#result-body').textContent = `${names(0)} 対 ${names(1)}／与えたダメージ ${b.teamDealt(0)} 対 ${b.teamDealt(1)}（${b.t.toFixed(1)}秒${b.endReason === 'police' ? '・警察到着で判定' : ''}）`;
+    setTimeout(() => $('#result').classList.remove('hidden'), 1800);
+    return;
+  }
   const team = b.teamSize > 1;
   $('#result-title').textContent = b.winnerTeam === null ? '相打ち' : won ? '勝利！' : '敗北……';
   const names = b.winnerTeam === null ? '' : b.chars.filter(c => c.team === b.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
@@ -630,7 +644,7 @@ function handleImpacts(now) {
   for (const f of b.fx) {
     if (!f.seq || f.seq <= state.lastFx) continue;
     state.lastFx = Math.max(state.lastFx, f.seq);
-    if (!DEBUG && f.visibleTo && !f.visibleTo.has(me.id)) continue;
+    if (!omni() && f.visibleTo && !f.visibleTo.has(me.id)) continue;
     if (f.kind === 'hit') {
       const power = Math.min(1, f.dmg / 30);
       state.freezeUntil = Math.max(state.freezeUntil, now + 40 + power * 190);
@@ -666,7 +680,7 @@ function handleImpacts(now) {
   for (const f of b.fx) {
     if (f.kind !== 'sound' || state.seenSound.has(f)) continue;
     state.seenSound.add(f);
-    if (!DEBUG && f.visibleTo && !f.visibleTo.has(me.id)) continue;
+    if (!omni() && f.visibleTo && !f.visibleTo.has(me.id)) continue;
     const name = SE_OF[f.sk];
     if (name) playSe(name, seVolume(me, f.x, f.y, Math.max(12, f.radius * 1.2)));
   }
@@ -712,7 +726,7 @@ function loop(now) {
     // 時間が進むのは実行フェーズの間だけ
     guard('演出', () => handleImpacts(now));
     // 自分がやられた後は、味方の戦いを観戦する（入力ターンは自動で進む）
-    if (state.turn.phase === 'input' && !b.player.alive && state.autoTurn !== state.turn.turn) {
+    if (state.turn.phase === 'input' && (!b.player.alive || state.spectate) && state.autoTurn !== state.turn.turn) {
       state.autoTurn = state.turn.turn;
       state.turn.commit(compilePlan(b, b.player, { steps: [] }));
     }
@@ -731,7 +745,7 @@ function loop(now) {
     guard('画面の更新', () => updatePhase());
     // 自分がやられたら、生きている味方の視点で観戦する
     const viewer = viewerOf(b);
-    guard('戦場の描画', () => state.renderer.draw(b, { debug: DEBUG, hover: state.hover, viewer }));
+    guard('戦場の描画', () => state.renderer.draw(b, { debug: omni(), hover: state.hover, viewer, spectate: state.spectate }));
     guard('情報欄の表示', () => renderSide());
     guard('ログの表示', () => renderLog());
     if (b.over && !state.ended) showResult();
@@ -789,6 +803,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#opponent2').addEventListener('change', e => { state.opponent2 = e.target.value; });
   $('#ally').addEventListener('change', e => { state.ally = e.target.value; });
   $('#mode').addEventListener('change', e => { state.mode = e.target.value; renderCharCards(); });
+  $('#control').addEventListener('change', e => { state.control = e.target.value; renderCharCards(); });
   const sfxBtn = $('#sfx-btn');
   const sfxLabel = () => { sfxBtn.textContent = `効果音：${state.sfx ? 'ON' : 'OFF'}`; };
   sfxLabel();
