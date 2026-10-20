@@ -650,3 +650,20 @@ test('錠二：家の中で待ち伏せし、敵が入ってきたら扉を閉�
   assert.ok(bd.sealed, '敵が入ってきたのに密室にならない');
   assert.ok(pointInRect(foe.x, foe.y, bd));
 });
+
+test('錠二：コンビニ（扉2つ・はめ殺しのガラス）でも、ガラスが割れていても密室にでき、閉め残しは知らせる', () => {
+  const b = new Battle({ seed: 3, mapId: 'town', playerChar: 'kito', cpuChar: 'sogo', randomSpawn: false });
+  const bd = b.world.buildings.find(x => x.id === 'store');
+  b.setOpen(b.objectById('store_door'), true, null);
+  b.setOpen(b.objectById('store_backdoor'), true, null);
+  b.damageObject(b.objectById('store_glass_1'), 99, null);
+  b.player.x = bd.x + bd.w / 2; b.player.y = bd.y + bd.h / 2;
+  b.cpu.x = bd.x + 2; b.cpu.y = bd.y + bd.h / 2;
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+  const plan = compilePlan(b, b.player, localParse(b, b.player, '扉を閉める'));
+  assert.equal(plan.steps.filter(s => s.action === 'close').length, 2, '開いている扉を両方閉めない');
+  b.setPlan(b.player, plan);
+  runFor(b, 10);
+  assert.ok(b.log.some(l => l.text.includes('まだ開いている出口がある')), '閉め残しを知らせていない');
+  assert.ok(bd.sealed, 'コンビニで密室にならない');
+});

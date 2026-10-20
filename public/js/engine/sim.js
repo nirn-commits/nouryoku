@@ -837,12 +837,12 @@ export class Battle {
     return true;
   }
 
-  // 出口が開いているか：窓は「枠」で判定する（ガラスが割れていても枠を閉めれば閉まった扱い）。
-  // はめ殺しのガラスが割れたものと、壊れて無くなった出口は、閉められないので開いた扱い
+  // 出口が開いているか：窓は「枠」で判定する（ガラスが割れていても枠が閉まっていれば閉まった扱い）。
+  // はめ殺しの窓（コンビニのガラスなど）は枠が開かないので、ガラスが割れても閉まった扱い。壊れて無くなった出口だけは開いた扱い
   exitOpen(id) {
     const o = objectById(this.world, id);
     if (!o) return true;
-    if (o.kind === 'window' && !o.openable) return !!o.broken;
+    if (o.kind === 'window' && !o.openable) return false;
     return !!o.open;
   }
 
@@ -850,7 +850,15 @@ export class Battle {
   trySeal(c, closed) {
     const bd = this.world.buildings.find(x => x.id === closed.building);
     if (!bd || bd.sealed || !pointInRect(c.x, c.y, bd)) return;
-    if (bd.exits.some(id => this.exitOpen(id))) return;
+    const still = bd.exits.filter(id => this.exitOpen(id));
+    if (still.length) {
+      // まだ開いている出口を本人に知らせる（相手が中にいる時だけ。黙って失敗しないように）
+      if (this.chars.some(x => x.team !== c.team && x.alive && pointInRect(x.x, x.y, bd))) {
+        const names = still.map(id => objectById(this.world, id)?.name || '壊れた出口').join('・');
+        this.emit({ text: `まだ開いている出口がある：${names}（あと${still.length}か所閉めれば密室）`, kind: 'fail', actor: c });
+      }
+      return;
+    }
     // 閉じ込める相手が中にいなければ密室にはならない（自分だけが閉じこもることはない）
     if (!this.chars.some(x => x.team !== c.team && x.alive && pointInRect(x.x, x.y, bd))) {
       this.emit({ text: `出口はすべて閉じたが、${bd.name}の中に相手がいないので密室にはならない`, kind: 'fail', actor: c });

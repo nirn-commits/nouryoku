@@ -342,8 +342,14 @@ function parseClause(b, c, clause, has, ctx = {}) {
     return steps;
   }
   if (/閉め|閉じ/.test(clause)) {
+    // 錠二が「扉を閉める」のように特定の出口を挙げずに言った時は、開いている出口を近い順に全部閉める（密室にするため）
+    const open = exitsOf(bdHere, true);
+    if (has.hotel && open.length > 1 && !/入口|裏口|玄関|勝手口|東|西|北|南|2階|２階|1階|１階|窓/.test(clause)) {
+      for (const o of open.slice(0, 4)) steps.push({ action: 'close', targetType: 'object', targetId: o.id });
+      return steps;
+    }
     const o = obj && b.objectById(obj.id);
-    const target = o && (o.kind === 'door' || o.kind === 'window') ? o : exitsOf(bdHere, true)[0];
+    const target = o && (o.kind === 'door' || o.kind === 'window') ? o : open[0];
     if (target) steps.push({ action: 'close', targetType: 'object', targetId: target.id });
     return steps;
   }
