@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>能力バトル ―自由記述型―</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- タイトル -->
+  <section id="title" class="screen">
+    <h1>能力バトル<small>自由記述型・超能力バトル</small></h1>
+    <p class="lead">行動を<b>自然文</b>で書いて戦え。相手も同時に、独自に考えて動いている。</p>
+    <p id="ai-status" class="ai-status">AI 接続を確認中…</p>
+    <h2>あなたが操るキャラクター</h2>
+    <div id="char-cards" class="char-cards"></div>
+    <div class="start-row"><button id="start-btn" class="big">戦闘開始</button></div>
+    <details class="howto">
+      <summary>遊び方</summary>
+      <ul>
+        <li>戦闘は時間が流れ続けます（疑似リアルタイム）。入力欄に文字を打っている間は時間がゆっくりになります（設定で変更可）。</li>
+        <li>入力欄に行動を書いて <kbd>Enter</kbd> で送信。新しい指示を出すと、それまでの計画は打ち切られます（振りかぶり中の攻撃などは最後まで実行）。</li>
+        <li>1回の指示で実行できるのは最大5手順・約10秒分まで。超過分は実行されません。</li>
+        <li>「」で囲んだ部分はセリフとして扱われ、相手に聞こえれば相手の判断材料になります。</li>
+        <li>敵は<b>見えている時しか</b>画面に表示されません。物音は波紋で表示されます。</li>
+        <li>フィールドをクリックすると、その座標や物体名が入力欄に挿入されます。</li>
+        <li><kbd>Space</kbd>（入力欄の外）で一時停止／再開。</li>
+      </ul>
+    </details>
+  </section>
+
+  <!-- 戦闘 -->
+  <section id="battle" class="screen hidden">
+    <div class="battle-grid">
+      <div class="field-col">
+        <div class="field-wrap">
+          <canvas id="field"></canvas>
+          <div id="pause-badge" class="pause-badge hidden">一時停止中</div>
+          <div id="tooltip" class="tooltip hidden"></div>
+        </div>
+        <div class="command">
+          <textarea id="cmd" rows="2" placeholder="例：左の家に駆け込み、窓から敵の位置を確認する「どこに隠れた？」"></textarea>
+          <div class="cmd-side">
+            <button id="send-btn" class="big">送信</button>
+            <select id="examples"><option value="">例文…</option></select>
+          </div>
+        </div>
+        <div class="controls">
+          <button id="pause-btn">一時停止</button>
+          <label>速度
+            <select id="speed">
+              <option value="0.25">0.25×</option>
+              <option value="0.5" selected>0.5×</option>
+              <option value="1">1×</option>
+            </select>
+          </label>
+          <label><input type="checkbox" id="slowmo" checked> 入力中は時間を遅くする（×0.2）</label>
+          <span id="time-label" class="time"></span>
+          <button id="quit-btn" class="small">タイトルへ</button>
+        </div>
+      </div>
+      <aside class="side">
+        <div id="self-card" class="card"></div>
+        <div id="enemy-card" class="card enemy"></div>
+        <div class="card">
+          <h3>現在の行動計画 <span id="plan-source" class="tag"></span></h3>
+          <div id="plan-view" class="plan-view"></div>
+        </div>
+        <div class="card log-card">
+          <h3>戦闘ログ</h3>
+          <div id="log" class="log"></div>
+        </div>
+        <details class="card abilities-ref">
+          <summary>自分の能力・行動の一覧</summary>
+          <div id="ability-ref"></div>
+        </details>
+      </aside>
+    </div>
+  </section>
+
+  <div id="result" class="overlay hidden">
+    <div class="overlay-box">
+      <h2 id="result-title"></h2>
+      <p id="result-body"></p>
+      <button id="again-btn" class="big">もう一戦</button>
+      <button id="title-btn">タイトルへ</button>
+    </div>
+  </div>
+
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

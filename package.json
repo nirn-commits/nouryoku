@@ -1,0 +1,14 @@
+{
+  "name": "nouryoku",
+  "version": "0.1.0",
+  "private": true,
+  "description": "自由記述型・超能力バトルゲーム（個人用）",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

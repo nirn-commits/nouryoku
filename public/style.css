@@ -1,0 +1,118 @@
+:root {
+  --bg: #16131c;
+  --panel: #221d2b;
+  --panel2: #2d2639;
+  --ink: #f1ebdf;
+  --muted: #a99fb8;
+  --gold: #f2c14e;
+  --danger: #ff6b6b;
+  --ok: #06d6a0;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: radial-gradient(circle at 15% 0%, #33204a 0%, var(--bg) 50%) fixed;
+  color: var(--ink);
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+  min-height: 100vh;
+}
+button, select, textarea, input { font: inherit; }
+button {
+  background: var(--panel2); color: var(--ink);
+  border: 2px solid var(--gold); border-radius: 4px;
+  padding: 6px 12px; cursor: pointer; font-weight: bold;
+}
+button:hover { background: #43385a; }
+button.big { padding: 8px 22px; font-size: 1.05rem; }
+button.small { padding: 2px 10px; font-size: .85rem; }
+select { background: var(--panel2); color: var(--ink); border: 1px solid #5a4a6a; border-radius: 4px; padding: 4px; }
+.hidden { display: none !important; }
+.screen { max-width: 1400px; margin: 0 auto; padding: 14px; }
+.meta { color: var(--muted); font-size: .8rem; }
+
+/* タイトル */
+h1 {
+  text-align: center; font-size: clamp(2.2rem, 6vw, 3.8rem); margin: 12px 0 0;
+  color: var(--gold); font-style: italic; letter-spacing: .12em;
+  text-shadow: 3px 3px 0 #7b2cbf, 6px 6px 0 #000;
+}
+h1 small { display: block; font-size: 1rem; letter-spacing: .3em; color: var(--muted); text-shadow: none; font-style: normal; margin-top: 6px; }
+.lead { text-align: center; }
+.ai-status { text-align: center; font-size: .9rem; padding: 6px; border-radius: 4px; }
+.ai-status.ok { color: var(--ok); }
+.ai-status.warn { color: var(--gold); }
+h2 { font-size: 1.1rem; border-left: 4px solid var(--gold); padding-left: 8px; }
+.char-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
+.char-card {
+  background: var(--panel); border: 2px solid #444; border-radius: 8px; padding: 12px; cursor: pointer;
+  font-size: .88rem; line-height: 1.5;
+}
+.char-card.chosen { border-color: var(--c); box-shadow: 0 0 0 2px var(--c), 0 0 18px color-mix(in srgb, var(--c) 40%, transparent); }
+.char-head { display: flex; align-items: center; gap: 10px; font-size: 1.05rem; }
+.char-head .dot { width: 28px; height: 28px; border-radius: 50%; background: var(--c); border: 2px solid #000; flex: none; }
+.stand { color: var(--gold); font-size: .9rem; }
+.persona { color: var(--muted); }
+.ab { background: var(--panel2); border-radius: 6px; padding: 8px; margin-top: 8px; }
+.ab ul { margin: 4px 0; padding-left: 18px; }
+.weak { color: #ffb3b3; font-size: .8rem; }
+.start-row { text-align: center; margin: 18px 0; }
+.howto { background: var(--panel); border-radius: 8px; padding: 10px 16px; line-height: 1.7; font-size: .9rem; }
+.howto summary { cursor: pointer; color: var(--gold); font-weight: bold; }
+kbd { background: #000; border: 1px solid #555; border-radius: 3px; padding: 0 4px; }
+
+/* 戦闘 */
+.battle-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; }
+@media (max-width: 1000px) { .battle-grid { grid-template-columns: 1fr; } }
+.field-wrap { position: relative; width: 100%; }
+#field { display: block; border: 2px solid #000; box-shadow: 0 0 0 2px var(--gold); cursor: crosshair; max-width: 100%; }
+.pause-badge {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  background: #000c; border: 2px solid var(--gold); padding: 4px 16px; font-weight: bold;
+}
+.tooltip { position: absolute; pointer-events: none; background: #000d; padding: 2px 6px; font-size: .78rem; border-radius: 3px; white-space: nowrap; }
+.command { display: flex; gap: 8px; margin-top: 10px; }
+.command textarea {
+  flex: 1; background: #0f0c14; color: var(--ink); border: 2px solid #5a4a6a; border-radius: 6px;
+  padding: 8px; resize: vertical; font-size: 1rem;
+}
+.command textarea:focus { outline: none; border-color: var(--gold); }
+.cmd-side { display: flex; flex-direction: column; gap: 6px; width: 150px; }
+.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; font-size: .88rem; }
+.controls .time { color: var(--muted); }
+.controls #quit-btn { margin-left: auto; }
+
+.side { display: flex; flex-direction: column; gap: 10px; }
+.card { background: var(--panel); border-left: 4px solid var(--c, #666); border-radius: 6px; padding: 10px; font-size: .86rem; }
+.card h3 { margin: 0 0 6px; font-size: .95rem; }
+.card h3 small { color: var(--gold); font-weight: normal; }
+.tag { font-size: .72rem; padding: 1px 6px; border-radius: 3px; background: #444; color: #ddd; font-weight: normal; }
+.tag.seen { background: var(--danger); color: #000; }
+.bar { position: relative; height: 16px; background: #0d0a12; border-radius: 3px; overflow: hidden; margin: 4px 0; }
+.bar span { display: block; height: 100%; transition: width .2s; }
+.bar.hp span { background: linear-gradient(90deg, #06d6a0, #8ce99a); }
+.bar.hp.enemy span { background: linear-gradient(90deg, #ff6b6b, #ffa8a8); }
+.bar.sp span { background: linear-gradient(90deg, #7b2cbf, #c77dff); }
+.bar em { position: absolute; inset: 0; font-style: normal; font-size: .72rem; padding-left: 6px; display: flex; align-items: center; text-shadow: 1px 1px 0 #000; }
+.cd { color: var(--danger); }
+.ready { color: var(--ok); }
+.plan-view .step { padding: 2px 0; color: var(--ink); }
+.plan-view .step.done { color: #666; text-decoration: line-through; }
+.plan-view .step.now { color: var(--gold); font-weight: bold; }
+.log-card { flex: 1; }
+.log { height: 280px; overflow-y: auto; font-size: .8rem; line-height: 1.5; background: #0d0a12; border-radius: 4px; padding: 4px 8px; }
+.log p { margin: 0 0 2px; }
+.log .t { color: #6d6380; font-size: .72rem; }
+.log .k-command { color: var(--gold); }
+.log .k-plan { color: #b8c0ff; }
+.log .k-fail { color: #ff9b9b; }
+.log .k-damage { color: #ffd6a5; }
+.log .k-ability { color: #9be7ff; }
+.log .k-speech { color: #fff; font-weight: bold; }
+.log .k-ko, .log .k-system { color: var(--gold); font-weight: bold; }
+.log .heard { color: #e9c46a; font-size: .72rem; }
+.abilities-ref summary { cursor: pointer; color: var(--gold); }
+.debug { color: #7bdcb5; }
+
+.overlay { position: fixed; inset: 0; background: #000a; display: flex; align-items: center; justify-content: center; z-index: 50; }
+.overlay-box { background: var(--panel); border: 3px solid var(--gold); border-radius: 10px; padding: 24px 36px; text-align: center; display: flex; flex-direction: column; gap: 10px; }
+.overlay-box h2 { border: none; font-size: 2rem; margin: 0; font-style: italic; }
