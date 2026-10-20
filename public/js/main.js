@@ -25,6 +25,8 @@ const state = {
   last: 0,
   cmdSeq: 0,
   thinking: 0,
+  thinkingSince: 0,
+  clientTimeoutMs: 95000,
   hover: null,
   logCount: 0,
   ended: false,
@@ -53,7 +55,7 @@ const EXAMPLES = {
 
 // ---------- API ----------
 
-async function apiPlan(payload, timeoutMs = 95000) {
+async function apiPlan(payload, timeoutMs = state.clientTimeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -64,8 +66,14 @@ async function apiPlan(payload, timeoutMs = 95000) {
       signal: ctrl.signal,
     });
     const data = await res.json().catch(() => ({}));
+    if (ctrl.signal.aborted) throw new Error('timeout');
     if (!res.ok) throw new Error(`${data.error || `HTTP ${res.status}`}${data.detail ? `／詳細：${data.detail}` : ''}`);
     return data.plan;
+  } catch (e) {
+    if (e.name === 'AbortError' || e.message === 'timeout') {
+      throw new Error(`ブラウザ側の待ち時間（${Math.round(timeoutMs / 1000)}秒）を超えました。サーバーのターミナルに所要時間が表示されています`);
+    }
+    throw e;
   } finally {
     clearTimeout(timer);
   }
@@ -78,6 +86,8 @@ async function checkStatus() {
     const data = await res.json();
     state.gemini = !!data.gemini;
     state.model = data.model;
+    // サーバーは設定を変えて最大3回試すので、その分だけ待つ
+    if (data.timeoutMs) state.clientTimeoutMs = data.timeoutMs * 3 + 5000;
     el.textContent = state.gemini
       ? `AI：Gemini（${data.model}）で行動を解析します`
       : 'AI：GEMINI_API_KEY が未設定のため、簡易ローカル解析で動作します';
@@ -121,6 +131,7 @@ function startBattle() {
   state.paused = false;
   const cdef = CHARACTERS[cpuChar];
   state.turn = new TurnController(b, {
+    cpuTimeoutMs: state.clientTimeoutMs,
     cpuRemote: state.gemini
       ? obs => apiPlan({ role: 'cpu', observation: obs, character: { name: cdef.name, stand: cdef.stand, personality: cdef.personality } })
       : null,
@@ -154,6 +165,7 @@ async function submitCommand() {
   const seq = ++state.cmdSeq;
   playerLog(text ? `▶ 指示：${text}` : '▶ 指示：（何もしない）', 'command');
   state.thinking++;
+  state.thinkingSince = performance.now();
   updateThinking();
   let raw = null;
   let source = 'local';
@@ -190,7 +202,7 @@ function updatePhase() {
   const input = phase === 'input' && !state.thinking;
   $('#cmd').disabled = !input;
   $('#send-btn').disabled = !input;
-  $('#send-btn').textContent = state.thinking ? '解析中…' : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
+  $('#send-btn').textContent = state.thinking ? `解析中… ${Math.floor((performance.now() - state.thinkingSince) / 1000)}秒` : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
   const label = {
     input: `第${turn.turn}手：入力ターン（時間停止中）`,
     resolving: `第${turn.turn}手：相手の作戦を待っています…`,

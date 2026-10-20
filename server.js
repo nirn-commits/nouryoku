@@ -180,49 +180,84 @@ async function requestOnce(body) {
       const reason = data?.promptFeedback?.blockReason;
       throw new GeminiError(reason ? `入力が安全フィルタで止められました（${reason}）` : 'Gemini から応答の候補が返りませんでした');
     }
-    const text = cand.content?.parts?.map(p => p.text || '').join('') || '';
-    if (!text) throw new GeminiError(`Gemini の応答が空でした（終了理由：${cand.finishReason || '不明'}）`);
+    const finish = cand.finishReason || '不明';
+    const u = data.usageMetadata || {};
+    const info = `（終了理由:${finish} 入力${u.promptTokenCount ?? '?'} 出力${u.candidatesTokenCount ?? '?'} 思考${u.thoughtsTokenCount ?? 0}トークン）`;
+    const text = cand.content?.parts?.filter(p => !p.thought).map(p => p.text || '').join('') || '';
+    const truncatedErr = () => {
+      const err = new GeminiError(`Gemini の応答が長くなりすぎて途中で切れました${info}`, text.slice(0, 200));
+      err.truncated = true;
+      return err;
+    };
+    if (!text) {
+      if (finish === 'MAX_TOKENS') throw truncatedErr();
+      throw new GeminiError(`Gemini の応答が空でした${info}`);
+    }
     let plan;
     try {
       plan = extractJson(text);
     } catch {
-      throw new GeminiError(`Gemini の応答を JSON として読めませんでした（終了理由：${cand.finishReason || '不明'}）`, text.slice(0, 200));
+      if (finish === 'MAX_TOKENS') throw truncatedErr();
+      throw new GeminiError(`Gemini の応答を JSON として読めませんでした${info}`, text.slice(0, 200));
     }
     if (!plan || typeof plan !== 'object') throw new GeminiError('計画の形式が不正です');
     if (!Array.isArray(plan.steps)) plan.steps = [];
     if (!Array.isArray(plan.rejected)) plan.rejected = [];
-    return plan;
+    return { plan, info };
   } finally {
     clearTimeout(timer);
   }
 }
 
-async function callGemini(systemText, userText) {
-  const base = {
-    systemInstruction: { parts: [{ text: systemText }] },
-    contents: [{ role: 'user', parts: [{ text: userText }] }],
+// 思考（thinking）の既定値：flash 系は思考なしで速く返させる。.env の GEMINI_THINKING_BUDGET で変更可
+function defaultThinking() {
+  const v = process.env.GEMINI_THINKING_BUDGET;
+  if (v !== undefined && v !== '') return { thinkingBudget: Number(v) };
+  return /flash/i.test(MODEL) ? { thinkingBudget: 0 } : null;
+}
+
+function generationConfig({ schema, thinking }) {
+  const extra = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 2048);
+  return {
+    temperature: 0.4,
+    responseMimeType: 'application/json',
+    // 出力が延々と続いて応答が返らなくなるのを防ぐ上限（思考トークンも含む）
+    maxOutputTokens: thinking ? Math.max(0, thinking.thinkingBudget) + extra : 8192,
+    ...(schema ? { responseSchema: PLAN_SCHEMA } : {}),
+    ...(thinking ? { thinkingConfig: thinking } : {}),
   };
-  const thinking = process.env.GEMINI_THINKING_BUDGET !== undefined && process.env.GEMINI_THINKING_BUDGET !== ''
-    ? { thinkingBudget: Number(process.env.GEMINI_THINKING_BUDGET) }
-    : null;
-  // モデルによっては応答スキーマや思考設定を受け付けないので、400 の場合は設定を減らして再試行する
-  const variants = [
-    { temperature: 0.4, responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA, ...(thinking ? { thinkingConfig: thinking } : {}) },
-    { temperature: 0.4, responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA },
-    { temperature: 0.4, responseMimeType: 'application/json' },
-  ];
-  if (!thinking) variants.shift();
+}
+
+async function callGemini(systemText, userText, label = '') {
+  const thinking = defaultThinking();
+  // 400 の場合は設定を減らして再試行（思考設定なし → 応答スキーマなし）
+  const queue = [{ schema: true, thinking }];
+  if (thinking) queue.push({ schema: true, thinking: null });
+  queue.push({ schema: false, thinking: null });
   let lastErr;
-  for (const [i, generationConfig] of variants.entries()) {
+  let retriedTruncation = false;
+  for (let i = 0; i < queue.length; i++) {
+    const o = queue[i];
+    const sys = o.schema ? systemText : `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(PLAN_SCHEMA)}`;
+    const started = Date.now();
     try {
-      const sys = i === variants.length - 1
-        ? `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(PLAN_SCHEMA)}`
-        : systemText;
-      return await requestOnce({ ...base, systemInstruction: { parts: [{ text: sys }] }, generationConfig });
+      const { plan, info } = await requestOnce({
+        systemInstruction: { parts: [{ text: sys }] },
+        contents: [{ role: 'user', parts: [{ text: userText }] }],
+        generationConfig: generationConfig(o),
+      });
+      console.log(`[gemini] ${label} 成功 ${((Date.now() - started) / 1000).toFixed(1)}秒 ${info}`);
+      return plan;
     } catch (e) {
       lastErr = e;
+      console.error(`[gemini] ${label} 失敗 ${((Date.now() - started) / 1000).toFixed(1)}秒：${e.message}${e.detail ? ` ／ ${e.detail}` : ''}`);
+      if (e.truncated && !retriedTruncation) {
+        // 出力が上限で切れた → 思考なしで一度だけやり直す
+        retriedTruncation = true;
+        queue.splice(i + 1, 0, { schema: o.schema, thinking: { thinkingBudget: 0 } });
+        continue;
+      }
       if (e.status !== 400 || e.fatal) break;
-      console.error(`[gemini] 設定を減らして再試行します：${e.message} ${e.detail || ''}`);
     }
   }
   throw lastErr;
@@ -264,7 +299,7 @@ async function handlePlan(req, res) {
     : `# ルール\n${JSON.stringify(rules)}\n\n# あなたの観測\n${JSON.stringify(observation)}`;
   const started = Date.now();
   try {
-    const plan = await callGemini(system, user);
+    const plan = await callGemini(system, user, role === 'player' ? 'プレイヤー解析' : 'CPU思考');
     sendJson(res, 200, { plan, ms: Date.now() - started, model: MODEL });
   } catch (e) {
     console.error(`[gemini] ${role}: ${e.message}${e.detail ? `\n  詳細: ${e.detail}` : ''}`);
@@ -287,7 +322,7 @@ function serveStatic(req, res) {
 
 export function createServer() {
   return http.createServer((req, res) => {
-    if (req.url === '/api/status' && req.method === 'GET') return sendJson(res, 200, { gemini: !!API_KEY, model: MODEL });
+    if (req.url === '/api/status' && req.method === 'GET') return sendJson(res, 200, { gemini: !!API_KEY, model: MODEL, timeoutMs: TIMEOUT_MS });
     if (req.url === '/api/plan' && req.method === 'POST') return void handlePlan(req, res);
     if (req.method === 'GET') return serveStatic(req, res);
     res.writeHead(405); res.end();
@@ -295,19 +330,34 @@ export function createServer() {
 }
 
 async function checkGemini() {
-  console.log(`Node.js ${process.version} / モデル: ${MODEL}`);
+  const thinking = defaultThinking();
+  console.log(`Node.js ${process.version} / モデル: ${MODEL} / 思考: ${thinking ? `上限${thinking.thinkingBudget}トークン` : 'モデル既定'} / 待ち時間上限: ${TIMEOUT_MS / 1000}秒`);
   if (!API_KEY) { console.log('✕ GEMINI_API_KEY が設定されていません（.env を確認してください）'); process.exit(1); }
   console.log(`APIキー: 設定あり（末尾 …${API_KEY.slice(-4)}）`);
-  const started = Date.now();
-  try {
-    const plan = await callGemini(playerPrompt(), `# ルール\n${JSON.stringify(rulesSummary())}\n\n# 戦況\n{"self":{"pos":[3,20],"abilities":[]},"enemy":{"visible":false},"map":{"landmarks":[{"id":"house_left","name":"左の家","kind":"building"}]}}\n\n# プレイヤーの行動指示\n左の家へ走る`);
-    console.log(`✓ 接続成功（${Date.now() - started}ms）`);
-    console.log(JSON.stringify(plan, null, 1));
-  } catch (e) {
-    console.log(`✕ ${e.message}`);
-    if (e.detail) console.log(`  詳細: ${e.detail}`);
-    process.exit(1);
+  // 実際のゲームと同じ大きさの観測データで試す
+  const { Battle } = await import('./public/js/engine/sim.js');
+  const { buildObservation } = await import('./public/js/engine/perception.js');
+  const { CHARACTERS } = await import('./public/js/engine/data.js');
+  const b = new Battle({ seed: 1 });
+  const rules = JSON.stringify(rulesSummary());
+  const tests = [
+    ['プレイヤー解析', playerPrompt(), `# ルール\n${rules}\n\n# 戦況（プレイヤーキャラクターの観測）\n${JSON.stringify(buildObservation(b, b.player))}\n\n# プレイヤーの行動指示\n北東へダッシュして、敵が見えたらナイフを投げる「そこか！」`],
+    ['CPU思考', cpuPrompt(CHARACTERS.karasuma), `# ルール\n${rules}\n\n# あなたの観測\n${JSON.stringify(buildObservation(b, b.cpu))}`],
+  ];
+  let ok = true;
+  for (const [label, sys, user] of tests) {
+    const started = Date.now();
+    try {
+      const plan = await callGemini(sys, user, label);
+      console.log(`✓ ${label}：合計${((Date.now() - started) / 1000).toFixed(1)}秒`);
+      console.log(`  ${JSON.stringify(plan)}`);
+    } catch (e) {
+      ok = false;
+      console.log(`✕ ${label}：${e.message}`);
+      if (e.detail) console.log(`  詳細: ${e.detail}`);
+    }
   }
+  process.exit(ok ? 0 : 1);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv.includes('--check')) {
@@ -315,6 +365,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
 } else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   createServer().listen(PORT, HOST, () => {
     console.log(`能力バトル: http://${HOST}:${PORT}/`);
-    console.log(API_KEY ? `Gemini: 有効（${MODEL}）` : 'Gemini: 無効（GEMINI_API_KEY 未設定のため、ローカル解析で動作します）');
+    const th = defaultThinking();
+    console.log(API_KEY ? `Gemini: 有効（${MODEL}・思考${th ? `上限${th.thinkingBudget}` : 'モデル既定'}・待ち時間上限${TIMEOUT_MS / 1000}秒）` : 'Gemini: 無効（GEMINI_API_KEY 未設定のため、ローカル解析で動作します）');
   });
 }

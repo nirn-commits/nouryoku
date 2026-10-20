@@ -37,7 +37,7 @@ function splitClauses(text) {
   return text
     .replace(/(してから|それから|そのあと|その後|その隙に|そして|次に|ながら|つつ)/g, '、')
     // 「〜まで走って投げる」のように移動の後に別の行動が続く場合は分ける
-    .replace(/((?:走っ|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
+    .replace(/((?:走っ|ダッシュし|歩い|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
     .split(/[、。,.\n!！?？]+/)
     .map(s => s.trim())
     .filter(Boolean);
@@ -98,6 +98,13 @@ function pointRef(clause) {
 function dirRef(clause) {
   if (/物陰|陰に|隠れ/.test(clause)) return 'cover';
   if (/離れ|逃げ|下が|距離を取|退/.test(clause)) return 'away_from_enemy';
+  // 斜め（北＝上・東＝右）
+  if (/北東|東北|右上|右斜め上|右奥/.test(clause)) return 'up_right';
+  if (/北西|西北|左上|左斜め上|左奥/.test(clause)) return 'up_left';
+  if (/南東|東南|右下|右斜め下|右手前/.test(clause)) return 'down_right';
+  if (/南西|西南|左下|左斜め下|左手前/.test(clause)) return 'down_left';
+  if (/東へ|東に|東側へ/.test(clause)) return 'right';
+  if (/西へ|西に|西側へ/.test(clause)) return 'left';
   if (/左へ|左に|左側へ/.test(clause)) return 'left';
   if (/右へ|右に|右側へ/.test(clause)) return 'right';
   if (/奥|上へ|北/.test(clause)) return 'up';
@@ -199,12 +206,15 @@ function parseClause(b, c, clause, has) {
     });
     return steps;
   }
-  const isMove = /移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|進|戻|退|出る|出て|寄る/.test(clause);
+  const isMove = /ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|進|戻|退|出る|出て|寄る/.test(clause);
   const isLook = /確認|見る|見て|覗|観察|様子|探す|探し|偵察|見張|警戒/.test(clause);
   if (isMove) {
     const mode = run || /逃げ|駆け込/.test(clause) ? 'run' : 'walk';
     if (pt) steps.push({ action: 'move', mode, ...toTarget(pt) });
-    else if (dir && dir !== 'left' && dir !== 'right' || (dir && !obj)) steps.push({ action: 'move', mode, targetType: 'direction', direction: dir });
+    else if (dir && dir !== 'left' && dir !== 'right' || (dir && !obj)) {
+      const dm = clause.match(/(\d+(?:\.\d+)?)\s*(?:m|ｍ|メートル)/);
+      steps.push({ action: 'move', mode, targetType: 'direction', direction: dir, ...(dm ? { distance: Number(dm[1]) } : {}) });
+    }
     else if (obj) steps.push({ action: 'move', mode, ...toTarget(obj) });
     else if (/詰め|近づ|接近|寄る/.test(clause) || mentionsEnemy) steps.push({ action: 'move', mode, targetType: 'enemy', distance: /詰め/.test(clause) ? 1.5 : 3 });
     else steps.push({ action: 'move', mode, targetType: 'direction', direction: 'forward' });

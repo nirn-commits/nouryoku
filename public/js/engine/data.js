@@ -25,7 +25,7 @@ export const CONDITIONS = {
   damaged: '攻撃を受けたら',
 };
 
-export const DIRECTIONS = ['toward_enemy', 'away_from_enemy', 'left', 'right', 'up', 'down', 'forward', 'back', 'cover'];
+export const DIRECTIONS = ['toward_enemy', 'away_from_enemy', 'left', 'right', 'up', 'down', 'up_left', 'up_right', 'down_left', 'down_right', 'forward', 'back', 'cover'];
 
 export const ABILITIES = {
   friction: {

@@ -6,7 +6,7 @@ import { buildObservation } from './perception.js';
 import { localCpuPlan } from './localAI.js';
 
 export class TurnController {
-  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 95000 } = {}) {
+  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 400000 } = {}) {
     this.b = battle;
     this.cpuRemote = cpuRemote;
     this.cpuTimeoutMs = cpuTimeoutMs;

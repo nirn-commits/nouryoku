@@ -11,7 +11,7 @@ const DEFAULT_TARGET = {
 
 const DIR_LABEL = {
   toward_enemy: '敵の方向', away_from_enemy: '敵から離れる方向', left: '左', right: '右', up: '上（奥）',
-  down: '下（手前）', forward: '前方', back: '後方', cover: '物陰',
+  down: '下（手前）', up_left: '左上（北西）', up_right: '右上（北東）', down_left: '左下（南西）', down_right: '右下（南東）', forward: '前方', back: '後方', cover: '物陰',
 };
 
 const str = v => (typeof v === 'string' ? v.trim() : '');
@@ -227,6 +227,10 @@ function dirVector(b, c, dir) {
     case 'right': return 0;
     case 'up': return -Math.PI / 2;
     case 'down': return Math.PI / 2;
+    case 'up_left': return -Math.PI * 0.75;
+    case 'up_right': return -Math.PI / 4;
+    case 'down_left': return Math.PI * 0.75;
+    case 'down_right': return Math.PI / 4;
     case 'forward': return c.facing;
     case 'back': return c.facing + Math.PI;
     default: return toward;
