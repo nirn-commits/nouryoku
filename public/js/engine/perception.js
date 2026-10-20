@@ -1,6 +1,7 @@
 // 観測情報の構築：AI（プレイヤー入力の解析・CPUの作戦）に渡すのは「その人物が知り得る情報」だけ
 import { ABILITIES, ACTIONS, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, rectCenter, distToRect } from './vec.js';
+import { ITEM_KINDS } from './items.js';
 
 const r1 = v => Math.round(v * 10) / 10;
 const deg = a => Math.round((((a * 180) / Math.PI) % 360 + 360) % 360);
@@ -16,6 +17,7 @@ function stateWords(b, c) {
   if (c.air && c.air.landAt > t) s.push(`空中（あと${(c.air.landAt - t).toFixed(1)}秒で落下・着地）`);
   if (c.launch) s.push('弾き出されて高速移動中');
   if (c.climb) s.push('階段を上り下り中');
+  if (c.status.deafUntil > t) s.push('耳が聞こえない');
   if (c.status.proneUntil > t) s.push('転倒中');
   if (c.status.stunUntil > t) s.push('怯み');
   if (c.status.guardUntil > t) s.push('ガード中');
@@ -94,8 +96,27 @@ export function rulesSummary() {
       floors: '高さがある。1階分は3m。2階建ての家は階段で上り下りする（約1秒）。床・天井は階をまたぐ視線を遮る。2階の窓からは塀や車越しに道路を見下ろせ、地上からは低い塀（1.8m）や車（1.5m）の陰に隠れられる。飛び道具も高さを持ち、2階から投げ下ろせる',
       door: '扉は閉まっていると通れず見通せない。歩いてぶつかると自動で開ける（少し手間取る）。open/close で開け閉めできる。窓も開け閉めでき、開いた窓は通り抜けられる（コンビニのガラス窓は開かず、割るしかない）',
       jump_down: '2階の窓から jump_down で外へ飛び降りられる（着地の衝撃あり）',
+      items: '戦場に落ちている物（items_seen）は pickup で拾って持てる（1つまで）。持った物の方が強ければ melee はそれで殴る。throw は持った物を投げる（初めは誰も何も持っていない）',
       point_floor: 'point を2階の地点にしたい時は floor=1 を付ける',
     },
+  };
+}
+
+// エコー・ビーチの個体の状況（本人だけが知っている）
+function unitSummary(b, c) {
+  const alive = c.units.filter(u => u.state !== 'dead');
+  const e = b.enemyOf(c);
+  const kindOf = snd => (!snd ? null : snd.kind === 'speech' ? `声「${snd.text}」` : b.isLoud(snd) ? `大きな音（${snd.label}）` : snd.kind.startsWith('footsteps') ? `足音（${snd.label}）` : snd.label);
+  return {
+    alive: alive.length,
+    crushed: c.units.length - alive.length,
+    on_self: alive.filter(u => u.state === 'attached' && u.attachedTo === c.id).length,
+    on_enemy: alive.filter(u => u.state === 'attached' && u.attachedTo === e.id).length,
+    at_hand: alive.filter(u => u.state === 'home').length,
+    deployed: alive.filter(u => u.state === 'deployed').map(u => ({ n: u.n, at: [r1(u.x), r1(u.y)], holding: kindOf(u.sound) })),
+    moving: alive.filter(u => ['move', 'attach', 'place', 'roar', 'recall'].includes(u.state)).length,
+    held_sounds: alive.filter(u => u.sound).map(u => kindOf(u.sound)),
+    loud_sounds: alive.filter(u => b.isLoud(u.sound)).length,
   };
 }
 
@@ -106,11 +127,14 @@ export function buildObservation(b, c) {
   const self = {
     name: c.name, stand: c.stand,
     pos: [r1(c.x), r1(c.y)], floor: c.floor + 1, facing_deg: deg(c.facing),
-    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), knives: c.knives, kg: c.def.kg,
+    hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), held: c.held ? `${c.held.name}（殴る${ITEM_KINDS[c.held.kind].melee}・投げる${ITEM_KINDS[c.held.kind].throw}${ITEM_KINDS[c.held.kind].breaks ? '・割れ物' : ''}）` : null, kg: c.def.kg,
     touching: b.world.objects.filter(o => o.blocksMove && distToRect(c.x, c.y, o) <= c.r + 0.6).map(o => o.id),
     inside: bd ? `${bd.name}の${c.floor + 1}階${bd.sealed ? '（密室：炎に囲まれている）' : ''}` : '屋外',
     status: stateWords(b, c),
     cooldowns: Object.fromEntries(Object.entries(c.cd).map(([k, v]) => [k, r1(v - b.t)])),
+    ...(c.def.balls ? { balls: c.balls } : {}),
+    ...(c.units ? { echo_units: unitSummary(b, c) } : {}),
+    ...(c.memory.suspectAttached ? { notice: '自分の足音や声が消えている。体に何か小さな物が取り付いているかもしれない（swat で払える）' } : {}),
     abilities: abilityCatalog(c),
   };
   let enemy;
@@ -148,7 +172,11 @@ export function buildObservation(b, c) {
     enemy,
     heard,
     visible_projectiles: projectiles,
-    knives_on_ground: b.world.pickups.filter(p => b.canSee(c, p.x, p.y, (p.floor ?? 0) * 3 + 0.1)).map(p => [r1(p.x), r1(p.y)]),
+    // 拾える物（見えている物だけ）。pickup の targetId に id を使う
+    items_seen: b.world.items
+      .filter(i => dist(c.x, c.y, i.x, i.y) < 25 && b.canSee(c, i.x, i.y, (i.floor ?? 0) * 3 + 0.3))
+      .slice(0, 10)
+      .map(i => ({ id: i.id, name: i.name, at: [r1(i.x), r1(i.y)], ...(i.floor ? { floor: i.floor + 1 } : {}), melee: ITEM_KINDS[i.kind].melee, throw: ITEM_KINDS[i.kind].throw })),
     observed_enemy_abilities: c.memory.observed.slice(),
     recent_events: recent,
     map: { size: [b.world.w, b.world.h], landmarks: landmarks(b, c), note: '細かい物体は近く（約25m以内）のものだけ載っている' },

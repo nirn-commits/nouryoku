@@ -1,10 +1,18 @@
 // Gemini が使えない・間に合わない時の CPU 思考（ルールベース）。
 // 使う情報は本人の知覚（perceivedEnemy・記憶・見えている物）だけで、相手の行動計画は参照しない
 import { ABILITIES } from './data.js';
+import { ITEM_KINDS } from './items.js';
 import { dist, distToRect, pointInRect } from './vec.js';
 
 function incomingProjectile(b, c) {
   return b.world.projectiles.find(p => p.owner !== c.id && b.canSee(c, p.x, p.y) && dist(c.x, c.y, p.x, p.y) < 6);
+}
+
+// 近くに落ちている、殴る武器として素手より強い物
+function nearbyItem(b, c, range) {
+  return b.world.items
+    .filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) <= range && ITEM_KINDS[i.kind].melee > c.def.power)
+    .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y))[0] || null;
 }
 
 // 触れている（すぐそばの）面
@@ -47,10 +55,17 @@ function sogoPlan(b, c, pe, say) {
     steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
     return { interpretation: '（CPU・ローカル）不利なので離脱する', speech: say(0.5), steps };
   }
-  if (ready && c.knives > 0 && d > 3 && d <= 9.5) {
+  if (ready && c.held && d > 3 && d <= 9.5) {
     steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch_held', targetType: 'enemy' });
     steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
-    return { interpretation: '（CPU・ローカル）ナイフを10m弾き出す', speech: say(0.3), steps };
+    return { interpretation: `（CPU・ローカル）${c.held.name}を10m弾き出す`, speech: say(0.3), steps };
+  }
+  if (!c.held && d > 5) {
+    const it = nearbyItem(b, c, 6);
+    if (it) {
+      steps.push({ action: 'pickup', targetType: 'object', targetId: it.id, mode: 'run' });
+      return { interpretation: `（CPU・ローカル）${it.name}を拾っておく`, speech: null, steps };
+    }
   }
   // 開けた場所では戦わない：物陰（遮蔽物のそば）へ移ってから待ち構える
   if (!surface && d > 4 && b.rng() < 0.5) {
@@ -101,6 +116,85 @@ function kitoPlan(b, c, pe, say) {
   return null;
 }
 
+// 七海 灯：姿を見せず、足音を消し、大きな音を集めてから決め技。囮の足音で敵を引き離す
+function nanamiPlan(b, c, pe, say) {
+  const alive = c.units.filter(u => u.state !== 'dead');
+  const steps = [];
+  const onSelf = alive.some(u => u.state === 'attached' && u.attachedTo === c.id);
+  const loud = alive.filter(u => b.isLoud(u.sound)).length;
+  const e = b.enemyOf(c);
+  const visible = pe && pe.visible;
+  const d = visible ? dist(c.x, c.y, e.x, e.y) : 99;
+  if (!onSelf) steps.push({ action: 'ability', ability: 'echo', effect: 'silence_self', targetType: 'self' });
+  if (loud >= 3 && pe && dist(c.x, c.y, pe.x, pe.y) < 45) {
+    steps.push({ action: 'ability', ability: 'echo', effect: 'roar', targetType: 'enemy' });
+    steps.push({ action: 'wait', targetType: 'none', duration: 1.5 });
+    steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
+    steps.push({ action: 'melee', targetType: 'enemy' });
+    return { interpretation: '（CPU・ローカル）集めた轟音を敵の耳元で鳴らして仕留める', speech: say(0.3), steps };
+  }
+  if (visible && d < 7) {
+    // 近づかれたら囮の足音を反対側に置いて離れる
+    if (alive.some(u => u.sound && u.sound.kind.startsWith('footsteps'))) steps.push({ action: 'ability', ability: 'echo', effect: 'place', sound: 'footsteps', targetType: 'direction', direction: 'toward_enemy', distance: 14 });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
+    return { interpretation: '（CPU・ローカル）囮の足音を置いて身を隠す', speech: null, steps };
+  }
+  if (visible && !alive.some(u => (u.state === 'attached' || u.state === 'attach') && (u.attachedTo === e.id || u.target?.char === e))) {
+    steps.push({ action: 'ability', ability: 'echo', effect: 'attach', targetType: 'enemy' });
+  }
+  // 大きな音を集める：個体を配置して、近くの物（窓・木箱・車）を叩いて鳴らす
+  const deployedFree = alive.filter(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, c.x, c.y) < 1.5).length;
+  // 武器（包丁・鉄パイプなど）を持っていなければ拾う
+  if (!c.held) {
+    const it = b.world.items.filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) < 12 && ITEM_KINDS[i.kind].melee >= 11)
+      .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y))[0];
+    if (it && !(visible && d < 9)) {
+      steps.push({ action: 'pickup', targetType: 'object', targetId: it.id, mode: 'walk' });
+      return { interpretation: `（CPU・ローカル）${it.name}を拾っておく`, speech: null, steps };
+    }
+  }
+  // 大きな音を集める：個体を自分のそばに配置して、近くの物（木箱・車・ドラム缶など）を叩いて鳴らす
+  const target = b.world.objects
+    .filter(o => o.floor === c.floor && ['crate', 'car', 'drum', 'vending', 'steel', 'shelf'].includes(o.kind) && (o.kind !== 'car' || !(o.alarmUntil > b.t)))
+    .sort((a, z) => distToRect(c.x, c.y, a) - distToRect(c.x, c.y, z))[0];
+  if (target && distToRect(c.x, c.y, target) < 20) {
+    steps.push({ action: 'move', mode: 'walk', targetType: 'object', targetId: target.id });
+    if (deployedFree < 2) steps.push({ action: 'ability', ability: 'echo', effect: 'deploy', targetType: 'self', count: 3 });
+    steps.push({ action: 'melee', targetType: 'object', targetId: target.id });
+    steps.push({ action: 'melee', targetType: 'object', targetId: target.id });
+    return { interpretation: '（CPU・ローカル）大きな音を集める', speech: null, steps };
+  }
+  return steps.length ? { interpretation: '（CPU・ローカル）静かに機をうかがう', speech: null, steps } : null;
+}
+
+// 鷺沼 玲司：距離を保ち、硬い面を使った跳弾で撃つ。読みにくい高反射を好む悪癖あり
+function saginumaPlan(b, c, pe, say) {
+  const steps = [];
+  const inFlight = b.world.projectiles.filter(p => p.kind === 'ball' && p.owner === c.id).length;
+  if (!pe) return null;
+  const d = dist(c.x, c.y, pe.x, pe.y);
+  if (pe.visible && d < 6) {
+    // 近づかれたら跳んで距離を取り、近距離の跳弾で迎え撃つ
+    if (!c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
+    steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 1 });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 8 });
+    steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 });
+    return { interpretation: '（CPU・ローカル）距離を取りながら撃つ', speech: say(0.2), steps };
+  }
+  if (inFlight < 3 && b.t - pe.t < 10) {
+    const bounces = 2 + Math.floor(b.rng() * 3); // 2〜4回。高反射を好む
+    if (b.rng() < 0.3) steps.push({ action: 'ability', ability: 'seventh', effect: 'spread', targetType: 'enemy', bounces });
+    else {
+      steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces });
+      steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: bounces + 1 });
+      steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: Math.max(1, bounces - 1) });
+    }
+    steps.push({ action: 'wait', targetType: 'none', duration: 0.6 });
+    return { interpretation: `（CPU・ローカル）${bounces}回前後の跳弾で撃つ`, speech: say(0.25), steps };
+  }
+  return null;
+}
+
 export function localCpuPlan(b, c) {
   const rnd = b.rng;
   const pe = b.perceivedEnemy(c);
@@ -111,6 +205,19 @@ export function localCpuPlan(b, c) {
 
   if (c.def.abilities.includes('perpendicular')) {
     const sp = sogoPlan(b, c, pe, line);
+    if (sp) return sp;
+  }
+  // 体に何か付いている気がする → 払う
+  if (c.memory.suspectAttached) {
+    const sw = [{ action: 'swat', targetType: 'self' }];
+    return { interpretation: '（CPU・ローカル）体についた何かを払う', speech: null, steps: sw };
+  }
+  if (c.def.abilities.includes('echo')) {
+    const np = nanamiPlan(b, c, pe, line);
+    if (np) return np;
+  }
+  if (c.def.abilities.includes('seventh')) {
+    const sp = saginumaPlan(b, c, pe, line);
     if (sp) return sp;
   }
   if (c.def.abilities.includes('hotel')) {
@@ -141,11 +248,21 @@ export function localCpuPlan(b, c) {
       if (rnd() < 0.5) steps.push({ action: 'dodge', targetType: 'direction', direction: rnd() < 0.5 ? 'left' : 'right' });
       return { interpretation: '（CPU・ローカル）接近戦', speech, steps };
     }
-    if (c.knives > 0 && d > 3 && d < 14 && b.canSee(c, e.x, e.y) && rnd() < 0.55) {
+    if (c.held && d > 4 && d < 12 && rnd() < 0.35) {
       steps.push({ action: 'throw', targetType: 'enemy' });
       steps.push({ action: 'chase', mode: 'run', targetType: 'enemy' });
       steps.push({ action: 'melee', targetType: 'enemy' });
-      return { interpretation: '（CPU・ローカル）ナイフで牽制して接近', speech, steps };
+      return { interpretation: `（CPU・ローカル）${c.held.name}を投げて接近`, speech, steps };
+    }
+    // 武器になる物が近くにあれば拾ってから向かう
+    if (!c.held && d > 4) {
+      const it = nearbyItem(b, c, Math.min(8, d - 2));
+      if (it) {
+        steps.push({ action: 'pickup', targetType: 'object', targetId: it.id, mode: 'run' });
+        steps.push({ action: 'chase', mode: 'run', targetType: 'enemy' });
+        steps.push({ action: 'melee', targetType: 'enemy' });
+        return { interpretation: `（CPU・ローカル）${it.name}を拾って殴りに行く`, speech, steps };
+      }
     }
     steps.push({ action: 'chase', mode: d > 6 ? 'run' : 'walk', targetType: 'enemy' });
     steps.push({ action: 'melee', targetType: 'enemy' });

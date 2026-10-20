@@ -1,6 +1,14 @@
 // マップ定義。座標はメートル（x は右・y は下が正、左上が原点）
 import { makeRng } from './vec.js';
 import { newWorld, addObj, addHouse, addFence } from './world.js';
+import { makeItem, resetItemSeq } from './items.js';
+
+function placeItems(world, list, rng) {
+  resetItemSeq();
+  for (const [kind, x, y, floor = 0] of list) {
+    world.items.push(makeItem(kind, x + (rng() - 0.5) * 0.4, y + (rng() - 0.5) * 0.4, floor));
+  }
+}
 
 const LETTERS = 'ABCDEFGHIJKLMNOP';
 
@@ -41,6 +49,11 @@ function buildLot(seed) {
   addObj(world, 'table', { id: 'table_left', name: '左の家の机', x: 6.5, y: 5.5, w: 1.6, h: 0.9 });
   addObj(world, 'table', { id: 'table_right', name: '右の家の机', x: 27, y: 17, w: 1.6, h: 0.9 });
 
+  placeItems(world, [
+    ['vase', 5, 8], ['kitchen_knife', 11, 9.5], ['vase', 6, 4.6, 1], ['umbrella', 11, 8, 1],
+    ['pan', 30, 15.5], ['bottle', 25, 19.5],
+    ['pipe', 16, 20.5], ['brick', 20, 4.5], ['stone', 28.5, 10], ['lumber', 10.5, 13.5], ['stone', 3, 16],
+  ], rng);
   const crateSpots = [[9, 15], [14, 18], [21, 6], [26, 8], [13, 13], [20.5, 17], [30, 3.5], [5, 19.5]];
   crateSpots.forEach(([cx, cy], i) => {
     addObj(world, 'crate', {
@@ -221,6 +234,16 @@ function buildTown(seed) {
     openings: [{ side: 'W', a: 1, b: 2.6, type: 'door', id: 'park_toilet_door', name: '公衆トイレの入口' }],
   });
   addObj(world, 'crate', { id: 'crate_d', name: '木箱D', x: jitter(31, 1), y: jitter(30, 2), w: 1, h: 1 });
+
+  // 拾って武器にできる物
+  placeItems(world, [
+    ['vase', 5.5, 4.4], ['kitchen_knife', 9.5, 8.8], ['vase', 8, 4.6, 1],
+    ['pan', 19.5, 8.6], ['vase', 24.5, 6.5], ['umbrella', 23, 7.5, 1],
+    ['kitchen_knife', 38.5, 35.5], ['vase', 43, 31.6], ['bottle', 42, 35.4, 1],
+    ['bottle', 8.2, 32.4], ['bottle', 9, 34.9], ['umbrella', 16.5, 34.6], ['extinguisher', 4.8, 29],
+    ['pipe', 38, 14.6], ['brick', 41.5, 10.4], ['wrench', 54.5, 5.5], ['lumber', 46, 12.6], ['brick', 36.5, 10],
+    ['stone', 51.5, 34.3], ['branch', 55.5, 29.6], ['stone', 50.5, 29], ['bottle', 26, 17.4], ['stone', 33, 26.5],
+  ], rng);
   return world;
 }
 

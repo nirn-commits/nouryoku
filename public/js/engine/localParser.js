@@ -1,6 +1,7 @@
 // Gemini が使えない時のための、キーワードベースの日本語行動解析（簡易版）
 // 出力は Gemini と同じ「生の計画」形式。検証は compilePlan が行う
 import { ABILITIES } from './data.js';
+import { ITEM_WORDS } from './items.js';
 import { dist, rectCenter } from './vec.js';
 
 const IMPOSSIBLE = [
@@ -15,7 +16,7 @@ const IMPOSSIBLE = [
 
 const COND = [
   [/(近づいて|接近して|近くに)(き|来)たら|間合いに入ったら|寄ってきたら/, () => ({ kind: 'enemy_within', value: 4 })],
-  [/(飛んで|投げて)(き|来)たら|ナイフが来たら|飛来/, () => ({ kind: 'projectile_incoming' })],
+  [/(飛んで|投げて)(き|来)たら|物が飛んで|飛来/, () => ({ kind: 'projectile_incoming' })],
   [/(攻撃して|殴りかかって|仕掛けて|殴って)(き|来)たら|構えたら/, () => ({ kind: 'enemy_attacking' })],
   [/(見えたら|現れたら|姿を見せたら|見つけたら|出てきたら)/, () => ({ kind: 'enemy_visible' })],
   [/(見失ったら|隠れたら|消えたら)/, () => ({ kind: 'enemy_not_visible' })],
@@ -217,8 +218,23 @@ function toTarget(ref) {
   return { targetType: 'enemy' };
 }
 
+// エコー・ビーチ（灯）・セブンス・サン（玲司）の言い回し
+const ECHO_RE = /エコー・ビーチ|エコービーチ|個体|足音を消|音を消|取り付|張り付|声を奪|口を封|足音を置|音を置|声を置|置いて鳴ら|音を拾|聞き耳|轟音|一斉に|決め技|呼び戻|囮の足音|足音で誘/;
+const SEVENTH_RE = /セブンス・サン|跳弾|跳ね返|反射|バウンド|パチンコ玉|玉を弾|弾を弾|撃つ|撃ち|狙撃|三方|3発|三発|回跳/;
+
 // パーペンディキュラー（十河）の言い回し
 const PERP_RE = /パーペンディキュラー|垂直|直角|弾き出|弾き飛ば|吹っ飛ば|吹き飛ば|ぶっ飛ば|叩きつけ|叩き付け|跳び上が|飛び上が|真上|壁を蹴|蹴って(跳|飛)|方向転換|能力で(跳|飛|移動|離脱|逃げ)|自分を(弾|飛)|離脱|(10|１０)\s*(m|ｍ|メートル)/;
+
+// 落ちている物への言及（「花瓶」「鉄パイプ」など）→ 一番近いその種類の物
+function findItemRef(b, c, clause) {
+  for (const [re, kind] of ITEM_WORDS) {
+    if (!re.test(clause)) continue;
+    const cost = i => dist(c.x, c.y, i.x, i.y) + ((i.floor ?? 0) !== c.floor ? 6 : 0);
+    const list = b.world.items.filter(i => i.kind === kind).sort((a, z) => cost(a) - cost(z));
+    if (list.length) return list[0];
+  }
+  return null;
+}
 
 function parseClause(b, c, clause, has, ctx = {}) {
   const steps = [];
@@ -233,7 +249,7 @@ function parseClause(b, c, clause, has, ctx = {}) {
 
   // --- 能力 ---
   if (has.perpendicular && PERP_RE.test(clause)) {
-    const held = /ナイフ|ドライバー|持った物|手の物|手に持/.test(clause) && /飛ばす|飛ばし|弾き出|投げ|放つ|撃ち出/.test(clause);
+    const held = (/持った物|手の物|手に持/.test(clause) || ITEM_WORDS.some(([re]) => re.test(clause))) && /飛ばす|飛ばし|弾き出|投げ|放つ|撃ち出/.test(clause);
     if (held) {
       steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch_held', ...(pt ? toTarget(pt) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir } : { targetType: 'enemy' }) });
       return steps;
@@ -253,6 +269,40 @@ function parseClause(b, c, clause, has, ctx = {}) {
     else steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
     return steps;
   }
+  // --- エコー・ビーチ（七海 灯） ---
+  if (has.echo && ECHO_RE.test(clause)) {
+    const cnt = clause.match(/(\d+)\s*体/);
+    const where = pt ? toTarget(pt) : obj ? toTarget(obj) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir, distance: 12 } : null;
+    if (/轟音|一斉|決め技|耳元/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'roar', targetType: 'enemy' });
+    else if (/呼び戻|戻せ|戻す|回収/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'recall', targetType: 'self' });
+    else if (/足音を消|音を消|静かに動|忍び/.test(clause) && !/敵の/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'silence_self', targetType: 'self' });
+    else if (/取り付|張り付|声を奪|口を封/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'attach', targetType: 'enemy' });
+    else if (/(置|鳴ら|流|聞かせ)/.test(clause)) {
+      const sound = /声/.test(clause) ? 'voice' : /大きな音|轟音|衝撃音|アラーム/.test(clause) ? 'loud' : /足音/.test(clause) ? 'footsteps' : 'any';
+      steps.push({ action: 'ability', ability: 'echo', effect: 'place', sound, ...(where || { targetType: 'direction', direction: 'away_from_enemy', distance: 12 }) });
+    } else {
+      steps.push({ action: 'ability', ability: 'echo', effect: 'deploy', ...(where || (mentionsEnemy ? { targetType: 'enemy' } : { targetType: 'direction', direction: 'forward', distance: 1 })), ...(cnt ? { count: Number(cnt[1]) } : {}) });
+    }
+    return steps;
+  }
+
+  // --- セブンス・サン（鷺沼 玲司） ---
+  if (has.seventh && SEVENTH_RE.test(clause)) {
+    const m = clause.match(/(\d|[一二三四五六七])\s*回/);
+    const kanji = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7 };
+    const bounces = m ? (kanji[m[1]] ?? Number(m[1])) : /限界|最大|7回|ギリギリまで/.test(clause) ? 7 : 2;
+    const tgt = pt ? toTarget(pt) : { targetType: 'enemy' };
+    if (/三方|3発|三発|逃げ道を塞/.test(clause)) steps.push({ action: 'ability', ability: 'seventh', effect: 'spread', bounces, ...tgt });
+    else if (/跳弾|跳ね返|反射|バウンド|跳ねさせ|回跳/.test(clause)) steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', bounces, ...tgt });
+    else steps.push({ action: 'ability', ability: 'seventh', effect: 'direct', ...(pt ? toTarget(pt) : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir } : { targetType: 'enemy' }) });
+    return steps;
+  }
+
+  if (/(体|服|肩|首|耳)(を|の).*(払|叩|はた)|払い(落|潰)|虫|小さな(何か|物).*(潰|払)/.test(clause)) {
+    steps.push({ action: 'swat', targetType: 'self' });
+    return steps;
+  }
+
   // --- 扉・窓・階 ---
   const bdHere = b.buildingOf(c);
   const exitsOf = (bd, open) => (bd ? bd.exits : [])
@@ -288,7 +338,23 @@ function parseClause(b, c, clause, has, ctx = {}) {
     steps.push({ action: 'move', mode: 'run', targetType: 'enemy', distance: 4 });
     return steps;
   }
-  if (/ナイフ|投げ|投擲/.test(clause)) {
+  // 拾う：「花瓶を拾う」「何か武器を拾う」
+  const itemRef = findItemRef(b, c, clause);
+  if (/拾|手に取|掴|つかん|持って|持つ|武器に/.test(clause) && !/持っている|持った/.test(clause)) {
+    steps.push({ action: 'pickup', ...(itemRef ? { targetType: 'object', targetId: itemRef.id } : { targetType: 'none' }), mode: run ? 'run' : 'walk' });
+    if (/投げ/.test(clause)) steps.push({ action: 'throw', ...(pt ? toTarget(pt) : { targetType: 'enemy' }) });
+    else if (/殴|攻撃|叩/.test(clause)) steps.push({ action: 'melee', targetType: 'enemy' });
+    ctx.pickedUp = true;
+    return steps;
+  }
+  if (/手放|捨て/.test(clause)) {
+    steps.push({ action: 'drop', targetType: 'none' });
+    return steps;
+  }
+  if (/投げ|投擲|放り/.test(clause)) {
+    // 持っていない物を投げる指示なら、まず拾う
+    if (itemRef && (!c.held || c.held.kind !== itemRef.kind) && !ctx.pickedUp) steps.push({ action: 'pickup', targetType: 'object', targetId: itemRef.id, mode: 'run' });
+    else if (!c.held && !ctx.pickedUp) steps.push({ action: 'pickup', targetType: 'none', mode: 'run' });
     steps.push({ action: 'throw', ...(pt ? toTarget(pt) : { targetType: 'enemy' }) });
     return steps;
   }
@@ -368,6 +434,8 @@ export function localParse(b, c, text) {
   const foreign = {
     perpendicular: /パーペンディキュラー|直角に弾|(10|１０)\s*(m|ｍ|メートル)(弾|飛)|弾き出/,
     hotel: /ホテル・カリフォルニア|密室|炎で囲/,
+    echo: /エコー・ビーチ|足音を置|声を置|轟音を(集|置)|個体を/,
+    seventh: /セブンス・サン|跳弾|パチンコ玉/,
   };
   const foreignRes = [];
   for (const [k, re] of Object.entries(foreign)) {

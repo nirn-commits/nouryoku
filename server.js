@@ -59,6 +59,10 @@ const PLAN_SCHEMA = {
           ability: { type: 'STRING', nullable: true },
           effect: { type: 'STRING', nullable: true },
           duration: { type: 'NUMBER', nullable: true },
+          floor: { type: 'NUMBER', nullable: true },
+          count: { type: 'NUMBER', nullable: true },
+          sound: { type: 'STRING', enum: ['footsteps', 'voice', 'loud', 'any'], nullable: true },
+          bounces: { type: 'NUMBER', nullable: true },
           condition: {
             type: 'OBJECT',
             nullable: true,
@@ -91,6 +95,7 @@ const COMMON_RULES = `
 - 存在しない能力・効果やルールにない現象（時間停止・瞬間移動・回復・発火など）を作らない。実行できない部分は steps に入れず rejected に日本語で理由を書く。
 - 条件付き行動（「〜したら」）は、その行動の step の condition に入れる（kind は rules.conditions のキー）。
 - 1回の計画は最大5手順。行動予算（見積もり10秒）を超えた手順は捨てられるので、重要な手順を先に置く。
+- 能力の追加指定：エコー・ビーチは count（個体数）と sound（footsteps/voice/loud/any）、セブンス・サンは bounces（反射回数1〜7）。2階の地点を指す時は floor=1。
 - melee は射程外なら自動で接近する。窓から外を見るなら「窓へ move」→「窓を look」。
 - 左右は画面の左右（x が小さい方が左）、上は y が小さい方（奥）。
 - interpretation には計画の要約を日本語1文で書く。
@@ -392,7 +397,7 @@ async function checkGemini() {
   const b = new Battle({ seed: 1 });
   const rules = JSON.stringify(rulesSummary());
   const tests = [
-    ['プレイヤー解析', playerPrompt(), `# ルール\n${rules}\n\n# 戦況（プレイヤーキャラクターの観測）\n${JSON.stringify(buildObservation(b, b.player))}\n\n# プレイヤーの行動指示\n北東へダッシュして、敵が見えたらナイフを投げる「そこか！」`],
+    ['プレイヤー解析', playerPrompt(), `# ルール\n${rules}\n\n# 戦況（プレイヤーキャラクターの観測）\n${JSON.stringify(buildObservation(b, b.player))}\n\n# プレイヤーの行動指示\n北東へダッシュして、敵が見えたら花瓶を拾って投げる「そこか！」`],
     ['CPU思考', cpuPrompt(CHARACTERS.kito), `# ルール\n${rules}\n\n# あなたの観測\n${JSON.stringify(buildObservation(b, b.cpu))}`],
   ];
   let ok = true;

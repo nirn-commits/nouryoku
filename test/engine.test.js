@@ -7,6 +7,7 @@ import { compilePlan } from '../public/js/engine/plan.js';
 import { buildObservation } from '../public/js/engine/perception.js';
 import { localParse } from '../public/js/engine/localParser.js';
 import { findPath, isWalkablePoint } from '../public/js/engine/world.js';
+import { makeItem } from '../public/js/engine/items.js';
 
 // 双方ローカル思考でターン制の戦闘を進める
 async function playTurns(b, maxTurns) {
@@ -347,4 +348,90 @@ test('十河：屋内で真上に跳ぶと天井にぶつかる', () => {
   runFor(b, 1.5);
   assert.ok(b.log.some(l => l.text.includes('天井に激突')));
   assert.ok(b.player.hp < b.player.maxHp);
+});
+
+test('錠二：相手が建物の外にいる時は、出口を全部閉めても密室にならない', () => {
+  const { b, bd } = kitoRoom();
+  b.cpu.x = 20; b.cpu.y = 30;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }] }));
+  runFor(b, 3);
+  assert.equal(bd.sealed, null, '相手がいないのに密室が成立した');
+  assert.ok(b.log.some(l => l.text.includes('相手がいないので密室にはならない')));
+});
+
+test('初期装備は無く、落ちている物を拾って投げられる（花瓶は割れる）', () => {
+  const b = new Battle({ seed: 31, mapId: 'lot', playerChar: 'sogo', cpuChar: 'kito' });
+  for (const c of b.chars) assert.equal(c.held, null);
+  assert.ok(b.world.items.length >= 5, 'マップに拾える物が無い');
+  const vase = makeItem('vase', 21, 9);
+  b.world.items.push(vase);
+  b.player.x = 20; b.player.y = 9; b.player.floor = 0; b.player.facing = 0;
+  b.cpu.x = 27; b.cpu.y = 9; b.cpu.floor = 0;
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 5 }] }));
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [
+    { action: 'pickup', targetType: 'object', targetId: vase.id },
+    { action: 'throw', targetType: 'enemy' },
+  ] }));
+  const hp = b.cpu.hp;
+  runFor(b, 4);
+  assert.equal(b.player.held, null, '投げた後も手に持っている');
+  assert.ok(b.cpu.hp < hp, '投げた花瓶が当たっていない');
+  assert.ok(b.log.some(l => l.text.includes('花瓶が割れた')), '花瓶が割れていない');
+  assert.ok(!b.world.items.some(i => i.id === vase.id));
+});
+
+test('ローカル解析：「花瓶を拾って投げる」を拾う→投げるの手順にする', () => {
+  const b = new Battle({ seed: 32, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  const plan = localParse(b, b.player, '花瓶を拾って投げる');
+  const acts = plan.steps.map(s => s.action);
+  assert.deepEqual(acts.slice(0, 2), ['pickup', 'throw']);
+});
+
+test('七海：配置した個体が近くの大きな音を拾い、集めた轟音で相手を転倒させる', () => {
+  const b = new Battle({ seed: 33, mapId: 'lot', playerChar: 'nanami', cpuChar: 'kito' });
+  const me = b.player, foe = b.cpu;
+  me.x = 20; me.y = 9; foe.x = 30; foe.y = 9; me.facing = 0; me.floor = foe.floor = 0;
+  // 衝撃音を3回、個体のすぐ近くで鳴らす
+  const free = me.units.filter(u => u.state === 'home').slice(0, 3);
+  free.forEach((u, i) => { u.state = 'deployed'; u.x = 22 + i * 3; u.y = 9; u.floor = 0; });
+  for (const u of free) b.noise({ x: u.x + 0.3, y: u.y, floor: 0 }, 10, 'impact');
+  assert.equal(free.filter(u => b.isLoud(u.sound)).length, 3, '大きな音を拾えていない');
+  b.setPlan(foe, compilePlan(b, foe, { steps: [{ action: 'wait', targetType: 'none', duration: 5 }] }));
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'ability', ability: 'echo', effect: 'roar', targetType: 'enemy' }] }));
+  const hp = foe.hp;
+  runFor(b, 3);
+  assert.ok(foe.hp < hp, '轟音がダメージを与えていない');
+  assert.ok(foe.status.deafUntil > b.t, '耳が聞こえなくなっていない');
+});
+
+test('七海：取り付いた個体は足音を奪い、払われると本体が傷を負う', () => {
+  const b = new Battle({ seed: 34, mapId: 'lot', playerChar: 'kito', cpuChar: 'nanami' });
+  const me = b.player, foe = b.cpu;
+  me.x = 20; me.y = 9; foe.x = 4; foe.y = 17;
+  const u = foe.units.find(x => x.state === 'home');
+  u.state = 'attached'; u.attachedTo = me.id;
+  for (let i = 0; i < 3; i++) b.noise(me, 6, 'footsteps_run');
+  assert.ok(u.sound && u.sound.kind.startsWith('footsteps'), '足音を拾っていない');
+  assert.ok(me.memory.suspectAttached, '音が消えたことに気づいていない');
+  const hp = foe.hp;
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'swat', targetType: 'self' }] }));
+  runFor(b, 2);
+  assert.equal(u.state, 'dead');
+  assert.ok(foe.hp < hp);
+});
+
+test('鷺沼：弾は壁で跳ね返るたびに威力が上がり、跳弾で物陰を狙える', () => {
+  const b = new Battle({ seed: 35, mapId: 'lot', playerChar: 'saginuma', cpuChar: 'kito' });
+  assert.ok(b.ballDamage(0) < b.ballDamage(1) && b.ballDamage(1) < b.ballDamage(3) && b.ballDamage(3) < b.ballDamage(7));
+  const me = b.player, foe = b.cpu;
+  // 間に箱を置いて直接は狙えない位置関係にする
+  b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
+  me.x = 20; me.y = 9; foe.x = 30; foe.y = 9; me.facing = 0; me.floor = foe.floor = 0;
+  b.setPlan(foe, compilePlan(b, foe, { steps: [{ action: 'wait', targetType: 'none', duration: 5 }] }));
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 }] }));
+  const hp = foe.hp;
+  runFor(b, 4);
+  assert.ok(foe.hp < hp, '跳弾が当たっていない');
+  assert.ok(b.log.some(l => /[1-7]回跳ねた弾/.test(l.text)), '跳ね返っていない');
+  assert.equal(me.hp, me.maxHp, '撃った直後の弾が自分に当たった');
 });

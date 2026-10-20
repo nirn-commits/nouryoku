@@ -3,10 +3,11 @@ import { ACTIONS, ABILITIES, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter, pointInRect } from './vec.js';
 import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt } from './world.js';
 import { applyAbility } from './abilities.js';
+import { itemDef } from './items.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
-  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
+  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
 const DIR_LABEL = {
@@ -33,7 +34,9 @@ function targetName(b, t) {
     const door = b.world.buildings.flatMap(x => x.doors).find(d => d.id === t.id);
     if (door) return door.name;
     const area = b.world.areas.find(a => a.id === t.id);
-    return area ? area.name : t.id;
+    if (area) return area.name;
+    const item = b.world.items.find(i => i.id === t.id);
+    return item ? item.name : t.id;
   }
   return '';
 }
@@ -45,19 +48,23 @@ export function describeStep(b, s) {
     case 'move': return `${cond}${tn}へ${s.mode === 'run' ? '走る' : '歩く'}`;
     case 'chase': return `${cond}敵を${s.mode === 'run' ? '走って' : '歩いて'}追尾（最大${s.duration.toFixed(0)}秒${s.distance ? `・距離${s.distance}m` : ''}）`;
     case 'melee': return `${cond}${tn}を殴る`;
-    case 'throw': return `${cond}${tn}へナイフを投げる`;
+    case 'throw': return `${cond}${tn}へ持っている物を投げる`;
+    case 'pickup': return `${cond}${s.target.type === 'object' ? tn : '近くの物'}を拾う`;
+    case 'drop': return `${cond}持っている物を手放す`;
     case 'guard': return `${cond}ガード（${s.duration.toFixed(1)}秒）`;
     case 'dodge': return `${cond}${tn}へ回避`;
     case 'push': return `${cond}${tn}を押す`;
     case 'open': return `${cond}${tn}を開ける`;
     case 'close': return `${cond}${tn}を閉める${s.ability === 'hotel' ? '（ホテル・カリフォルニア）' : ''}`;
     case 'jump_down': return `${cond}${s.target.type === 'object' ? tn : '2階の窓'}から飛び降りる`;
+    case 'swat': return `${cond}体のまわりを払う`;
     case 'pull': return `${cond}${tn}を引く`;
     case 'look': return `${cond}${tn}を観察`;
     case 'wait': return `${cond}待機${s.duration ? `（${s.duration.toFixed(1)}秒）` : ''}`;
     case 'ability': {
       const ab = ABILITIES[s.ability];
-      return `${cond}『${ab.name}：${ab.effects[s.effect].name}』→${tn}`;
+      const extra = [s.count ? `${s.count}体` : '', s.sound ? { footsteps: '足音', voice: '声', loud: '大きな音', any: '' }[s.sound] : '', s.bounces !== undefined ? `${s.bounces}回反射` : ''].filter(Boolean).join('・');
+      return `${cond}『${ab.name}：${ab.effects[s.effect].name}』→${tn}${extra ? `（${extra}）` : ''}`;
     }
     default: return s.action;
   }
@@ -73,6 +80,7 @@ function resolveObjectId(b, id) {
   if (b.world.buildings.some(x => x.id === id)) return id;
   if (b.world.buildings.some(x => x.doors.some(d => d.id === id))) return id;
   if (b.world.areas.some(a => a.id === id)) return id;
+  if (b.world.items.some(i => i.id === id)) return id;
   return null;
 }
 
@@ -80,7 +88,7 @@ function validateStep(b, c, raw, cursor) {
   const action = str(raw.action);
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
-  if (ttype === 'none' && action !== 'wait' && action !== 'guard' && action !== 'jump_down') ttype = DEFAULT_TARGET[action];
+  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop'].includes(action)) ttype = DEFAULT_TARGET[action];
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw };
 
@@ -140,6 +148,10 @@ function validateStep(b, c, raw, cursor) {
   }
   if (DIRECTIONS.includes(raw.direction)) step.aim = raw.direction;
   step.distance = num(raw.distance) !== null ? clamp(raw.distance, 0.5, 15) : null;
+  // 能力ごとの追加指定：エコー・ビーチの個体数・置く音の種類、セブンス・サンの反射回数
+  if (num(raw.count) !== null) step.count = clamp(Math.round(raw.count), 1, 24);
+  if (['footsteps', 'voice', 'loud', 'any'].includes(raw.sound)) step.sound = raw.sound;
+  if (num(raw.bounces) !== null) step.bounces = clamp(Math.round(raw.bounces), 0, 7);
 
   const d = num(raw.duration);
   if (action === 'guard') step.duration = clamp(d ?? 1.5, 0.3, 3);
@@ -184,6 +196,9 @@ function estimateCost(b, c, s, cursor) {
     case 'push': case 'pull': cost = 0.6 + clamp((approxDist() - 1) / c.def.walk, 0, 3); break;
     case 'open': case 'close': cost = 0.6 + clamp((approxDist() - 1) / speed, 0, 4); break;
     case 'jump_down': cost = 1.2 + (s.target.type === 'object' ? clamp((approxDist() - 1) / speed, 0, 4) : 1); break;
+    case 'swat': cost = 0.6; break;
+    case 'pickup': cost = 0.5 + (s.target.type === 'object' ? clamp(approxDist() / speed, 0, 4) : 1.5); break;
+    case 'drop': cost = 0.1; break;
     case 'look': cost = 0.6; break;
     case 'wait': cost = s.duration; break;
     case 'ability': cost = ABILITIES[s.ability].castTime + 0.25; break;
@@ -323,6 +338,8 @@ export function resolveTarget(b, c, t, step = {}) {
         const p = nearestWalkable(b.world, bd.x + bd.w / 2, bd.y + bd.h / 2 + 1, 3) || { x: bd.x + bd.w / 2, y: bd.y + bd.h / 2 };
         return { x: p.x, y: p.y, f: 0, building: bd };
       }
+      const item = b.world.items.find(i => i.id === t.id);
+      if (item) return { x: item.x, y: item.y, f: item.floor ?? 0, item };
       const area = b.world.areas.find(a => a.id === t.id);
       if (area) {
         // 区域：中心付近の歩ける場所（自分が既に中にいれば今の場所）。「〇〇の2階」は2階
@@ -582,15 +599,18 @@ const EXEC = {
         if (D.obj) {
           if (b.world.objects.includes(D.obj) && distToRect(c.x, c.y, D.obj) <= 1.4) {
             b.emit({ text: `${c.name} の『${c.stand}』が${D.obj.name}を殴りつけた！`, kind: 'combat', actor: c, pos: c, sound: 10, soundKind: 'impact' });
-            b.damageObject(D.obj, c.def.power * 1.5, c);
+            b.damageObject(D.obj, meleePower(c) * 1.5, c);
+            b.breakHeld(c);
           } else b.emit({ text: `${c.name} の拳は届かなかった`, kind: 'fail', actor: c, pos: c });
         } else {
           const d = dist(c.x, c.y, e.x, e.y);
           const ang = Math.abs(angDiff(c.facing, angleTo(c.x, c.y, e.x, e.y)));
           if (e.alive && e.floor === c.floor && d <= meleeRange(c) + e.r * 0.5 && ang <= (c.def.meleeArc ?? RULES.meleeArc)) {
-            if (e.status.invulnUntil <= b.t) b.emit({ text: `${c.name} の『${c.stand}』の拳が ${e.name} を捉えた！`, kind: 'combat', actor: c, affected: e, pos: e, sound: 4 });
+            const weapon = c.held && itemDef(c.held).melee > c.def.power ? c.held.name : null;
+            if (e.status.invulnUntil <= b.t) b.emit({ text: weapon ? `${c.name} の${weapon}が ${e.name} を捉えた！` : `${c.name} の『${c.stand}』の拳が ${e.name} を捉えた！`, kind: 'combat', actor: c, affected: e, pos: e, sound: 4 });
             const a = angleTo(c.x, c.y, e.x, e.y);
-            const dealt = b.damage(e, c.def.power, { source: c, kind: 'melee', from: c, label: '拳' });
+            const dealt = b.damage(e, meleePower(c), { source: c, kind: 'melee', from: c, label: weapon || '拳' });
+            if (weapon) b.breakHeld(c);
             if (dealt > 0) { e.kbx = Math.cos(a) * 3; e.kby = Math.sin(a) * 3; }
           } else {
             b.emit({ text: `${c.name} の拳は空を切った`, kind: 'combat', actor: c, pos: c, sound: 4, soundKind: 'swing' });
@@ -606,7 +626,7 @@ const EXEC = {
 
   throw: {
     start(b, c, st) {
-      if (c.knives <= 0) return 'ナイフを持っていない';
+      if (!c.held) return '投げる物を持っていない（先に拾う）';
       const res = resolveTarget(b, c, st.def.target, st.def);
       if (res.error) return res.error;
       st.data.aim = { x: res.x, y: res.y };
@@ -627,9 +647,12 @@ const EXEC = {
         if (b.t < D.until) return 'running';
         c.windup = null;
         if (!facingOk(c, D.aim.x, D.aim.y, 0.6)) c.facing = angleTo(c.x, c.y, D.aim.x, D.aim.y);
-        c.knives--;
-        b.spawnKnife(c, c.x, c.y, D.aim.x, D.aim.y);
-        b.emit({ text: `${c.name} がナイフを投げた！（残り${c.knives}本）`, obsText: `${c.name} がナイフを投げた！`, kind: 'combat', actor: c, pos: c, sound: 5, soundKind: 'throw' });
+        if (!c.held) return { fail: '投げる物を持っていない' };
+        const item = c.held;
+        c.held = null;
+        const tz = st.def.target.type === 'enemy' && b.perceivedEnemy(c)?.visible ? b.baseZ(b.enemyOf(c)) + 1.2 : null;
+        b.spawnThrown(c, item, c.x, c.y, D.aim.x, D.aim.y, { tz });
+        b.emit({ text: `${c.name} が${item.name}を投げた！`, kind: 'combat', actor: c, pos: c, sound: 5, soundKind: 'throw' });
         D.phase = 'recover';
         D.until = b.t + RULES.throwRecovery;
         return 'running';
@@ -738,6 +761,59 @@ const EXEC = {
     },
   },
 
+  // 落ちている物を拾う
+  pickup: {
+    start(b, c, st) {
+      let item = st.def.target.type === 'object' ? b.world.items.find(i => i.id === st.def.target.id) : null;
+      if (!item) {
+        item = b.world.items
+          .filter(i => (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) < 15)
+          .sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y))[0];
+      }
+      if (!item) return '近くに拾える物がない';
+      st.data.item = item;
+      st.data.deadline = b.t + 6;
+      return null;
+    },
+    update(b, c, st) {
+      const it = st.data.item;
+      if (!b.world.items.includes(it)) return { fail: `${it.name}はもう無い` };
+      if (c.floor === (it.floor ?? 0) && dist(c.x, c.y, it.x, it.y) <= 0.9) {
+        if (!st.data.until) { st.data.until = b.t + 0.35; st.locked = true; }
+        if (b.t < st.data.until) return 'running';
+        b.pickUp(c, it);
+        return 'done';
+      }
+      const r = approach(b, c, st, it.x, it.y, 0.6, st.def.mode === 'run', it.floor ?? 0);
+      if (r === 'stuck' || b.t > st.data.deadline) return { fail: `${it.name}に近づけなかった` };
+      return 'running';
+    },
+  },
+
+  drop: {
+    start(b, c) {
+      if (!c.held) return '何も持っていない';
+      b.dropHeld(c);
+      return null;
+    },
+    update() { return 'done'; },
+  },
+
+  // 体やすぐそばの小さなスタンドを払い潰す
+  swat: {
+    start(b, c, st) {
+      st.data.until = b.t + 0.5;
+      st.locked = true;
+      return null;
+    },
+    update(b, c, st) {
+      if (b.t < st.data.until) return 'running';
+      const n = b.swatUnits(c);
+      selfLog(b, c, n ? `小さな何かを${n}体払い潰した` : '払ったが、何も手応えがない');
+      return 'done';
+    },
+  },
+
   push: pushPull(1),
   pull: pushPull(-1),
 
@@ -832,8 +908,16 @@ const EXEC = {
   },
 };
 
+// 殴る距離・威力：持った物の方が強ければそれで殴る（リーチも伸びる）
 function meleeRange(c) {
-  return c.def.meleeRange ?? RULES.meleeRange;
+  const base = c.def.meleeRange ?? RULES.meleeRange;
+  const it = c.held ? itemDef(c.held) : null;
+  return it && it.melee > c.def.power ? base + it.reach : base;
+}
+
+function meleePower(c) {
+  const it = c.held ? itemDef(c.held) : null;
+  return Math.max(c.def.power, it ? it.melee : 0);
 }
 
 // 次の手順を敵に対して実行できる距離（追尾の終了判定に使う）

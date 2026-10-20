@@ -175,8 +175,8 @@ export class Renderer {
       if (o.kind === 'stairs') this.drawStairs(o, 0);
       if (o.kind === 'hole') this.box(o.x, o.y, o.w, o.h, 0, 0.02, '#17110c', '#17110c');
     }
-    for (const pk of b.world.pickups) {
-      if ((pk.floor ?? 0) === 0 && see(pk.x, pk.y, 0.1)) this.drawKnife(pk.x, pk.y, 0);
+    for (const it of b.world.items) {
+      if ((it.floor ?? 0) === 0 && !this.hiddenUnderRoof(b, it, modes) && see(it.x, it.y, 0.3)) this.drawItem(it, 0);
     }
 
     // 霧（見えていない地面を暗く）
@@ -223,10 +223,36 @@ export class Renderer {
     // 密室の炎
     for (const bd of b.world.buildings) if (bd.sealed) this.drawFlames(b, bd);
 
+    // エコー・ビーチの個体：自分の個体は常に、相手の個体はすぐそば（2.5m以内）だけ見える
+    for (const c of b.chars) {
+      if (!c.units) continue;
+      for (const u of c.units) {
+        if (u.state === 'dead' || u.state === 'home') continue;
+        const mine = c === me;
+        if (!mine && !debug && (u.floor !== me.floor || Math.hypot(u.x - me.x, u.y - me.y) > 2.5)) continue;
+        const uz = u.floor * FLOOR_H + (u.state === 'attached' ? 1.4 : 0.6);
+        const ux = u.x * P, uy = this.sy(u.y, uz);
+        ctx.fillStyle = u.sound ? (b.isLoud(u.sound) ? '#ff7b54' : '#ffe08a') : '#7ad1c5';
+        ctx.beginPath();
+        ctx.moveTo(ux, uy - 4); ctx.lineTo(ux + 3, uy); ctx.lineTo(ux, uy + 4); ctx.lineTo(ux - 3, uy);
+        ctx.closePath();
+        ctx.fill();
+      }
+    }
+
     // 飛来物
     for (const p of b.world.projectiles) {
       if (!see(p.x, p.y, p.z)) continue;
       const sp = Math.hypot(p.vx, p.vy) || 1;
+      if (p.kind === 'ball') {
+        // パチンコ玉
+        ctx.fillStyle = '#e8e8f0';
+        ctx.beginPath(); ctx.arc(p.x * P, this.sy(p.y, p.z), Math.max(2, P * 0.1), 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = 'rgba(232,232,240,0.5)';
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(p.x * P, this.sy(p.y, p.z)); ctx.lineTo((p.x - (p.vx / sp) * 1.5) * P, this.sy(p.y - (p.vy / sp) * 1.5, p.z)); ctx.stroke();
+        continue;
+      }
       ctx.strokeStyle = p.owner === me.id ? '#9be7ff' : '#ff9b9b';
       ctx.lineWidth = 3;
       ctx.beginPath();
@@ -274,6 +300,22 @@ export class Renderer {
         ctx.font = `bold ${Math.max(12, P * 0.6)}px sans-serif`;
         ctx.globalAlpha = Math.max(0, 1 - age / 1.2);
         ctx.fillText(f.text, f.x * P - 8, fy - age * 0.8 * P - P);
+        ctx.globalAlpha = 1;
+      } else if (f.kind === 'spark') {
+        // 跳弾の火花と反射回数
+        ctx.globalAlpha = Math.max(0, 1 - age / 0.6);
+        ctx.strokeStyle = '#fff3b0';
+        ctx.lineWidth = 2;
+        for (let i = 0; i < 6; i++) {
+          const a = (i / 6) * Math.PI * 2;
+          ctx.beginPath();
+          ctx.moveTo(f.x * P, fy);
+          ctx.lineTo(f.x * P + Math.cos(a) * P * 0.4, fy + Math.sin(a) * P * 0.4);
+          ctx.stroke();
+        }
+        ctx.fillStyle = '#fff3b0';
+        ctx.font = `bold ${Math.max(11, P * 0.5)}px monospace`;
+        ctx.fillText(f.text, f.x * P + 4, fy - 4);
         ctx.globalAlpha = 1;
       } else if (f.kind === 'flash') {
         ctx.strokeStyle = f.color;
@@ -365,7 +407,7 @@ export class Renderer {
       ctx.fillRect(bd.x * P, this.sy(bd.y, FLOOR_H), bd.w * P, bd.h * P);
       if (bd.stairs) this.drawStairs(bd.stairs, FLOOR_H);
       for (const r of b.world.rubble) if ((r.floor ?? 0) === 1 && pointInRect(r.x + r.w / 2, r.y + r.h / 2, bd)) this.drawRubble(r, FLOOR_H);
-      for (const pk of b.world.pickups) if ((pk.floor ?? 0) === 1 && pointInRect(pk.x, pk.y, bd)) this.drawKnife(pk.x, pk.y, FLOOR_H);
+      for (const it of b.world.items) if ((it.floor ?? 0) === 1 && pointInRect(it.x, it.y, bd)) this.drawItem(it, FLOOR_H);
     }
     draw(current, f * FLOOR_H + 1.1);
     ctx.fillStyle = 'rgba(255,255,255,0.55)';
@@ -524,11 +566,35 @@ export class Renderer {
     }
   }
 
-  drawKnife(x, y, z) {
+  // 屋根で覆われた建物の中・自分のいない階の物は描かない
+  hiddenUnderRoof(b, it, modes) {
+    const bd = b.world.buildings.find(x => pointInRect(it.x, it.y, x));
+    if (!bd) return false;
+    const m = modes.get(bd.id);
+    return m.mode === 'roof' || (it.floor ?? 0) !== m.floor;
+  }
+
+  // 落ちている物（花瓶・鉄パイプなど）
+  drawItem(it, z, label = true) {
     const ctx = this.ctx, P = this.px;
-    ctx.strokeStyle = '#ddd';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo((x - 0.2) * P, this.sy(y + 0.1, z)); ctx.lineTo((x + 0.2) * P, this.sy(y - 0.1, z)); ctx.stroke();
+    const x = it.x * P, y = this.sy(it.y, z);
+    const colors = { vase: '#e6d3a3', bottle: '#7fd18b', kitchen_knife: '#ddd', pan: '#333', pipe: '#9aa', brick: '#b5523b', wrench: '#bbb', lumber: '#c49a62', umbrella: '#3a6ea5', extinguisher: '#d62828', stone: '#999', branch: '#7a5530' };
+    ctx.fillStyle = colors[it.kind] || '#ccc';
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx.lineWidth = 1;
+    const r = Math.max(3, P * 0.18);
+    if (['pipe', 'lumber', 'umbrella', 'branch', 'kitchen_knife', 'wrench'].includes(it.kind)) {
+      ctx.save(); ctx.translate(x, y); ctx.rotate(-0.5);
+      ctx.fillRect(-r * 2, -r * 0.35, r * 4, r * 0.7); ctx.strokeRect(-r * 2, -r * 0.35, r * 4, r * 0.7);
+      ctx.restore();
+    } else {
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    if (label && P > 18) {
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.font = `${Math.max(9, P * 0.36)}px sans-serif`;
+      ctx.fillText(it.name, x + r + 2, y + 3);
+    }
   }
 
   // 密室：建物の外周を囲む白い炎（スタンドエネルギー）
@@ -629,6 +695,10 @@ export class Renderer {
     ctx.lineTo(x + Math.cos(c.facing - 2.6) * c.r * P * 0.8, footY + Math.sin(c.facing - 2.6) * c.r * P * 0.5);
     ctx.closePath();
     ctx.fill();
+    // 手に持っている物
+    if (c.held) {
+      this.drawItem({ ...c.held, x: c.x + Math.cos(c.facing + 0.8) * c.r * 1.2, y: c.y + Math.sin(c.facing + 0.8) * c.r * 1.2 }, z + 1.0, false);
+    }
     if (s.guardUntil > b.t) {
       ctx.strokeStyle = '#ffd166';
       ctx.lineWidth = 3;

@@ -137,3 +137,16 @@ button:disabled { opacity: .5; cursor: default; }
 .portraits { display: flex; gap: 8px; justify-content: center; margin-bottom: 6px; }
 .portrait.card { height: 180px; max-width: 48%; object-fit: contain; background: #fff; border-radius: 6px; }
 .portrait.mini { float: right; height: 56px; width: 56px; object-fit: cover; object-position: top; border-radius: 4px; background: #fff; margin-left: 6px; }
+
+/* キャラクター画像スロットとカットイン */
+.pslot { display: flex; flex-direction: column; align-items: center; gap: 4px; max-width: 48%; }
+.pslot .portrait.card { max-width: 100%; }
+.portrait.card.empty { width: 120px; height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.06); color: #888; font-size: 12px; border: 1px dashed #555; }
+.pbtns { display: flex; gap: 4px; }
+.pbtn { font-size: 11px; padding: 2px 6px; cursor: pointer; white-space: nowrap; }
+.cutin { position: fixed; right: 0; top: 18%; pointer-events: none; display: flex; align-items: center; gap: 10px; padding: 8px 18px 8px 8px; background: linear-gradient(90deg, transparent, rgba(0,0,0,0.85) 25%); border-right: 6px solid var(--c, #fff); transform: translateX(110%); opacity: 0; z-index: 50; max-width: min(520px, 92vw); box-sizing: border-box; overflow: hidden; }
+.cutin img { height: 160px; max-width: 45vw; object-fit: contain; filter: drop-shadow(0 0 8px var(--c, #fff)); }
+.cutin .cap { display: flex; flex-direction: column; color: #fff; font-size: 13px; min-width: 0; max-width: 300px; overflow-wrap: anywhere; }
+.cutin .cap b { font-size: 20px; color: var(--c, #fff); }
+.cutin.show { animation: cutin 1.6s ease-out forwards; }
+@keyframes cutin { 0% { transform: translateX(110%); opacity: 0; } 12% { transform: translateX(0); opacity: 1; } 80% { transform: translateX(0); opacity: 1; } 100% { transform: translateX(30%); opacity: 0; } }

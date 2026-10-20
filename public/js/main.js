@@ -38,7 +38,8 @@ const state = {
 const EXAMPLES = {
   sogo: [
     '近くの壁際まで走って、敵が近づいてきたら弾き出して叩きつける',
-    '「その距離なら届く。9.8mだ、ギリギリな」と言って、ナイフを10m先へ弾き出す',
+    '近くの花瓶を拾って、敵に向けて弾き出す',
+    '「その距離なら届く。9.8mだ、ギリギリな」と言って、手に持った物を10m先へ弾き出す',
     '敵を追いかけて殴り、柱に叩きつける',
     '壁を蹴って離脱し、物陰に隠れる',
     '真上に跳び上がって、空中で左へ方向転換',
@@ -53,6 +54,24 @@ const EXAMPLES = {
     '開けられた窓を閉め直してから、敵を追いかけて殴る',
     '敵を家の中へ追い込んで、扉を閉める',
     '「話はいい」と言って、距離を詰めて殴る',
+    '鉄パイプを拾ってから、敵を追いかけて殴る',
+  ],
+  nanami: [
+    'エコー・ビーチを10体だけ出して、自分の周りに置く',
+    '近くの自販機を3回叩いて、その音を集める',
+    '敵にエコー・ビーチを1体貼り付ける',
+    '集めた大きい音を敵の足元で一斉に鳴らす',
+    '敵の進路に2体ずつ置いて、近づいたら鳴らす',
+    '自分の足音を消して、物陰を回り込む',
+    'エコー・ビーチを全部回収する',
+  ],
+  saginuma: [
+    '敵に向けて球をまっすぐ撃つ',
+    '壁で3回跳ね返る軌道で、物陰の敵を撃つ',
+    '5回跳ね返らせて貫通弾にしてから当てる',
+    '3発ばらまいて、敵の逃げ道をふさぐ',
+    '敵から距離を取りつつ、球を撃ち返す',
+    'ブロックを拾って投げつける',
   ],
 };
 
@@ -112,18 +131,77 @@ function abilityHtml(id) {
     <div class="weak">弱点：${a.weakness}</div></div>`;
 }
 
-// キャラクター画像：public/img/<id>.png（本体）と <id>_stand.png（スタンド）を置くと表示される
-const portraitOk = {};
+// キャラクター画像：①タイトル画面でアップロードした画像（ブラウザに保存）②public/img/<id>.png|jpg|webp の順で探す
+// <id> は本体、<id>_stand はスタンド
+const portraitSrc = {};
+const PORTRAIT_KEY = id => `portrait:${id}`;
+function storedPortrait(id) {
+  try { return localStorage.getItem(PORTRAIT_KEY(id)); } catch { return null; }
+}
 function preloadPortraits() {
   for (const id of Object.keys(CHARACTERS).flatMap(k => [k, `${k}_stand`])) {
-    const img = new Image();
-    img.onload = () => { portraitOk[id] = true; renderCharCards(); };
-    img.src = `img/${id}.png`;
+    const saved = storedPortrait(id);
+    if (saved) { portraitSrc[id] = saved; continue; }
+    const tryExt = exts => {
+      if (!exts.length) return;
+      const img = new Image();
+      img.onload = () => { if (!portraitSrc[id]) { portraitSrc[id] = img.src; renderCharCards(); } };
+      img.onerror = () => tryExt(exts.slice(1));
+      img.src = `img/${id}.${exts[0]}`;
+    };
+    tryExt(['png', 'jpg', 'jpeg', 'webp']);
   }
+  renderCharCards();
 }
 
 function portrait(id, cls) {
-  return portraitOk[id] ? `<img class="portrait ${cls}" src="img/${id}.png" alt="">` : '';
+  return portraitSrc[id] ? `<img class="portrait ${cls}" src="${portraitSrc[id]}" alt="">` : '';
+}
+
+// アップロード画像は長辺 640px に縮小して保存（localStorage の容量対策）
+function savePortraitFile(id, file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 640 / Math.max(img.width, img.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(img.width * k);
+      cv.height = Math.round(img.height * k);
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      const url = cv.toDataURL('image/webp', 0.85);
+      portraitSrc[id] = url;
+      try { localStorage.setItem(PORTRAIT_KEY(id), url); } catch { alert('ブラウザの保存容量が足りないため、この画像は今回の起動中だけ表示されます'); }
+      renderCharCards();
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearPortrait(id) {
+  try { localStorage.removeItem(PORTRAIT_KEY(id)); } catch {}
+  delete portraitSrc[id];
+  preloadPortraits();
+}
+
+function portraitSlot(id, label) {
+  return `<div class="pslot">${portrait(id, 'card') || `<div class="portrait card empty">${label}<br><small>画像なし</small></div>`}
+    <div class="pbtns"><button type="button" class="pbtn" data-up="${id}">${label}の画像…</button>${storedPortrait(id) ? `<button type="button" class="pbtn" data-clear="${id}">消す</button>` : ''}</div></div>`;
+}
+
+// 能力発動時のカットイン
+function showCutin(c, text) {
+  const el = $('#cutin');
+  const src = portraitSrc[`${c.charId}_stand`] || portraitSrc[c.charId];
+  if (!el || !src) return;
+  el.style.setProperty('--c', c.color);
+  el.innerHTML = `<img src="${src}" alt=""><div class="cap"><b>『${escapeHtml(c.stand)}』</b><span>${escapeHtml(text)}</span></div>`;
+  el.classList.remove('show');
+  void el.offsetWidth;
+  el.classList.add('show');
+  clearTimeout(showCutin.timer);
+  showCutin.timer = setTimeout(() => el.classList.remove('show'), 1600);
 }
 
 function renderMapCards() {
@@ -136,12 +214,12 @@ function renderMapCards() {
 function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
-      <div class="portraits">${portrait(c.id, 'card')}${portrait(`${c.id}_stand`, 'card')}</div>
+      <div class="portraits">${portraitSlot(c.id, '本体')}${portraitSlot(`${c.id}_stand`, 'スタンド')}</div>
       <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">スタンド『${c.stand}』</div></div></div>
       ${c.profile ? `<p class="profile">${c.profile}</p>` : ''}
       <p class="persona">${c.personality}</p>
       ${c.stats ? `<table class="stats"><tr>${Object.values(STAT_LABELS).map(l => `<th>${l}</th>`).join('')}</tr><tr>${Object.keys(STAT_LABELS).map(k => `<td>${c.stats[k]}</td>`).join('')}</tr></table>` : ''}
-      <div class="meta">HP ${c.hp} / 体重${c.kg}kg / 歩き${c.walk}m/s・走り${c.run}m/s / ナイフ${c.knives}本</div>
+      <div class="meta">HP ${c.hp} / 体重${c.kg}kg / 歩き${c.walk}m/s・走り${c.run}m/s</div>
       ${c.abilities.map(abilityHtml).join('')}
     </div>`).join('');
   const sel = $('#opponent');
@@ -282,7 +360,7 @@ function renderSide() {
     ${portrait(me.charId, 'mini')}<h3>${me.name} <small>『${me.stand}』</small></h3>
     ${bar('hp', me.hp, me.maxHp, `HP ${Math.round(me.hp)}/${me.maxHp}`)}
     ${bar('sp', me.sp, me.maxSp, `スタンドエネルギー ${Math.round(me.sp)}`)}
-    <div class="meta">ナイフ ${me.knives}本 ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
+    <div class="meta">${me.held ? `手に${me.held.name}` : '素手'} ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
     <div class="meta">${cds}</div>
     <div class="meta">${st.join('・')}</div>`;
 
@@ -326,6 +404,10 @@ function renderLog() {
     p.innerHTML = `<span class="t">${l.t.toFixed(1)}</span> ${escapeHtml(text)}`;
     if (l.heardBy.has(me.id) && l.kind !== 'speech') p.innerHTML += ' <span class="heard">（音）</span>';
     log.prepend(p);
+    if (l.kind === 'ability') {
+      const c = b.chars.find(ch => ch.id === l.actor);
+      if (c && (c === me || DEBUG || b.canSee(me, c.x, c.y))) showCutin(c, text);
+    }
   }
   while (log.children.length > 200) log.lastChild.remove();
 }
@@ -403,7 +485,18 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#zoom-btn').textContent = z === 'near' ? '全体表示' : '拡大表示';
   };
   $('#zoom-btn').addEventListener('click', toggleZoom);
+  const fileIn = document.createElement('input');
+  fileIn.type = 'file';
+  fileIn.accept = 'image/*';
+  fileIn.addEventListener('change', () => {
+    if (fileIn.files[0]) savePortraitFile(fileIn.dataset.id, fileIn.files[0]);
+    fileIn.value = '';
+  });
   $('#char-cards').addEventListener('click', e => {
+    const up = e.target.closest('[data-up]');
+    if (up) { e.stopPropagation(); fileIn.dataset.id = up.dataset.up; fileIn.click(); return; }
+    const clr = e.target.closest('[data-clear]');
+    if (clr) { e.stopPropagation(); clearPortrait(clr.dataset.clear); return; }
     const card = e.target.closest('.char-card');
     if (card) { state.chosen = card.dataset.id; renderCharCards(); }
   });

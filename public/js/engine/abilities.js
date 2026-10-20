@@ -32,13 +32,13 @@ const IMPL = {
 
     if (effect === 'self_launch') {
       if (b.isAirborne(c)) {
-        // 空中：手に持った物（ナイフ）を接触面として、水平方向に弾き出す
-        if (c.knives <= 0) return fail('空中で何にも触れていない（基準にできる物を持っていない）');
+        // 空中：手に持った物を接触面として、水平方向に弾き出す
+        if (!c.held) return fail('空中で何にも触れていない（基準にできる物を持っていない）');
         if (step.target.type !== 'direction' || res.error) return fail('空中では弾き出す方向（direction）の指定が必要');
         const a = res.angle;
         b.launchChar(c, Math.cos(a), Math.sin(a), { source: c, kind: 'aerial' });
         mark(c.x, c.y);
-        return ok(`『${ab.name}』— 手のナイフを基準に、空中で直角に方向転換！`, `${c.name} が空中で、直角に軌道を変えた！`, c);
+        return ok(`『${ab.name}』— 手の${c.held.name}を基準に、空中で直角に方向転換！`, `${c.name} が空中で、直角に軌道を変えた！`, c);
       }
       const surfaces = b.world.objects.filter(o => o.blocksMove && o.floor === c.floor && distToRect(c.x, c.y, o) <= c.r + 0.6);
       let surface = null;
@@ -122,15 +122,188 @@ const IMPL = {
       return { ok: true };
     }
 
-    // launch_held：手に持ったナイフを10m先まで
-    if (c.knives <= 0) return fail('飛ばす物（ナイフ）を持っていない');
+    // launch_held：手に持った物を10m先まで
+    if (!c.held) return fail('飛ばす物を持っていない（先に何か拾う）');
     if (res.error) return fail(res.error);
     const a = res.angle ?? angleTo(c.x, c.y, res.x, res.y);
-    c.knives--;
+    const item = c.held;
+    c.held = null;
     const tz = res.char ? b.baseZ(res.char) + 1.2 : undefined;
-    b.spawnKnife(c, c.x, c.y, c.x + Math.cos(a) * 10, c.y + Math.sin(a) * 10, { speed: 30, damage: 12, maxRange: 10, tz });
+    b.spawnThrown(c, item, c.x, c.y, c.x + Math.cos(a) * 10, c.y + Math.sin(a) * 10, { speed: 30, damage: RULES.launchImpact, maxRange: 10, tz });
     mark(c.x + Math.cos(a) * 0.5, c.y + Math.sin(a) * 0.5);
-    return ok(`『${ab.name}』— 手のナイフを10m先まで弾き出した！（残り${c.knives}本）`, `${c.name} の手からナイフが一直線に弾き出された！`, c);
+    return ok(`『${ab.name}』— 手の${item.name}を10m先まで弾き出した！`, `${c.name} の手から${item.name}が一直線に弾き出された！`, c);
+  },
+  echo(b, c, effect, res, ab, step) {
+    const units = c.units;
+    const alive = units.filter(u => u.state !== 'dead');
+    if (!alive.length) return fail('個体がすべて潰されている');
+    const log = text => b.emit({ text: `『${ab.name}』— ${text}`, kind: 'ability', actor: c });
+    const free = () => alive.filter(u => u.state === 'home' || (u.state === 'deployed' && !u.sound)).sort((a, z) => dist(c.x, c.y, a.x, a.y) - dist(c.x, c.y, z.x, z.y));
+    const targetPoint = () => {
+      if (res.error) return null;
+      return { x: res.x, y: res.y, floor: res.f ?? 0 };
+    };
+    const inRange50 = p => dist(c.x, c.y, p.x, p.y) <= ab.range;
+    switch (effect) {
+      case 'silence_self': {
+        const already = alive.filter(u => u.state === 'attached' && u.attachedTo === c.id).length;
+        const pick = free().slice(0, Math.max(0, 2 - already));
+        for (const u of pick) { u.state = 'attached'; u.attachedTo = c.id; }
+        if (!already && !pick.length) return fail('空いている個体がない');
+        log('2体を自分に取り付かせ、自分の足音と物音を消した');
+        return { ok: true };
+      }
+      case 'recall': {
+        let n = 0;
+        for (const u of alive) {
+          if (u.state === 'home') continue;
+          u.state = 'recall'; u.attachedTo = null; u.target = { char: c }; n++;
+        }
+        log(`${n}体を手元へ呼び戻す`);
+        return { ok: true };
+      }
+      case 'deploy': {
+        const p = targetPoint();
+        if (!p) return fail(res.error || '配置する場所が分からない');
+        if (!inRange50(p)) return fail(`配置先が射程外（${dist(c.x, c.y, p.x, p.y).toFixed(1)}m > 50m）`);
+        const pick = free().slice(0, step.count ?? 4);
+        if (!pick.length) return fail('空いている個体がない');
+        pick.forEach((u, i) => {
+          const a = (i / pick.length) * Math.PI * 2;
+          u.state = 'move'; u.attachedTo = null;
+          u.target = { x: p.x + Math.cos(a) * 0.5, y: p.y + Math.sin(a) * 0.5, floor: p.floor };
+        });
+        log(`${pick.length}体を(${p.x.toFixed(1)}, ${p.y.toFixed(1)})へ送り、聞き耳を立てさせる`);
+        return { ok: true };
+      }
+      case 'attach': {
+        const e = b.enemyOf(c);
+        if (res.error) return fail(res.error);
+        if (!inRange50(e)) return fail('敵が50mより遠い');
+        if (alive.some(u => (u.state === 'attached' || u.state === 'attach') && u.attachedTo === e.id || (u.state === 'attach' && u.target.char === e))) return fail('既に敵に個体が向かっている');
+        const u = free()[0];
+        if (!u) return fail('空いている個体がない');
+        u.state = 'attach'; u.target = { char: e };
+        log(`◆${u.n}を${e.name}へ飛ばす（取り付けば足音と声を奪える）`);
+        return { ok: true };
+      }
+      case 'place': {
+        const p = targetPoint();
+        if (!p) return fail(res.error || '音を置く場所が分からない');
+        if (!inRange50(p)) return fail(`置く場所が射程外（${dist(c.x, c.y, p.x, p.y).toFixed(1)}m > 50m）`);
+        const want = step.sound || 'any';
+        const match = u => u.sound && u.state !== 'attached' && (want === 'any'
+          || (want === 'footsteps' && u.sound.kind.startsWith('footsteps'))
+          || (want === 'voice' && u.sound.kind === 'speech')
+          || (want === 'loud' && b.isLoud(u.sound)));
+        // 取り付いたまま声を抱えている個体も、離れて運べる
+        const holder = alive.filter(match)[0] || (want === 'voice' ? alive.find(u => u.sound && u.sound.kind === 'speech') : null);
+        if (!holder) return fail(`置ける音（${{ footsteps: '足音', voice: '声', loud: '大きな音', any: '音' }[want]}）を抱えた個体がいない`);
+        holder.state = 'place'; holder.attachedTo = null;
+        holder.target = { x: p.x, y: p.y, floor: p.floor };
+        log(`◆${holder.n}が「${holder.sound.label}${holder.sound.text ? `：${holder.sound.text}` : ''}」を運ぶ`);
+        return { ok: true };
+      }
+      case 'roar': {
+        const e = b.enemyOf(c);
+        const t = res.error ? null : res;
+        if (!t) return fail(res.error);
+        if (dist(c.x, c.y, e.x, e.y) > ab.range) return fail('敵が50mより遠い');
+        const loud = alive.filter(u => b.isLoud(u.sound));
+        if (!loud.length) return fail('大きな音を一つも集めていない（決め技にならない）');
+        for (const u of loud) { u.state = 'roar'; u.attachedTo = null; u.target = { char: e }; u.since = b.t; u.armed = false; }
+        log(`集めた大きな音${loud.length}つを抱えた個体が、一斉に${e.name}の耳元へ`);
+        return { ok: true };
+      }
+    }
+    return fail('不明な効果');
+  },
+
+  seventh(b, c, effect, res, ab, step) {
+    const inFlight = b.world.projectiles.filter(p => p.kind === 'ball' && p.owner === c.id).length;
+    const need = effect === 'spread' ? 3 : 1;
+    if (inFlight + need > 3) return fail(`同時に飛ばせる弾は3発まで（飛んでいる弾${inFlight}発）`);
+    if (res.error) return fail(res.error);
+    const z = b.baseZ(c) + 1.3;
+    const aimAt = res.angle !== undefined ? null : { x: res.x, y: res.y };
+    const direct = aimAt ? angleTo(c.x, c.y, aimAt.x, aimAt.y) : res.angle;
+    const rnd = () => (b.rng() - 0.5) * 2;
+    // 反射回数 k で目標の近く（0.45m以内）を通る角度を探す
+    // 当たる角度が連続している範囲の中央を選ぶ（かすめる角度より誤差に強い）
+    const solve = k => {
+      const N = 1440;
+      const hits = [];
+      for (let i = 0; i < N; i++) {
+        const a = (i / N) * Math.PI * 2;
+        let found = null, length = 0, blockedEarly = false;
+        b.traceBall(c.x, c.y, z, c.floor, Math.cos(a), Math.sin(a), 100, (sg, bounces) => {
+          const segLen = Math.hypot(sg.x1 - sg.x0, sg.y1 - sg.y0);
+          const vx = sg.x1 - sg.x0, vy = sg.y1 - sg.y0;
+          const tt = segLen > 0 ? Math.max(0, Math.min(1, ((aimAt.x - sg.x0) * vx + (aimAt.y - sg.y0) * vy) / (segLen * segLen))) : 0;
+          const px = sg.x0 + vx * tt, py = sg.y0 + vy * tt;
+          const d = Math.hypot(aimAt.x - px, aimAt.y - py);
+          if (d < 0.45) {
+            if (bounces === k) found = { a, length: length + segLen * tt, d };
+            else if (bounces < k) blockedEarly = true; // もっと早く目標を通ってしまう
+            return false;
+          }
+          // 自分に戻ってくる弾道は避ける
+          if (bounces > 0) {
+            const sx = (c.x - sg.x0) * vx + (c.y - sg.y0) * vy;
+            const st2 = segLen > 0 ? Math.max(0, Math.min(1, sx / (segLen * segLen))) : 0;
+            if (Math.hypot(c.x - (sg.x0 + vx * st2), c.y - (sg.y0 + vy * st2)) < 0.8) { blockedEarly = true; return false; }
+          }
+          length += segLen;
+          return bounces <= k;
+        });
+        hits[i] = found && !blockedEarly ? found : null;
+      }
+      let best = null;
+      for (let i = 0; i < N; i++) {
+        if (!hits[i] || hits[(i + N - 1) % N]) continue;
+        let j = i;
+        while (hits[(j + 1) % N] && j - i < N) j++;
+        const mid = hits[Math.round((i + j) / 2) % N] || hits[i];
+        const run = { ...mid, width: j - i + 1 };
+        // 幅の広い（誤差に強い）弾道を優先し、同程度なら短い方
+        if (!best || run.width * 10 - run.length > best.width * 10 - best.length) best = run;
+      }
+      return best;
+    };
+    let angles = [];
+    let note = '';
+    if (effect === 'direct' || !aimAt) {
+      angles = [direct];
+    } else {
+      const want = step.bounces ?? 2;
+      const order = [want, want + 1, want - 1, want + 2, want - 2, want + 3].filter(k => k >= 1 && k <= 7);
+      let sol = null, usedK = want;
+      for (const k of order) { sol = solve(k); if (sol) { usedK = k; break; } }
+      if (!sol) {
+        note = '（届く跳弾の角度が見つからず、直接狙った）';
+        angles = [direct];
+      } else {
+        if (usedK !== want) note = `（${want}回では届かず、${usedK}回反射で計算）`;
+        // 反射を重ねるほど狙いの誤差が増える（精密動作性A なので小さい）
+        const err = rnd() * (0.15 + 0.12 * usedK) * Math.PI / 180;
+        angles = [sol.a + err];
+        if (effect === 'spread') {
+          const s2 = solve(usedK + 1), s3 = solve(Math.max(1, usedK - 1));
+          angles.push(s2 ? s2.a : sol.a + 0.12, s3 && Math.abs(s3.a - sol.a) > 0.01 ? s3.a : sol.a - 0.12);
+        }
+      }
+      if (effect === 'spread' && angles.length === 1) angles.push(angles[0] + 0.15, angles[0] - 0.15);
+    }
+    const balls = c.balls;
+    if (balls < angles.length) note += balls ? '' : '（玉が尽きたので小石で代用）';
+    c.balls = Math.max(0, balls - angles.length);
+    for (const a of angles) b.spawnBall(c, a);
+    b.emit({
+      text: `『${ab.name}』— ${effect === 'direct' ? '指で弾を弾いた' : effect === 'spread' ? '3発を角度を変えて弾いた' : `${step.bounces ?? 2}回の跳弾を狙って弾いた`}${note}（残り${c.balls}個）`,
+      obsText: `${c.name} の胸元の白い腕が、小さな玉を指で弾いた！`,
+      kind: 'ability', actor: c, pos: c, sound: ab.soundRadius, soundKind: 'flick', hint: ab.observedHint,
+    });
+    return { ok: true };
   },
 };
 
