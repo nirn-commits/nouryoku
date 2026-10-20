@@ -111,10 +111,10 @@ function unitSummary(b, c) {
     alive: alive.length,
     crushed: c.units.length - alive.length,
     on_self: alive.filter(u => u.state === 'attached' && u.attachedTo === c.id).length,
-    on_enemy: alive.filter(u => u.state === 'attached' && u.attachedTo === e.id).length,
     at_hand: alive.filter(u => u.state === 'home').length,
     deployed: alive.filter(u => u.state === 'deployed').map(u => ({ n: u.n, at: [r1(u.x), r1(u.y)], holding: kindOf(u.sound) })),
-    moving: alive.filter(u => ['move', 'attach', 'place', 'roar', 'recall'].includes(u.state)).length,
+    moving: alive.filter(u => ['move', 'place', 'roar', 'scratch', 'recall'].includes(u.state)).length,
+    near_enemy: alive.filter(u => u.state === 'deployed' && e.alive && u.floor === e.floor && dist(u.x, u.y, e.x, e.y) < 1.5).length,
     held_sounds: alive.filter(u => u.sound).map(u => kindOf(u.sound)),
     loud_sounds: alive.filter(u => b.isLoud(u.sound)).length,
   };

@@ -219,7 +219,7 @@ function toTarget(ref) {
 }
 
 // エコー・ビーチ（灯）・セブンス・サン（玲司）の言い回し
-const ECHO_RE = /エコー・ビーチ|エコービーチ|個体|足音を消|音を消|取り付|張り付|声を奪|口を封|足音を置|音を置|声を置|置いて鳴ら|音を拾|聞き耳|轟音|一斉に|決め技|呼び戻|囮の足音|足音で誘/;
+const ECHO_RE = /エコー・ビーチ|エコービーチ|個体|(足音|声|音)を.{0,12}(置|鳴ら|流)|足音を消|音を消|引っか|ひっか|群が|足音を置|音を置|声を置|置いて鳴ら|音を拾|聞き耳|轟音|一斉に|決め技|呼び戻|囮の足音|足音で誘/;
 const SEVENTH_RE = /セブンス・サン|跳弾|跳ね返|反射|バウンド|パチンコ玉|玉を弾|弾を弾|撃つ|撃ち|狙撃|三方|3発|三発|回跳/;
 
 // パーペンディキュラー（十河）の言い回し
@@ -290,8 +290,8 @@ function parseClause(b, c, clause, has, ctx = {}) {
     if (/轟音|一斉|決め技|耳元/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'roar', targetType: 'enemy' });
     else if (/呼び戻|戻せ|戻す|回収/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'recall', targetType: 'self' });
     else if (/足音を消|音を消|静かに動|忍び/.test(clause) && !/敵の/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'silence_self', targetType: 'self' });
-    else if (/取り付|張り付|声を奪|口を封/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'attach', targetType: 'enemy' });
-    else if (/(置|鳴ら|流|聞かせ)/.test(clause)) {
+    else if (/引っか|ひっか|群が|襲わせ|攻撃させ|噛/.test(clause)) steps.push({ action: 'ability', ability: 'echo', effect: 'scratch', targetType: 'enemy', ...(cnt ? { count: Number(cnt[1]) } : {}) });
+    else if (/(音|声).*(置|鳴ら|流|聞かせ)|鳴ら|流す|聞かせ/.test(clause)) {
       const sound = /声/.test(clause) ? 'voice' : /大きな音|轟音|衝撃音|アラーム/.test(clause) ? 'loud' : /足音/.test(clause) ? 'footsteps' : 'any';
       steps.push({ action: 'ability', ability: 'echo', effect: 'place', sound, ...(where || { targetType: 'direction', direction: 'away_from_enemy', distance: 12 }) });
     } else {
@@ -470,6 +470,8 @@ export function localParse(b, c, text) {
     }
   }
 
+  // 「4体、右に置く」のように体数の後の読点で文が分かれないようにする
+  body = body.replace(/(\d+)\s*体\s*[、,，]/g, '$1体');
   // 座標の区切りで文が分かれないようにする
   body = body.replace(/([（(]\s*-?\d+(?:\.\d+)?)\s*[,、，]\s*(-?\d+(?:\.\d+)?\s*[)）])/g, '$1／$2');
   let pendingCond = null;

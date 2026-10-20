@@ -68,7 +68,7 @@ const EXAMPLES = {
   nanami: [
     'エコー・ビーチを10体だけ出して、自分の周りに置く',
     '近くの自販機を3回叩いて、その音を集める',
-    '敵にエコー・ビーチを1体貼り付ける',
+    'エコー・ビーチ6体で敵を引っかく',
     '集めた大きい音を敵の足元で一斉に鳴らす',
     '敵の進路に2体ずつ置いて、近づいたら鳴らす',
     '自分の足音を消して、物陰を回り込む',
@@ -83,6 +83,38 @@ const EXAMPLES = {
     'ブロックを拾って投げつける',
   ],
 };
+
+// 戦闘画面に出す「スタンドでできること」（書き方の例つき）
+const STAND_TIPS = {
+  sogo: [
+    ['自分を弾いて10m飛ぶ（壁際なら真横、開けた所なら真上）', '壁を蹴って離脱する'],
+    ['触れた敵・物を10m弾き出す。途中の壁に叩きつけると大ダメージ', '敵に触れて弾き出す'],
+    ['手に持った物を10m先へ飛ばす', '花瓶を拾って敵に弾き出す'],
+    ['空中で持った物を基準に方向転換する', '空中で左へ方向転換'],
+  ],
+  nanami: [
+    ['個体を置いて、そこで鳴った音を拾わせる（大きな音を集める）', 'エコー・ビーチを4体、自販機のそばに置く'],
+    ['拾った音（足音・声・大きな音）を別の場所で鳴らして誘導する', '足音を右の路地に置く'],
+    ['大きな音3つ以上を敵の耳元で一斉に鳴らす（決め技：耳が聞こえず転倒）', '轟音を一斉に鳴らす'],
+    ['個体を群がらせて引っかく（1体につき1.5ダメージ）', 'エコー・ビーチ6体で敵を引っかく'],
+    ['自分の足音を消す／個体を呼び戻す', '足音を消して回り込む'],
+  ],
+  saginuma: [
+    ['球をまっすぐ撃つ（跳ねていない球は弱い）', '敵に向けて球をまっすぐ撃つ'],
+    ['壁で跳ね返らせて撃つ（跳ねるほど強く、5回以上で貫通）', '3回跳ね返る軌道で物陰の敵を撃つ'],
+    ['3発を角度を変えてばらまく', '3発ばらまいて逃げ道をふさぐ'],
+  ],
+  kito: [
+    ['建物の中で、相手も中にいる時に最後の出口を閉めると密室（炎で囲み、誰も出られない）', '家に追い込んで扉を閉める'],
+    ['開けられた扉・窓を閉め直す（自分が閉めた出口は戻る）', '開いた窓を閉め直す'],
+  ],
+};
+const STAND_COMMON = [['スタンドを出す・先行させる・戻す（射程の分だけ先へ行かせて覗く／殴る間合いが伸びる／飛び道具を受け止める。出している間はエネルギーが減る）', 'スタンドを右へ先行させる']];
+
+function standTipsHtml(c) {
+  const tips = [...(STAND_TIPS[c.charId] || []), ...(c.def.standRange ? STAND_COMMON : [])];
+  return `<ul>${tips.map(([what, ex]) => `<li>${what}<br><span class="ex" data-ex="${ex}">例：「${ex}」</span></li>`).join('')}</ul>`;
+}
 
 // ---------- API ----------
 
@@ -302,6 +334,8 @@ function startBattle() {
   $('#cmd').value = '';
   const ex = $('#examples');
   ex.innerHTML = '<option value="">例文…</option>' + EXAMPLES[state.chosen].map(t => `<option>${t}</option>`).join('');
+  $('#stand-tips').querySelector('summary').textContent = `『${b.player.stand}』でできること`;
+  $('#stand-tips-body').innerHTML = standTipsHtml(b.player);
   $('#ability-ref').innerHTML = b.player.def.abilities.map(abilityHtml).join('') +
     `<h4>基本行動</h4><ul>${Object.values(ACTIONS).filter(a => a !== ACTIONS.ability).map(a => `<li><b>${a.name}</b>：${a.desc}</li>`).join('')}</ul>
      <p class="meta">1回の指示は最大${RULES.maxSteps}手順・見積もり${RULES.budgetSeconds}秒まで。</p>`;
@@ -682,6 +716,11 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#cmd').addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitCommand(); }
     if (e.key === 'Escape') $('#cmd').blur();
+  });
+  // 「スタンドでできること」の例文をクリックすると入力欄に入る
+  $('#stand-tips-body').addEventListener('click', e => {
+    const ex = e.target.closest('[data-ex]');
+    if (ex) { $('#cmd').value = ex.dataset.ex; $('#cmd').focus(); }
   });
   $('#examples').addEventListener('change', e => {
     if (e.target.value) { $('#cmd').value = e.target.value; e.target.value = ''; $('#cmd').focus(); }

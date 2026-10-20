@@ -139,8 +139,10 @@ function nanamiPlan(b, c, pe, say) {
     steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
     return { interpretation: '（CPU・ローカル）囮の足音を置いて身を隠す', speech: null, steps };
   }
-  if (visible && !alive.some(u => (u.state === 'attached' || u.state === 'attach') && (u.attachedTo === e.id || u.target?.char === e))) {
-    steps.push({ action: 'ability', ability: 'echo', effect: 'attach', targetType: 'enemy' });
+  // 見えている敵には、空いている個体を群がらせて引っかく（音集めの合間のけん制）
+  const spare = alive.filter(u => u.state === 'home' || (u.state === 'deployed' && !u.sound)).length;
+  if (visible && d < 30 && spare >= 8 && !alive.some(u => u.state === 'scratch')) {
+    steps.push({ action: 'ability', ability: 'echo', effect: 'scratch', targetType: 'enemy', count: 6 });
   }
   // 大きな音を集める：個体を配置して、近くの物（窓・木箱・車）を叩いて鳴らす
   const deployedFree = alive.filter(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, c.x, c.y) < 1.5).length;

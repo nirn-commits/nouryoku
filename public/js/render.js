@@ -68,6 +68,7 @@ function onomatopoeia(f) {
     case 'ball': return f.dmg >= 22 ? 'ドギュン' : 'ビシッ';
     case 'thrown': return strong ? 'ガシャァン' : 'ゴッ';
     case 'roar': return 'ゴォォン';
+    case 'scratch': return 'ビシッ';
     case 'burn': return 'ジュウッ';
     case 'fall': return 'ドサッ';
     case 'launch_impact': case 'slam': return 'ドグシャァ';
@@ -291,20 +292,44 @@ export class Renderer {
     // 密室の炎
     for (const bd of b.world.buildings) if (bd.sealed) this.drawFlames(b, bd);
 
-    // エコー・ビーチの個体：自分の個体は常に、相手の個体はすぐそば（2.5m以内）だけ見える
+    // エコー・ビーチの個体：自分と味方の個体は常に、相手の個体はすぐそば（2.5m以内）だけ見える
+    // 近くに固まった個体はまとめて、スタンドのチップ1つと体数の数字で示す
     for (const c of b.chars) {
       if (!c.units) continue;
-      for (const u of c.units) {
-        if (u.state === 'dead' || u.state === 'home') continue;
-        const mine = c === me;
-        if (!mine && !debug && (u.floor !== me.floor || Math.hypot(u.x - me.x, u.y - me.y) > 2.5)) continue;
-        const uz = u.floor * FLOOR_H + (u.state === 'attached' ? 1.4 : 0.6);
-        const ux = u.x * P, uy = this.sy(u.y, uz);
-        ctx.fillStyle = u.sound ? (b.isLoud(u.sound) ? '#ff7b54' : '#ffe08a') : '#7ad1c5';
-        ctx.beginPath();
-        ctx.moveTo(ux, uy - 4); ctx.lineTo(ux + 3, uy); ctx.lineTo(ux, uy + 4); ctx.lineTo(ux - 3, uy);
-        ctx.closePath();
-        ctx.fill();
+      const shown = c.units.filter(u => {
+        if (u.state === 'dead' || u.state === 'home' || u.state === 'attached') return false;
+        if (c.team === me.team || debug) return true;
+        return u.floor === me.floor && Math.hypot(u.x - me.x, u.y - me.y) <= 2.5;
+      });
+      const groups = [];
+      for (const u of shown) {
+        const g = groups.find(q => q.floor === u.floor && Math.hypot(q.x - u.x, q.y - u.y) < 0.9);
+        if (g) { g.list.push(u); g.x = (g.x * (g.list.length - 1) + u.x) / g.list.length; g.y = (g.y * (g.list.length - 1) + u.y) / g.list.length; }
+        else groups.push({ x: u.x, y: u.y, floor: u.floor, list: [u] });
+      }
+      const schip = this.chips && this.chips[`${c.charId}_stand`];
+      for (const g of groups) {
+        const gz = g.floor * FLOOR_H + 0.2;
+        const ux = g.x * P, uy = this.sy(g.y, gz);
+        const loud = g.list.filter(u => b.isLoud(u.sound)).length;
+        const held = g.list.filter(u => u.sound).length;
+        const badge = loud ? '#ff7b54' : held ? '#ffe08a' : '#7ad1c5';
+        const size = Math.max(20, Math.round(chipSizeFor(P) * 0.42 / 4) * 4);
+        if (schip) this.drawChip(schip, ux, uy, size, Math.PI / 2, 0, b.t, { alpha: 0.9, glow: c.color });
+        else {
+          ctx.fillStyle = badge;
+          ctx.beginPath(); ctx.moveTo(ux, uy - 6); ctx.lineTo(ux + 4, uy - 2); ctx.lineTo(ux, uy + 2); ctx.lineTo(ux - 4, uy - 2); ctx.closePath(); ctx.fill();
+        }
+        // 体数（音を抱えていれば色が変わる。「轟」は大きな音、「音」はそれ以外の音を抱えた数）
+        const label = `${g.list.length}体${loud ? `・轟${loud}` : held ? `・音${held}` : ''}`;
+        ctx.font = `bold ${Math.max(10, Math.round(size * 0.38))}px sans-serif`;
+        const tw = ctx.measureText(label).width + 8;
+        const bx = ux + size * 0.25, by = uy - size * 0.95;
+        ctx.fillStyle = 'rgba(0,0,0,0.75)';
+        ctx.beginPath(); ctx.roundRect ? ctx.roundRect(bx, by, tw, size * 0.42, 6) : ctx.rect(bx, by, tw, size * 0.42); ctx.fill();
+        ctx.strokeStyle = badge; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = badge;
+        ctx.fillText(label, bx + 4, by + size * 0.34);
       }
     }
 

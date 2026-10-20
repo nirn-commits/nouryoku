@@ -176,15 +176,14 @@ const IMPL = {
         log(`${pick.length}体を(${p.x.toFixed(1)}, ${p.y.toFixed(1)})へ送り、聞き耳を立てさせる`);
         return { ok: true };
       }
-      case 'attach': {
+      case 'scratch': {
         const e = b.enemyOf(c);
         if (res.error) return fail(res.error);
         if (!inRange50(e)) return fail('敵が50mより遠い');
-        if (alive.some(u => (u.state === 'attached' || u.state === 'attach') && u.attachedTo === e.id || (u.state === 'attach' && u.target.char === e))) return fail('既に敵に個体が向かっている');
-        const u = free()[0];
-        if (!u) return fail('空いている個体がない');
-        u.state = 'attach'; u.target = { char: e };
-        log(`◆${u.n}を${e.name}へ飛ばす（取り付けば足音と声を奪える）`);
+        const pick = free().slice(0, Math.min(12, Math.max(1, step.count ?? 6)));
+        if (!pick.length) return fail('空いている個体がない');
+        for (const u of pick) { u.state = 'scratch'; u.attachedTo = null; u.target = { char: e }; u.since = b.t; u.armed = false; }
+        log(`${pick.length}体を${e.name}へ飛ばし、群がって引っかかせる`);
         return { ok: true };
       }
       case 'place': {

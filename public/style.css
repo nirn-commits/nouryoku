@@ -169,3 +169,9 @@ button:disabled { opacity: .5; cursor: default; }
 .chips { display: flex; gap: 6px; justify-content: center; margin: 4px 0; }
 .chip { width: 96px; height: 96px; image-rendering: pixelated; background: rgba(255,255,255,0.05); border-radius: 6px; }
 .cutin.pixel img { image-rendering: pixelated; height: 192px; }
+
+.stand-tips summary { cursor: pointer; font-weight: bold; }
+.stand-tips ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.5; }
+.stand-tips li { margin-bottom: 4px; }
+.stand-tips .ex { color: #9be7ff; cursor: pointer; font-size: 12px; }
+.stand-tips .ex:hover { text-decoration: underline; }

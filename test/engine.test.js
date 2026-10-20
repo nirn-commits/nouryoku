@@ -405,20 +405,25 @@ test('七海：配置した個体が近くの大きな音を拾い、集めた�
   assert.ok(foe.status.deafUntil > b.t, '耳が聞こえなくなっていない');
 });
 
-test('七海：取り付いた個体は足音を奪い、払われると本体が傷を負う', () => {
+test('七海：個体を群がらせて引っかき、そばに残った個体は払われると本体が傷を負う', () => {
   const b = new Battle({ seed: 34, mapId: 'lot', playerChar: 'kito', cpuChar: 'nanami' });
   const me = b.player, foe = b.cpu;
-  me.x = 20; me.y = 9; foe.x = 4; foe.y = 17;
-  const u = foe.units.find(x => x.state === 'home');
-  u.state = 'attached'; u.attachedTo = me.id;
-  for (let i = 0; i < 3; i++) b.noise(me, 6, 'footsteps_run');
-  assert.ok(u.sound && u.sound.kind.startsWith('footsteps'), '足音を拾っていない');
-  assert.ok(me.memory.suspectAttached, '音が消えたことに気づいていない');
-  const hp = foe.hp;
+  me.x = 27; me.y = 9; me.floor = foe.floor = 0;
+  foe.x = 20; foe.y = 9; foe.facing = 0;
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'wait', targetType: 'none', duration: 3 }] }));
+  const plan = compilePlan(b, foe, localParse(b, foe, 'エコー・ビーチ5体で敵を引っかく'));
+  assert.equal(plan.steps[0].effect, 'scratch');
+  b.setPlan(foe, plan);
+  const hp = me.hp;
+  runFor(b, 2.5);
+  assert.ok(me.hp < hp && hp - me.hp <= 6, `引っかきのダメージがおかしい（${hp - me.hp}）`);
+  const near = foe.units.filter(u => u.state === 'deployed' && dist(u.x, u.y, me.x, me.y) <= 1.2).length;
+  assert.ok(near >= 3, '引っかいた個体が敵のそばに残っていない');
+  const fhp = foe.hp;
   b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'swat', targetType: 'self' }] }));
   runFor(b, 2);
-  assert.equal(u.state, 'dead');
-  assert.ok(foe.hp < hp);
+  assert.ok(foe.hp < fhp, '払っても本体が傷を負っていない');
+  assert.ok(!compilePlan(b, foe, { steps: [{ action: 'ability', ability: 'echo', effect: 'attach', targetType: 'enemy' }] }).steps.some(s => s.effect === 'attach'), '取り付くが残っている');
 });
 
 test('鷺沼：弾は壁で跳ね返るたびに威力が上がり、跳弾で物陰を狙える', () => {

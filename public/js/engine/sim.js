@@ -1115,7 +1115,7 @@ export class Battle {
         continue;
       }
       if (u.state === 'deployed') continue;
-      // 移動中（move / attach / place / roar / recall）
+      // 移動中（move / place / roar / scratch / recall）
       const host = u.target && u.target.char ? u.target.char : null;
       const tx = host ? host.x : u.target.x, ty = host ? host.y : u.target.y;
       const d = dist(u.x, u.y, tx, ty);
@@ -1134,7 +1134,24 @@ export class Battle {
       if (u.state === 'attach') { u.state = 'attached'; u.attachedTo = host.id; continue; }
       if (u.state === 'place') { this.playSound(owner, u); u.state = 'deployed'; continue; }
       if (u.state === 'move') { u.state = 'deployed'; continue; }
-      if (u.state === 'roar') u.armed = true;
+      if (u.state === 'roar' || u.state === 'scratch') u.armed = true;
+    }
+    // 引っかき：届いた個体の数だけ小さな傷を負わせ、個体はそのまま敵のそばに残る
+    const scratch = owner.units.filter(u => u.state === 'scratch');
+    if (scratch.length && (scratch.every(u => u.armed) || this.t - scratch[0].since > 3)) {
+      const target = scratch[0].target.char;
+      const hit = scratch.filter(u => u.armed && u.floor === target.floor && dist(u.x, u.y, target.x, target.y) < 1.5);
+      for (const u of scratch) {
+        u.state = 'deployed';
+        u.armed = false;
+        // 敵の足元に散らばる
+        const a = (u.n / 24) * Math.PI * 2;
+        u.x = target.x + Math.cos(a) * 0.5; u.y = target.y + Math.sin(a) * 0.5;
+      }
+      if (hit.length && target.alive) {
+        this.emit({ text: `『エコー・ビーチ』— ${hit.length}体が${target.name}に群がって引っかいた！`, obsText: `小さな何かが群がって体中を引っかいてくる！`, kind: 'ability', actor: owner, affected: target, pos: target, hint: ABILITIES.echo.observedHint });
+        this.damage(target, hit.length * RULES.scratchDamage, { source: owner, kind: 'scratch', label: '小さな爪の引っかき' });
+      }
     }
     // 轟音：全員が耳元に着いた（または2秒経った）ら一斉に鳴らす
     if (roar.length && (roar.every(u => u.armed) || this.t - roar[0].since > 2)) {
