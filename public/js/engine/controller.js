@@ -12,7 +12,7 @@ export class TurnController {
     this.cpuTimeoutMs = cpuTimeoutMs;
     this.turn = 0;
     this.phase = 'input'; // input | resolving | execute | over
-    this.cpuPlanPromise = null;
+    this.cpuPlanPromises = new Map();
     this.cpuSource = null;
     this.execStart = 0;
     this.remoteFailures = 0;
@@ -26,15 +26,15 @@ export class TurnController {
     this.turn++;
     this.phase = 'input';
     b.emit({ text: `―― 第${this.turn}手：入力ターン ――`, kind: 'system', all: true });
-    this.cpuPlanPromise = this.planCpu();
+    this.cpuPlanPromises = new Map(b.chars.filter(c => c.isCPU && c.alive).map(c => [c, this.planCpu(c)]));
   }
 
-  async planCpu() {
-    const b = this.b, c = b.cpu;
+  async planCpu(c) {
+    const b = this.b;
     if (this.cpuRemote && this.remoteFailures < 3) {
       const obs = buildObservation(b, c);
       try {
-        const raw = await withTimeout(this.cpuRemote(obs), this.cpuTimeoutMs);
+        const raw = await withTimeout(this.cpuRemote(obs, c), this.cpuTimeoutMs);
         const plan = compilePlan(b, c, raw, 'gemini');
         if (plan.steps.length || plan.speech) {
           this.remoteFailures = 0;
@@ -42,7 +42,7 @@ export class TurnController {
         }
       } catch (e) {
         this.remoteFailures++;
-        b.emit({ text: `（CPU側の Gemini 呼び出しに失敗したため、CPU は簡易思考で行動します：${e.message}）`, kind: 'fail', all: true });
+        b.emit({ text: `（${c.name}の Gemini 呼び出しに失敗したため、簡易思考で行動します：${e.message}）`, kind: 'fail', all: true });
       }
     }
     return compilePlan(b, c, localCpuPlan(b, c), 'local');
@@ -52,12 +52,13 @@ export class TurnController {
   async commit(playerPlan) {
     if (this.phase !== 'input') return false;
     this.phase = 'resolving';
-    const cpuPlan = await this.cpuPlanPromise;
+    const entries = [...this.cpuPlanPromises];
+    const plans = await Promise.all(entries.map(([, p]) => p));
     const b = this.b;
     if (b.over) { this.phase = 'over'; return false; }
     b.emit({ text: `―― 第${this.turn}手：実行 ――`, kind: 'system', all: true });
-    b.setPlan(b.player, playerPlan);
-    b.setPlan(b.cpu, cpuPlan);
+    if (b.player.alive) b.setPlan(b.player, playerPlan);
+    entries.forEach(([c], i) => { if (c.alive) b.setPlan(c, plans[i]); });
     this.execStart = b.t;
     this.phase = 'execute';
     return true;

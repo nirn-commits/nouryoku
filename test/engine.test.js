@@ -435,3 +435,69 @@ test('鷺沼：弾は壁で跳ね返るたびに威力が上がり、跳弾で�
   assert.ok(b.log.some(l => /[1-7]回跳ねた弾/.test(l.text)), '跳ね返っていない');
   assert.equal(me.hp, me.maxHp, '撃った直後の弾が自分に当たった');
 });
+
+test('2対2：4人が出現し、CPU同士のチーム戦が例外なく決着する', async () => {
+  const ids = ['sogo', 'kito', 'nanami', 'saginuma'];
+  for (let seed = 1; seed <= 4; seed++) {
+    const r = i => ids[(seed + i) % 4];
+    const b = new Battle({ seed, playerChar: r(0), allyChar: r(1), cpuChar: r(2), cpu2Char: r(3), mapId: seed % 2 ? 'town' : 'lot' });
+    assert.equal(b.chars.length, 4);
+    assert.deepEqual(b.chars.map(c => c.team), [0, 1, 0, 1]);
+    for (const c of b.chars) assert.ok(isWalkablePoint(b.world, c.x, c.y), `${c.id} が歩けない場所に出現した`);
+    const tc = new TurnController(b);
+    while (!b.over && tc.turn <= 70) {
+      const plan = compilePlan(b, b.player, b.player.alive ? localCpuPlan(b, b.player) : { steps: [] });
+      await tc.commit(plan);
+      while (tc.phase === 'execute') tc.step();
+    }
+    assert.ok(b.over, `seed ${seed} が決着しない`);
+    assert.ok(b.winnerTeam === null || !b.chars.some(c => c.team !== b.winnerTeam && c.alive), '負けたチームに生存者がいる');
+  }
+});
+
+test('2対2：名前で狙う敵を選べ、味方が見た敵の位置は共有される', () => {
+  const b = new Battle({ seed: 41, mapId: 'lot', playerChar: 'kito', allyChar: 'sogo', cpuChar: 'nanami', cpu2Char: 'saginuma' });
+  const plan = compilePlan(b, b.player, localParse(b, b.player, '鷺沼を追いかけて殴る'));
+  assert.ok(plan.steps.length >= 1);
+  assert.equal(plan.steps[0].target.charId, 'cpu2');
+  assert.ok(plan.steps[0].label.includes('鷺沼'));
+  // 味方だけが敵を見ている
+  b.player.x = 4; b.player.y = 17; b.player.facing = Math.PI;
+  b.ally.x = 20; b.ally.y = 9; b.ally.facing = 0;
+  b.cpu2.x = 27; b.cpu2.y = 9; b.cpu.x = 33; b.cpu.y = 3;
+  assert.ok(!b.canSee(b.player, b.cpu2.x, b.cpu2.y));
+  b.step();
+  const rec = b.player.memory.seen.cpu2;
+  assert.ok(rec, '味方の目撃が共有されていない');
+  assert.equal(rec.via, b.ally.name);
+  const obs = buildObservation(b, b.player);
+  assert.equal(obs.allies.length, 1);
+  assert.equal(obs.enemies.length, 2);
+  assert.equal(obs.enemies.find(e => e.id === 'cpu2').last_seen.reported_by, b.ally.name);
+});
+
+test('2対2：投げた物は味方には当たらない', () => {
+  const b = new Battle({ seed: 42, mapId: 'lot', playerChar: 'sogo', allyChar: 'kito', cpuChar: 'nanami', cpu2Char: 'saginuma' });
+  b.player.x = 20; b.player.y = 9; b.player.facing = 0;
+  b.ally.x = 23; b.ally.y = 9;
+  b.cpu.x = 27; b.cpu.y = 9; b.cpu2.x = 4; b.cpu2.y = 17;
+  for (const c of b.chars) b.setPlan(c, compilePlan(b, c, { steps: [{ action: 'wait', targetType: 'none', duration: 3 }] }));
+  b.spawnThrown(b.player, makeItem('brick', 0, 0), 20, 9, 27, 9);
+  const hpAlly = b.ally.hp, hpFoe = b.cpu.hp;
+  runFor(b, 1.5);
+  assert.equal(b.ally.hp, hpAlly, '味方に当たった');
+  assert.ok(b.cpu.hp < hpFoe, '味方の向こうの敵に届いていない');
+});
+
+test('2対2：片方が倒れても味方が残っていれば続き、相手チーム全滅で勝ち', () => {
+  const b = new Battle({ seed: 43, mapId: 'lot', playerChar: 'sogo', allyChar: 'kito', cpuChar: 'nanami', cpu2Char: 'saginuma' });
+  b.damage(b.player, 999, { kind: 'debris' });
+  b.step();
+  assert.ok(!b.over, '1人倒れただけで決着した');
+  b.damage(b.cpu, 999, { kind: 'debris' });
+  b.damage(b.cpu2, 999, { kind: 'debris' });
+  b.step();
+  assert.ok(b.over);
+  assert.equal(b.winnerTeam, 0);
+  assert.ok(b.fx.some(f => f.kind === 'ko') && b.fx.some(f => f.kind === 'hit'), '演出用の打撃・KO イベントが出ていない');
+});

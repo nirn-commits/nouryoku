@@ -18,6 +18,14 @@ const state = {
   model: '',
   chosen: 'sogo',
   opponent: 'random',
+  opponent2: 'random',
+  ally: 'random',
+  mode: '2v2',
+  sfx: (() => { try { return localStorage.getItem('sfx') !== 'off'; } catch { return true; } })(),
+  freezeUntil: 0, // ヒットストップ（実時間）
+  slowUntil: 0, // 決着時のスローモーション
+  lastFx: 0,
+  autoTurn: 0,
   mapId: 'town',
   battle: null,
   turn: null,
@@ -31,7 +39,7 @@ const state = {
   thinkingSince: 0,
   clientTimeoutMs: 95000,
   hover: null,
-  logCount: 0,
+  logSeen: new WeakSet(),
   ended: false,
 };
 
@@ -222,33 +230,52 @@ function renderCharCards() {
       <div class="meta">HP ${c.hp} / 体重${c.kg}kg / 歩き${c.walk}m/s・走り${c.run}m/s</div>
       ${c.abilities.map(abilityHtml).join('')}
     </div>`).join('');
-  const sel = $('#opponent');
-  sel.innerHTML = '<option value="random">ランダム（自分以外）</option>' +
-    Object.values(CHARACTERS).map(c => `<option value="${c.id}" ${state.opponent === c.id ? 'selected' : ''}>${c.name}『${c.stand}』${c.id === state.chosen ? '（同キャラ対決）' : ''}</option>`).join('');
-  sel.value = state.opponent;
+  for (const [sel, key] of [['#opponent', 'opponent'], ['#opponent2', 'opponent2'], ['#ally', 'ally']]) {
+    $(sel).innerHTML = '<option value="random">ランダム</option>' +
+      Object.values(CHARACTERS).map(c => `<option value="${c.id}">${c.name}『${c.stand}』${c.id === state.chosen ? '（自分と同じ）' : ''}</option>`).join('');
+    $(sel).value = state[key];
+  }
+  $('#mode').value = state.mode;
+  document.querySelectorAll('.team-only').forEach(el => el.classList.toggle('hidden', state.mode !== '2v2'));
 }
 
-function pickOpponent() {
-  if (state.opponent !== 'random') return state.opponent;
-  const others = Object.keys(CHARACTERS).filter(id => id !== state.chosen);
-  return others[Math.floor(Math.random() * others.length)];
+// 出場キャラを決める。ランダムはまだ出ていないキャラから選ぶ（足りなければ重複可）
+function pickLineup() {
+  const used = [state.chosen];
+  const pick = want => {
+    if (want !== 'random') { used.push(want); return want; }
+    const pool = Object.keys(CHARACTERS).filter(id => !used.includes(id));
+    const list = pool.length ? pool : Object.keys(CHARACTERS).filter(id => id !== state.chosen);
+    const id = list[Math.floor(Math.random() * list.length)];
+    used.push(id);
+    return id;
+  };
+  const team = state.mode === '2v2';
+  // 指定済みのキャラを先に確保してから、ランダムを埋める
+  for (const k of ['ally', 'opponent', 'opponent2']) if (state[k] !== 'random' && (team || k === 'opponent')) used.push(state[k]);
+  const cpuChar = state.opponent !== 'random' ? state.opponent : pick('random');
+  const allyChar = team ? (state.ally !== 'random' ? state.ally : pick('random')) : null;
+  const cpu2Char = team ? (state.opponent2 !== 'random' ? state.opponent2 : pick('random')) : null;
+  return { cpuChar, allyChar, cpu2Char };
 }
 
 // ---------- 戦闘 ----------
 
 function startBattle() {
-  const cpuChar = pickOpponent();
-  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, cpuChar, mapId: state.mapId });
+  const lineup = pickLineup();
+  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, ...lineup, mapId: state.mapId });
   state.battle = b;
   state.ended = false;
-  state.logCount = 0;
+  state.logSeen = new WeakSet();
   state.acc = 0;
   state.paused = false;
-  const cdef = CHARACTERS[cpuChar];
+  state.freezeUntil = state.slowUntil = 0;
+  state.lastFx = 0;
+  state.autoTurn = 0;
   state.turn = new TurnController(b, {
     cpuTimeoutMs: state.clientTimeoutMs,
     cpuRemote: state.gemini
-      ? obs => apiPlan({ role: 'cpu', observation: obs, character: { name: cdef.name, stand: cdef.stand, personality: cdef.personality } })
+      ? (obs, c) => apiPlan({ role: 'cpu', observation: obs, character: { name: c.def.name, stand: c.def.stand, personality: c.def.personality } })
       : null,
   });
   state.lastPhase = null;
@@ -319,9 +346,9 @@ function updatePhase() {
   $('#send-btn').disabled = !input;
   $('#send-btn').textContent = state.thinking ? `解析中… ${Math.floor((performance.now() - state.thinkingSince) / 1000)}秒` : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
   const label = {
-    input: `第${turn.turn}手：入力ターン（時間停止中）`,
+    input: state.battle && !state.battle.player.alive ? `第${turn.turn}手：観戦中（味方の戦いを見守っています）` : `第${turn.turn}手：入力ターン（時間停止中）`,
     resolving: `第${turn.turn}手：相手の作戦を待っています…`,
-    execute: `第${turn.turn}手：双方の行動を実行中`,
+    execute: `第${turn.turn}手：全員の行動を実行中`,
     over: '決着',
   }[phase];
   $('#phase-label').textContent = label;
@@ -343,7 +370,7 @@ function bar(cls, v, max, label) {
 
 function renderSide() {
   const b = state.battle;
-  const me = b.player, foe = b.cpu;
+  const me = b.player;
   const st = [];
   if (me.status.proneUntil > b.t) st.push('転倒');
   if (me.status.stunUntil > b.t) st.push('怯み');
@@ -364,15 +391,30 @@ function renderSide() {
     <div class="meta">${cds}</div>
     <div class="meta">${st.join('・')}</div>`;
 
-  const vis = foe.alive && b.canSee(me, foe.x, foe.y);
-  const ls = me.memory.lastSeen;
-  $('#enemy-card').style.setProperty('--c', foe.color);
-  $('#enemy-card').innerHTML = `${portrait(foe.charId, 'mini')}
-    <h3>敵：${foe.name} ${vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}</h3>
-    ${vis || DEBUG ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
-    <div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後に見た位置 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前` : '一度も姿を見ていない'}</div>
-    <div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>
-    ${DEBUG ? `<div class="meta debug">[debug] CPU計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}`;
+  const ally = b.alliesOf(me)[0];
+  const allyCard = $('#ally-card');
+  allyCard.classList.toggle('hidden', !ally);
+  if (ally) {
+    const abd = b.buildingOf(ally);
+    const ap = ally.runner.plan;
+    const cur = ap && ap.steps[Math.max(0, ally.runner.idx - 1)];
+    allyCard.style.setProperty('--c', ally.color);
+    allyCard.innerHTML = `${portrait(ally.charId, 'mini')}<h3>味方：${ally.name} <small>『${ally.stand}』</small></h3>
+      ${ally.alive ? bar('hp', ally.hp, ally.maxHp, `HP ${Math.round(ally.hp)}/${ally.maxHp}`) : '<div class="meta"><b>再起不能</b></div>'}
+      ${ally.alive ? `<div class="meta">距離 ${dist(me.x, me.y, ally.x, ally.y).toFixed(1)}m・${abd ? `${abd.name}の${ally.floor + 1}階` : '屋外'}${ally.held ? `・${ally.held.name}` : ''}</div>
+      <div class="meta">狙い：${b.enemyOf(ally).name}／${cur && ally.runner.step ? `行動中：${cur.label}` : '待機'}</div>` : ''}`;
+  }
+  const foes = b.enemiesOf(me);
+  $('#enemy-card').innerHTML = foes.map(foe => {
+    const vis = foe.alive && b.canSee(me, foe.x, foe.y);
+    const ls = me.memory.seen[foe.id];
+    const target = foe.alive && b.enemyOf(me) === foe && foes.filter(f => f.alive).length > 1;
+    return `<div class="foe" style="--c:${foe.color}">${portrait(foe.charId, 'mini')}
+    <h3>敵：${foe.name} ${!foe.alive ? '<span class="tag">再起不能</span>' : vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}${target ? ' <span class="tag focus">狙い</span>' : ''}</h3>
+    ${foe.alive && (vis || DEBUG) ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
+    ${foe.alive ? `<div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後の目撃 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前${ls.via ? `（${ls.via}の報告）` : ''}` : '一度も姿を見ていない'}</div>` : ''}
+    ${DEBUG ? `<div class="meta debug">[debug] 計画:${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}</div>`;
+  }).join('') + `<div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>`;
 
   const plan = me.runner.plan;
   $('#plan-source').textContent = plan ? (plan.source === 'gemini' ? 'Gemini' : 'ローカル解析') : '';
@@ -392,21 +434,23 @@ function renderSide() {
 function renderLog() {
   const b = state.battle;
   const me = b.player;
-  const entries = b.log.filter(l => DEBUG || l.visibleTo.has(me.id));
-  if (entries.length === state.logCount) return;
-  const fresh = entries.slice(state.logCount);
-  state.logCount = entries.length;
+  const team = new Set(b.chars.filter(c => c.team === me.team && (c === me || !me.alive)).map(c => c.id));
+  const entries = b.log.filter(l => DEBUG || [...team].some(id => l.visibleTo.has(id)));
+  // 表示済みの記録は覚えておき、新しいものだけ足す（観戦に切り替わっても重複しない）
+  const fresh = entries.slice(-60).filter(l => !state.logSeen.has(l));
+  if (!fresh.length) return;
+  for (const l of fresh) state.logSeen.add(l);
   const log = $('#log');
   for (const l of fresh) {
     const p = document.createElement('p');
     p.className = `k-${l.kind}`;
-    const text = l.actor === me.id || DEBUG ? l.text : l.obsText || l.text;
+    const text = team.has(l.actor) || DEBUG ? l.text : l.obsText || l.text;
     p.innerHTML = `<span class="t">${l.t.toFixed(1)}</span> ${escapeHtml(text)}`;
     if (l.heardBy.has(me.id) && l.kind !== 'speech') p.innerHTML += ' <span class="heard">（音）</span>';
     log.prepend(p);
     if (l.kind === 'ability') {
       const c = b.chars.find(ch => ch.id === l.actor);
-      if (c && (c === me || DEBUG || b.canSee(me, c.x, c.y))) showCutin(c, text);
+      if (c && (c.team === me.team || DEBUG || b.canSee(me, c.x, c.y))) showCutin(c, text);
     }
   }
   while (log.children.length > 200) log.lastChild.remove();
@@ -419,10 +463,83 @@ function escapeHtml(s) {
 function showResult() {
   const b = state.battle;
   state.ended = true;
-  const won = b.winner === b.player;
-  $('#result-title').textContent = b.winner ? (won ? '勝利！' : '敗北……') : '相打ち';
-  $('#result-body').textContent = b.winner ? `${b.winner.name}『${b.winner.stand}』の勝ち（${b.t.toFixed(1)}秒）` : '両者再起不能';
-  setTimeout(() => $('#result').classList.remove('hidden'), 800);
+  const won = b.winnerTeam === b.player.team;
+  const team = b.teamSize > 1;
+  $('#result-title').textContent = b.winnerTeam === null ? '相打ち' : won ? '勝利！' : '敗北……';
+  const names = b.winnerTeam === null ? '' : b.chars.filter(c => c.team === b.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
+  $('#result-body').textContent = b.winnerTeam === null ? '全員再起不能' : `${names}${team ? 'のチーム' : ''}の勝ち（${b.t.toFixed(1)}秒）`;
+  setTimeout(() => $('#result').classList.remove('hidden'), 1800);
+}
+
+// ---------- 戦闘の演出：ヒットストップ・画面揺れ・効果音 ----------
+
+let audio = null;
+function sfx(kind, power = 1) {
+  if (!state.sfx) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime;
+    const out = audio.createGain();
+    out.gain.setValueAtTime(Math.min(0.5, 0.12 + power * 0.25), t);
+    out.gain.exponentialRampToValueAtTime(0.001, t + (kind === 'ko' ? 0.9 : 0.25));
+    out.connect(audio.destination);
+    // 打撃音：低い唸り＋短いノイズ
+    const osc = audio.createOscillator();
+    osc.type = kind === 'ability' ? 'sawtooth' : 'sine';
+    osc.frequency.setValueAtTime(kind === 'ability' ? 220 : kind === 'ko' ? 90 : 140, t);
+    osc.frequency.exponentialRampToValueAtTime(kind === 'ability' ? 660 : 40, t + (kind === 'ko' ? 0.8 : 0.2));
+    osc.connect(out); osc.start(t); osc.stop(t + 1);
+    if (kind !== 'ability') {
+      const len = Math.floor(audio.sampleRate * 0.12);
+      const buf = audio.createBuffer(1, len, audio.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+      const src = audio.createBufferSource();
+      src.buffer = buf;
+      const f = audio.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 900 + power * 1800;
+      src.connect(f); f.connect(out); src.start(t);
+    }
+  } catch { /* 音が出せない環境では無視 */ }
+}
+
+// 新しく起きた演出用エフェクトを拾い、ヒットストップ・揺れ・効果音に変える
+function viewerOf(b) {
+  return b.player.alive ? b.player : b.alliesOf(b.player).find(a => a.alive) || b.player;
+}
+
+function handleImpacts(now) {
+  const b = state.battle;
+  const me = viewerOf(b);
+  for (const f of b.fx) {
+    if (!f.seq || f.seq <= state.lastFx) continue;
+    state.lastFx = Math.max(state.lastFx, f.seq);
+    if (!DEBUG && f.visibleTo && !f.visibleTo.has(me.id)) continue;
+    if (f.kind === 'hit') {
+      const power = Math.min(1, f.dmg / 30);
+      state.freezeUntil = Math.max(state.freezeUntil, now + 40 + power * 190);
+      state.renderer.kick(3 + power * 12);
+      if (f.dmg >= 15) flashScreen(f.target === me.id ? 'rgba(255,60,60,0.35)' : 'rgba(255,255,255,0.35)');
+      sfx('hit', power);
+    } else if (f.kind === 'ko') {
+      state.freezeUntil = Math.max(state.freezeUntil, now + 260);
+      state.slowUntil = now + 1600;
+      state.renderer.kick(16);
+      flashScreen('rgba(255,255,255,0.55)');
+      sfx('ko', 1);
+    } else if (f.kind === 'flash') {
+      sfx('ability', 0.4);
+    }
+  }
+}
+
+function flashScreen(color) {
+  const el = $('#screen-flash');
+  el.style.background = color;
+  el.classList.remove('on');
+  void el.offsetWidth;
+  el.classList.add('on');
 }
 
 function loop(now) {
@@ -431,8 +548,16 @@ function loop(now) {
   const b = state.battle;
   if (b && !$('#battle').classList.contains('hidden')) {
     // 時間が進むのは実行フェーズの間だけ
-    if (!state.paused && state.turn.phase === 'execute') {
-      state.acc += dtReal * state.speed;
+    handleImpacts(now);
+    // 自分がやられた後は、味方の戦いを観戦する（入力ターンは自動で進む）
+    if (state.turn.phase === 'input' && !b.player.alive && state.autoTurn !== state.turn.turn) {
+      state.autoTurn = state.turn.turn;
+      state.turn.commit(compilePlan(b, b.player, { steps: [] }));
+    }
+    const frozen = now < state.freezeUntil;
+    const slow = now < state.slowUntil ? 0.3 : 1;
+    if (!state.paused && !frozen && state.turn.phase === 'execute') {
+      state.acc += dtReal * state.speed * slow;
       let n = 0;
       while (state.acc >= RULES.dt && n++ < 12 && state.turn.phase === 'execute') {
         state.turn.step();
@@ -442,7 +567,9 @@ function loop(now) {
       state.acc = 0;
     }
     updatePhase();
-    state.renderer.draw(b, { debug: DEBUG, hover: state.hover });
+    // 自分がやられたら、生きている味方の視点で観戦する
+    const viewer = viewerOf(b);
+    state.renderer.draw(b, { debug: DEBUG, hover: state.hover, viewer });
     renderSide();
     renderLog();
     if (b.over && !state.ended) showResult();
@@ -475,6 +602,17 @@ window.addEventListener('DOMContentLoaded', async () => {
   preloadPortraits();
   await checkStatus();
   $('#opponent').addEventListener('change', e => { state.opponent = e.target.value; });
+  $('#opponent2').addEventListener('change', e => { state.opponent2 = e.target.value; });
+  $('#ally').addEventListener('change', e => { state.ally = e.target.value; });
+  $('#mode').addEventListener('change', e => { state.mode = e.target.value; renderCharCards(); });
+  const sfxBtn = $('#sfx-btn');
+  const sfxLabel = () => { sfxBtn.textContent = `効果音：${state.sfx ? 'ON' : 'OFF'}`; };
+  sfxLabel();
+  sfxBtn.addEventListener('click', () => {
+    state.sfx = !state.sfx;
+    try { localStorage.setItem('sfx', state.sfx ? 'on' : 'off'); } catch {}
+    sfxLabel();
+  });
   $('#map-cards').addEventListener('click', e => {
     const card = e.target.closest('.map-card');
     if (card) { state.mapId = card.dataset.id; renderMapCards(); }

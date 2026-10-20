@@ -17,15 +17,21 @@
     <h2>あなたが操るキャラクター</h2>
     <div id="char-cards" class="char-cards"></div>
     <div class="opponent-row">
-      <label>対戦相手（CPU）：
-        <select id="opponent"></select>
+      <label>形式：
+        <select id="mode"><option value="2v2">2対2（味方CPUと組む）</option><option value="1v1">1対1</option></select>
       </label>
+      <label class="team-only">味方（CPU）：<select id="ally"></select></label>
+      <label>対戦相手①（CPU）：<select id="opponent"></select></label>
+      <label class="team-only">対戦相手②（CPU）：<select id="opponent2"></select></label>
     </div>
     <div class="start-row"><button id="start-btn" class="big">戦闘開始</button></div>
     <details class="howto">
       <summary>遊び方</summary>
       <ul>
-        <li>戦闘は「入力ターン（時間停止）→ 双方の行動を同時に実行 → 次の入力ターン」の繰り返しです。</li>
+        <li>戦闘は「入力ターン（時間停止）→ 全員の行動を同時に実行 → 次の入力ターン」の繰り返しです。</li>
+        <li>2対2では、あなたと味方CPUのチームで、敵CPU2人と戦います。相手チームを全員倒せば勝ち。味方とは連絡を取り合っていて、位置や味方が見た敵の位置は共有されます。飛び道具は味方には当たりません。</li>
+        <li>「鷺沼を殴る」のように敵の名前（姓・名・スタンド名）を書くと、その敵を狙います。「味方の所へ走る」で合流できます。</li>
+        <li>自分が再起不能になっても、味方が残っていれば観戦で決着まで進みます。</li>
         <li>入力ターンでは、相手も同じ時点の戦況から作戦を立てています（お互いの計画は見えません）。</li>
         <li>入力欄に行動を書いて <kbd>Enter</kbd> で決定。空欄のまま決定すると「その場で様子を見る」になります。</li>
         <li>相手は実行中も動くので、近づくなら「追尾」（例：追いかけて殴る）が有効です。「〜したら」で条件付きの行動も書けます。</li>
@@ -47,6 +53,7 @@
         <div class="field-wrap">
           <canvas id="field"></canvas>
           <div id="pause-badge" class="pause-badge hidden">一時停止中</div>
+          <div id="screen-flash" class="screen-flash"></div>
           <div id="tooltip" class="tooltip hidden"></div>
         </div>
         <div id="phase-label" class="phase"></div>
@@ -69,11 +76,13 @@
             </select>
           </label>
           <span id="time-label" class="time"></span>
+          <button id="sfx-btn" class="small">効果音：ON</button>
           <button id="quit-btn" class="small">タイトルへ</button>
         </div>
       </div>
       <aside class="side">
         <div id="self-card" class="card"></div>
+        <div id="ally-card" class="card ally hidden"></div>
         <div id="enemy-card" class="card enemy"></div>
         <div class="card">
           <h3>現在の行動計画 <span id="plan-source" class="tag"></span></h3>

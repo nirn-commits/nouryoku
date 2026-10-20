@@ -137,20 +137,29 @@ export function buildObservation(b, c) {
     ...(c.memory.suspectAttached ? { notice: '自分の足音や声が消えている。体に何か小さな物が取り付いているかもしれない（swat で払える）' } : {}),
     abilities: abilityCatalog(c),
   };
-  let enemy;
-  if (visible) {
-    const ebd = b.buildingOf(e);
-    enemy = {
-      name: e.name, visible: true, pos: [r1(e.x), r1(e.y)], floor: e.floor + 1, distance: r1(dist(c.x, c.y, e.x, e.y)),
-      facing_deg: deg(e.facing), condition: hpWord(e), state: stateWords(b, e), inside: ebd ? `${ebd.name}の${e.floor + 1}階` : '屋外',
+  const describeEnemy = e => {
+    if (!e.alive) return { id: e.id, name: e.name, stand: e.stand, status: '再起不能' };
+    if (b.canSee(c, e.x, e.y)) {
+      const ebd = b.buildingOf(e);
+      return {
+        id: e.id, name: e.name, visible: true, pos: [r1(e.x), r1(e.y)], floor: e.floor + 1, distance: r1(dist(c.x, c.y, e.x, e.y)),
+        facing_deg: deg(e.facing), condition: hpWord(e), state: stateWords(b, e), inside: ebd ? `${ebd.name}の${e.floor + 1}階` : '屋外',
+      };
+    }
+    const ls = c.memory.seen[e.id];
+    return {
+      id: e.id, name: e.name, visible: false,
+      last_seen: ls ? { pos: [r1(ls.x), r1(ls.y)], floor: (ls.floor ?? 0) + 1, seconds_ago: r1(b.t - ls.t), ...(ls.via ? { reported_by: ls.via } : {}) } : null,
     };
-  } else {
-    const ls = c.memory.lastSeen;
-    enemy = {
-      name: e.name, visible: false,
-      last_seen: ls ? { pos: [r1(ls.x), r1(ls.y)], floor: (ls.floor ?? 0) + 1, seconds_ago: r1(b.t - ls.t) } : null,
-    };
-  }
+  };
+  const enemy = describeEnemy(e);
+  const team = b.teamSize > 1;
+  // 味方とは連絡を取り合っているので、位置と様子は分かる
+  const allies = b.alliesOf(c).map(a => a.alive ? {
+    id: a.id, name: a.name, stand: a.stand, pos: [r1(a.x), r1(a.y)], floor: a.floor + 1, distance: r1(dist(c.x, c.y, a.x, a.y)),
+    hp: Math.round(a.hp), maxHp: a.maxHp, held: a.held ? a.held.name : null, target: a.alive ? b.enemyOf(a).name : null,
+    abilities: a.def.abilities.map(id => ABILITIES[id].name),
+  } : { id: a.id, name: a.name, status: '再起不能' });
   const heard = c.memory.heard
     .filter(h => b.t - h.t < 10)
     .slice(-8)
@@ -169,6 +178,7 @@ export function buildObservation(b, c) {
   return {
     time: r1(b.t),
     self,
+    ...(team ? { mode: '2対2のチーム戦。enemies の全員を倒せば勝ち。味方（allies）と協力する。targetType=enemy の targetId に敵の id を入れると狙う敵を選べる。targetType=ally で味方の所へ移動できる', enemies: b.enemiesOf(c).map(describeEnemy), allies } : {}),
     enemy,
     heard,
     visible_projectiles: projectiles,

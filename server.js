@@ -50,7 +50,7 @@ const PLAN_SCHEMA = {
         properties: {
           action: { type: 'STRING', enum: Object.keys(ACTIONS) },
           mode: { type: 'STRING', enum: ['walk', 'run'], nullable: true },
-          targetType: { type: 'STRING', enum: ['enemy', 'self', 'object', 'point', 'projectile', 'direction', 'none'] },
+          targetType: { type: 'STRING', enum: ['enemy', 'ally', 'self', 'object', 'point', 'projectile', 'direction', 'none'] },
           targetId: { type: 'STRING', nullable: true },
           x: { type: 'NUMBER', nullable: true },
           y: { type: 'NUMBER', nullable: true },
@@ -90,7 +90,7 @@ const COMMON_RULES = `
 
 # 出力の規則
 - steps[].action は rules.actions の id のみ。能力を使う場合は action="ability" とし、ability と effect に observation.self.abilities の id を正確に入れる。
-- targetType: enemy=敵 / self=自分 / object=戦場の物体・建物・扉・区域（targetId に observation.map.landmarks の id）/ point=座標（x,y メートル）/ projectile=飛来物 / direction=方向（direction に rules.directions のいずれか。cover=物陰）/ none=対象なし。
+- targetType: enemy=敵（2対2では targetId に observation.enemies[].id を入れると狙う敵を選べる。省略時は見えている一番近い敵）/ ally=味方（move・look のみ）/ self=自分 / object=戦場の物体・建物・扉・区域（targetId に observation.map.landmarks の id）/ point=座標（x,y メートル）/ projectile=飛来物 / direction=方向（direction に rules.directions のいずれか。cover=物陰）/ none=対象なし。
 - 能力の効果ごとに使える targetType が決まっている（abilities[].effects[].targets）。合わない組み合わせは使わない。
 - 存在しない能力・効果やルールにない現象（時間停止・瞬間移動・回復・発火など）を作らない。実行できない部分は steps に入れず rejected に日本語で理由を書く。
 - 条件付き行動（「〜したら」）は、その行動の step の condition に入れる（kind は rules.conditions のキー）。
@@ -99,7 +99,8 @@ const COMMON_RULES = `
 - melee は射程外なら自動で接近する。窓から外を見るなら「窓へ move」→「窓を look」。
 - 左右は画面の左右（x が小さい方が左）、上は y が小さい方（奥）。
 - interpretation には計画の要約を日本語1文で書く。
-- 観測情報に書かれていない敵の位置や能力を、事実として扱わない。`;
+- 観測情報に書かれていない敵の位置や能力を、事実として扱わない。
+- observation.mode があれば2対2のチーム戦。enemies の全員を倒せば勝ち。allies（味方）の位置・様子は連絡を取り合っているので分かり、味方が見た敵の位置は last_seen.reported_by 付きで共有される。飛び道具は味方には当たらない。`;
 
 function playerPrompt() {
   return `あなたは2D見下ろし型の超能力バトルゲームの「行動解析器」です。
@@ -120,6 +121,7 @@ observation（あなた自身が見聞きした情報だけ）をもとに、次
 - 自分の能力（self.abilities）の射程・クールダウン（self.cooldowns）・スタンドエネルギー（self.sp）を守る。
 - recent_events には前のターンの出来事が入っている。前のターンに見聞きした相手の行動から、次の手を読む。
 - speech は相手に聞こえうる短いセリフ（任意。毎回は不要。キャラクターらしく、心理戦や挑発・はったりも可）。heard に相手の言葉があれば反応してよい。
+- 2対2では味方（allies）と協力する。例：同じ敵を挟み撃ちにする、弱った敵に集中する、味方の能力が活きるように動く。
 - rejected は通常は空配列でよい。
 ${COMMON_RULES}`;
 }

@@ -2,7 +2,7 @@
 
 // 基本行動。cost は行動予算の見積もり（秒）
 export const ACTIONS = {
-  move: { name: '移動', desc: '目的地・対象・方向へ経路に沿って移動する。mode=walk(静か)/run(速いが足音が大きい)', targets: ['point', 'object', 'enemy', 'direction'] },
+  move: { name: '移動', desc: '目的地・対象・方向へ経路に沿って移動する。mode=walk(静か)/run(速いが足音が大きい)', targets: ['point', 'object', 'enemy', 'ally', 'direction'] },
   chase: { name: '追尾', desc: '敵を追いかけ続ける（実行中に敵が動いても現在位置へ向かい直す）。見失ったら最後に見た位置→物音の位置を探す。次の手順が攻撃・投擲・能力なら、その間合いに入った時点で終了して次へ進む。最後の手順なら duration 秒（既定4・最大8）distance m（既定1.5）を保って追い続ける', targets: ['enemy'] },
   melee: { name: '近接攻撃', desc: 'スタンドで殴る（射程1.7m、届かなければ最大2.5秒追いかける）。手に持った物の方が強ければ、それで殴る（リーチも伸びる。割れ物は割れる）。対象が物体なら破壊を狙う', targets: ['enemy', 'object'] },
   throw: { name: '投擲', desc: '手に持った物を投げる（軌道上の遮蔽物に当たる。威力は物による）。割れ物は当たると割れ、それ以外は落ちた所に残る', targets: ['enemy', 'point', 'direction'] },
@@ -16,7 +16,7 @@ export const ACTIONS = {
   jump_down: { name: '飛び降りる', desc: '2階の窓から外へ飛び降りる（targetId に窓、省略時は近くの窓）。窓が閉まっていれば突き破る（2ダメージ）。着地の衝撃5ダメージ', targets: ['object', 'none'] },
   push: { name: '押す', desc: '近くの動かせる物体（木箱・机）を自分から遠ざける方向へ押し出す。勢いのある物体は人に当たるとダメージ', targets: ['object'] },
   pull: { name: '引く', desc: '近くの動かせる物体を自分の方へ引き寄せる', targets: ['object'] },
-  look: { name: '観察', desc: '対象・方向を向いて様子を確かめる（0.6秒）', targets: ['enemy', 'object', 'point', 'direction'] },
+  look: { name: '観察', desc: '対象・方向を向いて様子を確かめる（0.6秒）', targets: ['enemy', 'ally', 'object', 'point', 'direction'] },
   wait: { name: '待機', desc: 'その場で待つ。duration秒、または条件が満たされるまで', targets: ['none'] },
   ability: { name: '能力使用', desc: 'スタンド能力を使う。ability と effect と対象を指定', targets: ['enemy', 'self', 'object', 'point', 'projectile', 'direction'] },
 };

@@ -53,6 +53,22 @@ function shade(hex, f) {
   return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
 }
 
+// 打撃の種類と強さに応じた擬音
+function onomatopoeia(f) {
+  const strong = f.dmg >= 15;
+  if (f.guarded) return 'ガッ';
+  switch (f.hitKind) {
+    case 'ball': return f.dmg >= 22 ? 'ドギュン' : 'ビシッ';
+    case 'thrown': return strong ? 'ガシャァン' : 'ゴッ';
+    case 'roar': return 'ゴォォン';
+    case 'burn': return 'ジュウッ';
+    case 'fall': return 'ドサッ';
+    case 'launch_impact': case 'slam': return 'ドグシャァ';
+    case 'debris': return 'ガラガラ';
+    default: return strong ? (f.seq % 2 ? 'ドゴォ' : 'バキィ') : f.seq % 2 ? 'ボゴッ' : 'ドスッ';
+  }
+}
+
 export class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
@@ -65,6 +81,19 @@ export class Renderer {
     this.offY = 0;
     this.dpr = 1;
     this.portraits = {};
+    this.shakeAmp = 0;
+    this.shakeAt = 0;
+  }
+
+  // 画面揺れ（実時間で減衰）
+  kick(amp) {
+    const now = performance.now();
+    this.shakeAmp = Math.max(this.currentShake(now), amp);
+    this.shakeAt = now;
+  }
+
+  currentShake(now) {
+    return this.shakeAmp * Math.exp(-(now - this.shakeAt) / 110);
   }
 
   resize(battle) {
@@ -130,7 +159,7 @@ export class Renderer {
 
   // 建物の見せ方：roof（屋根で覆う）/ cut（屋根を外して floor 階まで見せる）
   buildingModes(b, debug) {
-    const me = b.player;
+    const me = this.viewer || b.player;
     const modes = new Map();
     for (const bd of b.world.buildings) {
       const inside = pointInRect(me.x, me.y, bd);
@@ -139,10 +168,12 @@ export class Renderer {
     return modes;
   }
 
-  draw(b, { debug = false, hover = null } = {}) {
+  draw(b, { debug = false, hover = null, viewer = null } = {}) {
     const ctx = this.ctx, P = this.px;
-    const me = b.player, foe = b.cpu;
+    const me = this.viewer = viewer || b.player;
     const see = (x, y, z) => debug || b.canSee(me, x, y, z);
+    const shake = this.currentShake(performance.now());
+    const sx = shake > 0.3 ? (Math.random() - 0.5) * 2 * shake : 0, syy = shake > 0.3 ? (Math.random() - 0.5) * 2 * shake : 0;
     const W = b.world.w * P, H = b.world.h * P;
 
     // カメラ（拡大時は自分を中心に）
@@ -156,7 +187,7 @@ export class Renderer {
     ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, this.viewW, this.viewH);
-    ctx.setTransform(this.dpr, 0, 0, this.dpr, -this.offX * this.dpr, -this.offY * this.dpr);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, (-this.offX + sx) * this.dpr, (-this.offY + syy) * this.dpr);
 
     // ---- 地面 ----
     ctx.fillStyle = '#4a4f3f';
@@ -201,12 +232,13 @@ export class Renderer {
       const item = { key: o.y + o.h, z: o.z0, draw: cap => this.drawObject(b, o, cap) , obj: o };
       if (bd) groups.get(bd.id).push(item); else items.push(item);
     }
-    const foeVisible = foe.alive && see(foe.x, foe.y);
+    // 味方は連絡を取り合っているので常に表示。敵は見えている時だけ
+    const visibleChar = c => c === me || c.team === me.team || (c.alive && see(c.x, c.y));
     for (const c of b.chars) {
-      const show = c === me || foeVisible || (!c.alive && see(c.x, c.y));
+      const show = visibleChar(c) || (!c.alive && see(c.x, c.y));
       if (!show) continue;
       const bd = buildingOfPoint(c.x, c.y);
-      const item = { key: c.y + c.r, z: b.baseZ(c), char: c, draw: () => this.drawChar(b, c, c === me) };
+      const item = { key: c.y + c.r, z: b.baseZ(c), char: c, draw: () => this.drawChar(b, c, c === me, c !== me && c.team === me.team) };
       if (bd && !b.isAirborne(c)) groups.get(bd.id).push(item); else items.push(item);
     }
     const ghosts = [];
@@ -276,9 +308,10 @@ export class Renderer {
       ctx.fillText(`♪${SOUND_LABEL[h.kind] || '物音'}${h.floor ? '（2階）' : ''}`, h.x * P + 6, this.sy(h.y, hz) - 6);
     }
 
-    // 敵の最後の目撃位置
-    const ls = me.memory.lastSeen;
-    if (!foeVisible && ls && foe.alive) {
+    // 敵の最後の目撃位置（味方からの報告を含む）
+    for (const foe of b.enemiesOf(me)) {
+      const ls = me.memory.seen[foe.id];
+      if (!foe.alive || !ls || visibleChar(foe)) continue;
       const lz = (ls.floor ?? 0) * FLOOR_H;
       ctx.setLineDash([3, 3]);
       ctx.strokeStyle = 'rgba(255,120,120,0.8)';
@@ -287,7 +320,7 @@ export class Renderer {
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(255,160,160,0.95)';
       ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
-      ctx.fillText(`? ${(b.t - ls.t).toFixed(0)}秒前${ls.floor ? '・2階' : ''}`, ls.x * P + 8, this.sy(ls.y, lz + 1));
+      ctx.fillText(`? ${b.teamSize > 1 ? `${foe.name.split(/\s+/)[0]}・` : ''}${(b.t - ls.t).toFixed(0)}秒前${ls.floor ? '・2階' : ''}${ls.via ? '（報告）' : ''}`, ls.x * P + 8, this.sy(ls.y, lz + 1));
     }
 
     // エフェクト
@@ -296,11 +329,21 @@ export class Renderer {
       const age = b.t - f.t;
       const fy = this.sy(f.y, f.z ?? 1);
       if (f.kind === 'num') {
-        ctx.fillStyle = f.color;
-        ctx.font = `bold ${Math.max(12, P * 0.6)}px sans-serif`;
+        // 大ダメージは大きく、跳ねるように出る
+        const pop = age < 0.12 ? 1 + (0.12 - age) * (f.big ? 6 : 3) : 1;
+        const size = Math.max(12, P * (f.big ? 0.95 : 0.6)) * pop;
+        ctx.font = `bold ${size}px sans-serif`;
         ctx.globalAlpha = Math.max(0, 1 - age / 1.2);
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = '#000';
+        ctx.strokeText(f.text, f.x * P - 8, fy - age * 0.8 * P - P);
+        ctx.fillStyle = f.color;
         ctx.fillText(f.text, f.x * P - 8, fy - age * 0.8 * P - P);
         ctx.globalAlpha = 1;
+      } else if (f.kind === 'hit') {
+        this.drawHit(f, age, fy);
+      } else if (f.kind === 'ko') {
+        this.drawKO(f, age, fy);
       } else if (f.kind === 'spark') {
         // 跳弾の火花と反射回数
         ctx.globalAlpha = Math.max(0, 1 - age / 0.6);
@@ -350,13 +393,14 @@ export class Renderer {
       }
     }
 
-    // セリフ
-    this.drawSpeech(b, me, me.x, me.y, b.baseZ(me), false);
-    if (foe.speech && (foe.speech.heardByEnemy || debug)) {
-      if (foeVisible) this.drawSpeech(b, foe, foe.x, foe.y, b.baseZ(foe), false);
-      else {
+    // セリフ：自分・味方のセリフと、聞こえた敵のセリフ
+    for (const c of b.chars) {
+      if (!c.speech) continue;
+      if (c === me || visibleChar(c)) {
+        if (c === me || debug || c.team === me.team || c.speech.heardBy?.has(me.id) || see(c.x, c.y)) this.drawSpeech(b, c, c.x, c.y, b.baseZ(c), false);
+      } else if (c.speech.heardBy?.has(me.id)) {
         const h = [...me.memory.heard].reverse().find(x => x.kind === 'speech');
-        if (h) this.drawSpeech(b, foe, h.x, h.y, (h.floor ?? 0) * FLOOR_H, true);
+        if (h) this.drawSpeech(b, c, h.x, h.y, (h.floor ?? 0) * FLOOR_H, true);
       }
     }
 
@@ -371,7 +415,7 @@ export class Renderer {
   drawBuilding(b, bd, group, m, ghosts) {
     const ctx = this.ctx, P = this.px;
     const top = bd.floors * FLOOR_H;
-    const me = b.player;
+    const me = this.viewer || b.player;
     if (m.mode === 'roof') {
       // 外壁（各階）を描いてから屋根で覆う。中の家具・人物は見えない
       const walls = group.filter(it => it.obj && (it.obj.kind === 'wall' || it.obj.kind === 'window' || it.obj.kind === 'door'));
@@ -634,7 +678,74 @@ export class Renderer {
     ctx.fillText(`${c.name}（窓越し）`, (c.x + 0.4) * P, this.sy(c.y, z + 1.7));
   }
 
-  drawChar(b, c, isMe) {
+  // 打撃の瞬間：衝撃の閃光・集中線・擬音
+  drawHit(f, age, fy) {
+    const ctx = this.ctx, P = this.px;
+    const x = f.x * P;
+    const power = Math.min(1, f.dmg / 30);
+    if (age < 0.35) {
+      const k = age / 0.35;
+      ctx.globalAlpha = 1 - k;
+      // 衝撃の星形
+      const R = P * (0.5 + power * 1.1) * (0.6 + k * 0.8);
+      ctx.fillStyle = f.guarded ? '#cfd8ff' : '#fff6d0';
+      ctx.beginPath();
+      for (let i = 0; i < 16; i++) {
+        const a = f.ang + (i / 16) * Math.PI * 2;
+        const r = i % 2 ? R * 0.45 : R;
+        ctx.lineTo(x + Math.cos(a) * r, fy + Math.sin(a) * r * 0.8);
+      }
+      ctx.closePath();
+      ctx.fill();
+      // 集中線
+      ctx.strokeStyle = f.guarded ? '#9fb3ff' : '#ff5d3a';
+      ctx.lineWidth = 2;
+      for (let i = 0; i < 10; i++) {
+        const a = f.ang + (i / 10) * Math.PI * 2 + 0.2;
+        const r0 = R * 0.9, r1 = R * (1.4 + power);
+        ctx.beginPath();
+        ctx.moveTo(x + Math.cos(a) * r0, fy + Math.sin(a) * r0 * 0.8);
+        ctx.lineTo(x + Math.cos(a) * r1, fy + Math.sin(a) * r1 * 0.8);
+        ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+    }
+    // 擬音（ジョジョ風の書き文字）
+    if (f.dmg >= 5 && age < 1.0) {
+      const word = onomatopoeia(f);
+      const size = Math.max(14, P * (0.7 + power * 0.9)) * (age < 0.1 ? 1.4 - age * 4 : 1);
+      ctx.save();
+      ctx.translate(x + P * 1.1, fy - P * (2.0 + age * 0.5));
+      ctx.rotate(-0.18 + ((f.seq * 37) % 10) / 30);
+      ctx.globalAlpha = Math.max(0, 1 - Math.max(0, age - 0.5) * 2);
+      ctx.font = `900 italic ${size}px "Hiragino Mincho ProN", "Yu Mincho", serif`;
+      ctx.lineWidth = Math.max(3, size / 7);
+      ctx.strokeStyle = '#1a0a2a';
+      ctx.strokeText(word, 0, 0);
+      ctx.fillStyle = f.guarded ? '#cfd8ff' : power > 0.5 ? '#ff4d6d' : '#ffd166';
+      ctx.fillText(word, 0, 0);
+      ctx.restore();
+    }
+  }
+
+  drawKO(f, age, fy) {
+    const ctx = this.ctx, P = this.px;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, age * 4) * Math.max(0, 1 - Math.max(0, age - 1.8) * 1.5);
+    const size = Math.max(18, P * 1.1);
+    ctx.font = `900 ${size}px "Hiragino Mincho ProN", "Yu Mincho", serif`;
+    const text = '再起不能（リタイヤ）';
+    const w = ctx.measureText(text).width;
+    const x = Math.min(Math.max(4, f.x * P - w / 2), this.canvas.width / this.dpr + this.offX - w - 4);
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = '#000';
+    ctx.strokeText(text, x, fy - P * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x, fy - P * 2);
+    ctx.restore();
+  }
+
+  drawChar(b, c, isMe, isAlly = false) {
     const ctx = this.ctx, P = this.px;
     const s = c.status;
     const z = b.baseZ(c);
@@ -673,9 +784,24 @@ export class Renderer {
     // スタンドのオーラ
     ctx.fillStyle = c.windup ? 'rgba(255,80,80,0.35)' : `${c.color}33`;
     ctx.beginPath(); ctx.ellipse(x, (footY + headY) / 2, bw * 1.6, (footY - headY) * 0.75, 0, 0, Math.PI * 2); ctx.fill();
-    // 体（縦長のカプセル）と頭
+    // 構え・発動待ちの間は「ゴゴゴ」
+    if (c.windup) {
+      ctx.save();
+      ctx.font = `900 italic ${Math.max(11, P * 0.5)}px serif`;
+      ctx.fillStyle = 'rgba(190,120,255,0.9)';
+      ctx.strokeStyle = '#000';
+      ctx.lineWidth = 2;
+      const jx = Math.sin(b.t * 40) * 1.5;
+      for (let i = 0; i < 3; i++) {
+        ctx.strokeText('ゴ', x + bw * 1.6 + jx, headY + i * P * 0.45);
+        ctx.fillText('ゴ', x + bw * 1.6 + jx, headY + i * P * 0.45);
+      }
+      ctx.restore();
+    }
+    // 体（縦長のカプセル）と頭。殴られた瞬間は白く光る
     const prone = s.proneUntil > b.t;
-    ctx.fillStyle = prone ? '#777' : c.color;
+    const hitFlash = b.t - c.lastDamagedAt < 0.12;
+    ctx.fillStyle = hitFlash ? '#fff' : prone ? '#777' : c.color;
     ctx.strokeStyle = s.invulnUntil > b.t ? '#fff' : '#111';
     ctx.lineWidth = 2;
     if (prone) {
@@ -708,7 +834,7 @@ export class Renderer {
     const barW = P * 1.2;
     ctx.fillStyle = '#000';
     ctx.fillRect(x - barW / 2, headY - 10, barW, 5);
-    ctx.fillStyle = isMe ? '#06d6a0' : '#ff6b6b';
+    ctx.fillStyle = isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
     ctx.fillRect(x - barW / 2, headY - 10, barW * (c.hp / c.maxHp), 5);
     ctx.fillStyle = '#fff';
     ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
@@ -719,7 +845,7 @@ export class Renderer {
     if (c.climb) tags.push('階段');
     if (c.floor === 0 && b.bushAt(c.x, c.y)) tags.push('潜伏');
     if (air) tags.push('空中');
-    ctx.fillText(`${isMe ? '自分' : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
+    ctx.fillText(`${isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
     ctx.globalAlpha = 1;
   }
 

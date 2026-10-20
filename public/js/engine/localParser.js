@@ -430,6 +430,17 @@ export function localParse(b, c, text) {
     if (re.test(body)) raw.rejected.push(msg);
   }
   const has = Object.fromEntries(Object.keys(ABILITIES).map(k => [k, c.def.abilities.includes(k)]));
+  // 2対2：他の人物の名前・スタンド名は「敵」「味方」に置き換える（名前を挙げた敵を狙う）
+  let named = null;
+  for (const o of b.chars) {
+    if (o === c) continue;
+    const words = [o.name, ...o.name.split(/\s+/), o.def.nickname, o.stand !== c.stand ? o.stand : null].filter(Boolean).sort((p, q) => q.length - p.length);
+    for (const w of words) {
+      if (!body.includes(w)) continue;
+      if (o.team !== c.team && !named) named = o;
+      body = body.split(w).join(o.team === c.team ? '味方' : '敵');
+    }
+  }
   // 持っていない能力への言及
   const foreign = {
     perpendicular: /パーペンディキュラー|直角に弾|(10|１０)\s*(m|ｍ|メートル)(弾|飛)|弾き出/,
@@ -467,7 +478,8 @@ export function localParse(b, c, text) {
       if (cond) pendingCond = cond;
       continue;
     }
-    const steps = clause ? parseClause(b, c, clause, has, ctx) : [];
+    const toAlly = /味方/.test(clause) && /(所|ところ|もと|元|そば|近く|合流|へ|に寄|に近づ)/.test(clause) && !/殴|攻撃|投げ/.test(clause);
+    const steps = toAlly ? [{ action: 'move', targetType: 'ally', mode: /走|駆け|急|ダッシュ/.test(clause) ? 'run' : 'walk' }] : clause ? parseClause(b, c, clause, has, ctx) : [];
     if (!steps.length) {
       if (cond) { pendingCond = cond; continue; }
       if (clause.length > 1 && !IMPOSSIBLE.some(([re]) => re.test(clause))) raw.rejected.push(`「${clause}」を行動として解釈できなかった`);
@@ -477,6 +489,7 @@ export function localParse(b, c, text) {
     if (useCond) { steps[0].condition = useCond; pendingCond = null; }
     raw.steps.push(...steps);
   }
+  if (named) for (const st of raw.steps) if (st.targetType === 'enemy' || (!st.targetType && ['chase', 'melee', 'throw'].includes(st.action))) { st.targetType = 'enemy'; st.targetId = named.id; }
   if (!raw.steps.length && raw.speech) raw.interpretation = 'セリフのみ';
   else raw.interpretation = raw.steps.length ? `（ローカル解析）${raw.steps.length}手順の行動として解釈` : '（ローカル解析）実行できる行動が見つからなかった';
   return raw;

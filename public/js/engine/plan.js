@@ -21,7 +21,8 @@ const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 // ---------- 検証・変換 ----------
 
 function targetName(b, t) {
-  if (t.type === 'enemy') return '敵';
+  if (t.type === 'enemy') return t.charId ? b.chars.find(x => x.id === t.charId)?.name || '敵' : '敵';
+  if (t.type === 'ally') return '味方';
   if (t.type === 'self') return '自分';
   if (t.type === 'point') return `地点(${t.x.toFixed(1)}, ${t.y.toFixed(1)})`;
   if (t.type === 'direction') return DIR_LABEL[t.dir] || t.dir;
@@ -46,7 +47,7 @@ export function describeStep(b, s) {
   const cond = s.condition ? `［${condLabel(s.condition)}］` : '';
   switch (s.action) {
     case 'move': return `${cond}${tn}へ${s.mode === 'run' ? '走る' : '歩く'}`;
-    case 'chase': return `${cond}敵を${s.mode === 'run' ? '走って' : '歩いて'}追尾（最大${s.duration.toFixed(0)}秒${s.distance ? `・距離${s.distance}m` : ''}）`;
+    case 'chase': return `${cond}${tn}を${s.mode === 'run' ? '走って' : '歩いて'}追尾（最大${s.duration.toFixed(0)}秒${s.distance ? `・距離${s.distance}m` : ''}）`;
     case 'melee': return `${cond}${tn}を殴る`;
     case 'throw': return `${cond}${tn}へ持っている物を投げる`;
     case 'pickup': return `${cond}${s.target.type === 'object' ? tn : '近くの物'}を拾う`;
@@ -115,6 +116,13 @@ function validateStep(b, c, raw, cursor) {
   }
 
   const t = step.target;
+  // 2対2：狙う敵を id か名前で指定できる
+  if (ttype === 'enemy' && str(raw.targetId)) {
+    const tid = str(raw.targetId);
+    const e = b.enemiesOf(c).find(x => x.id === tid) || b.enemyByName(c, tid);
+    if (e) t.charId = e.id;
+  }
+  if (ttype === 'ally' && !b.alliesOf(c).some(a => a.alive)) return { error: '動ける味方がいない' };
   if (ttype === 'object') {
     const id = resolveObjectId(b, str(raw.targetId));
     if (!id) return { error: `対象「${str(raw.targetId) || '（未指定）'}」は戦場に存在しない` };
@@ -295,8 +303,14 @@ export function findCover(b, c) {
 
 export function resolveTarget(b, c, t, step = {}) {
   switch (t.type) {
+    case 'ally': {
+      const a = b.alliesOf(c).filter(x => x.alive).sort((p, q) => dist(c.x, c.y, p.x, p.y) - dist(c.x, c.y, q.x, q.y))[0];
+      if (!a) return { error: '動ける味方がいない' };
+      return { x: a.x, y: a.y, f: a.floor, ally: a };
+    }
     case 'enemy': {
-      const pe = b.perceivedEnemy(c);
+      const named = t.charId ? b.chars.find(x => x.id === t.charId && x.alive) : null;
+      const pe = named ? b.perceivedEnemy(c, named) : b.perceivedEnemy(c);
       if (pe) return { x: pe.x, y: pe.y, f: pe.floor ?? 0, char: pe.visible ? pe.char : null, visible: pe.visible };
       // 姿を見ていなければ、直近に聞こえた物音の位置を推定位置として使う
       const h = [...c.memory.heard].reverse().find(x => b.t - x.t < 10);
@@ -474,6 +488,7 @@ function moveGoal(b, c, st, res) {
     return { x: p ? p.x : n.x, y: p ? p.y : n.y, stop: 0.35, f };
   }
   if (s.target.type === 'enemy') return { x: res.x, y: res.y, stop: s.distance ?? 1.3, f };
+  if (s.target.type === 'ally') return { x: res.x, y: res.y, stop: s.distance ?? 1.5, f, ally: res.ally };
   const p = nearestWalkable(b.world, res.x, res.y, 3, f) || res;
   return { x: p.x, y: p.y, stop: 0.3, f };
 }
@@ -493,6 +508,7 @@ const EXEC = {
         const pe = b.perceivedEnemy(c);
         if (pe && pe.visible) { st.data.goal.x = pe.x; st.data.goal.y = pe.y; st.data.goal.f = pe.floor; }
       }
+      if (s.target.type === 'ally' && st.data.goal.ally) { const a = st.data.goal.ally; st.data.goal.x = a.x; st.data.goal.y = a.y; st.data.goal.f = a.floor; }
       const g = st.data.goal;
       const r = approach(b, c, st, g.x, g.y, g.stop, s.mode === 'run', g.f);
       if (r === 'arrived') return 'done';
@@ -1020,6 +1036,7 @@ function pushPull(sign) {
 }
 
 function startStep(b, c, def) {
+  if (def.target.type === 'enemy' && def.target.charId) c.focusId = def.target.charId;
   const st = { def, phase: def.condition ? 'cond' : 'run', t0: b.t, data: {}, locked: false };
   c.runner.step = st;
   if (st.phase === 'run') beginRun(b, c, st);

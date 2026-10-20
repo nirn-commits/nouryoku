@@ -8,10 +8,11 @@ import { updateRunner, interruptStep, adoptPlan } from './plan.js';
 
 let projSeq = 0;
 
-function makeChar(id, charId, x, y, isCPU) {
+function makeChar(id, charId, x, y, isCPU, team) {
   const def = CHARACTERS[charId];
   return {
-    id, charId, def, isCPU,
+    id, charId, def, isCPU, team,
+    focusId: null, // 狙っている敵（指定が無ければ見えている一番近い敵）
     name: def.name, stand: def.stand, color: def.color,
     x, y, floor: 0, vx: 0, vy: 0, kbx: 0, kby: 0, kbSlam: null,
     facing: 0, r: RULES.charRadius,
@@ -36,12 +37,13 @@ function makeChar(id, charId, x, y, isCPU) {
     lastDamagedAt: -99,
     stepAccum: 0,
     speech: null,
-    memory: { lastSeen: null, heard: [], observed: [], sawEnemyAt: -99 },
+    memory: { lastSeen: null, seen: {}, heard: [], observed: [], sawEnemyAt: -99 },
   };
 }
 
 export class Battle {
-  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', mapId = 'town' } = {}) {
+  // 1対1：playerChar 対 cpuChar。2対2：allyChar（味方CPU）と cpu2Char を加える
+  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town' } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
     this.mapId = mapId;
@@ -49,19 +51,73 @@ export class Battle {
     this.t = 0;
     this.log = [];
     this.fx = [];
+    this.fxSeq = 0;
     this.over = false;
     this.winner = null;
+    this.winnerTeam = null;
     const sp = this.world.spawns;
-    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, false);
-    this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true);
-    this.player.facing = angleTo(sp.player.x, sp.player.y, this.world.w / 2, this.world.h / 2);
-    this.cpu.facing = angleTo(sp.cpu.x, sp.cpu.y, this.world.w / 2, this.world.h / 2);
+    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, false, 0);
+    this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true, 1);
     this.chars = [this.player, this.cpu];
-    this.emit({ text: '―― 戦闘開始 ――', kind: 'system', all: true });
+    if (allyChar) this.chars.push(this.ally = makeChar('ally', allyChar, ...this.spawnNear(sp.player), true, 0));
+    if (cpu2Char) this.chars.push(this.cpu2 = makeChar('cpu2', cpu2Char, ...this.spawnNear(sp.cpu), true, 1));
+    for (const c of this.chars) {
+      c.facing = angleTo(c.x, c.y, this.world.w / 2, this.world.h / 2);
+      if (c.units) for (const u of c.units) { u.x = c.x; u.y = c.y; }
+    }
+    this.teamSize = Math.max(...[0, 1].map(t => this.chars.filter(c => c.team === t).length));
+    this.emit({ text: `―― 戦闘開始${this.teamSize > 1 ? '（2対2）' : ''} ――`, kind: 'system', all: true });
   }
 
+  // 出現地点の少し横（歩ける場所）
+  spawnNear(p) {
+    for (const [dx, dy] of [[0, 2.5], [0, -2.5], [2.5, 0], [-2.5, 0], [2, 2], [-2, -2]]) {
+      const q = nearestWalkable(this.world, p.x + dx, p.y + dy, 1.2, 0);
+      if (q && dist(q.x, q.y, p.x, p.y) > 1.2) return [q.x, q.y];
+    }
+    return [p.x + 1, p.y];
+  }
+
+  enemiesOf(c) {
+    return this.chars.filter(x => x.team !== c.team);
+  }
+
+  alliesOf(c) {
+    return this.chars.filter(x => x !== c && x.team === c.team);
+  }
+
+  // 今の相手：狙いを指定していればその敵、無ければ見えている一番近い敵、次に直近に位置を知った敵
   enemyOf(c) {
-    return c === this.player ? this.cpu : this.player;
+    const key = `${this.t}|${c.focusId}`;
+    if (c._enemyKey === key && c._enemy) return c._enemy;
+    const all = this.enemiesOf(c);
+    const alive = all.filter(e => e.alive);
+    let e = null;
+    if (!alive.length) e = all[0];
+    else if (alive.length === 1) e = alive[0];
+    else {
+      e = alive.find(x => x.id === c.focusId) || null;
+      if (!e) {
+        const vis = alive.filter(x => this.canSee(c, x.x, x.y));
+        if (vis.length) e = vis.reduce((a, x) => (dist(c.x, c.y, x.x, x.y) < dist(c.x, c.y, a.x, a.y) ? x : a));
+      }
+      if (!e) {
+        const known = alive.filter(x => c.memory.seen[x.id]);
+        if (known.length) e = known.reduce((a, x) => (c.memory.seen[x.id].t > c.memory.seen[a.id].t ? x : a));
+      }
+      if (!e) e = alive.reduce((a, x) => (dist(c.x, c.y, x.x, x.y) < dist(c.x, c.y, a.x, a.y) ? x : a));
+    }
+    c._enemyKey = key;
+    c._enemy = e;
+    return e;
+  }
+
+  // 敵の名前（姓・名・スタンド名）からその敵を探す
+  enemyByName(c, text) {
+    return this.enemiesOf(c).find(e => {
+      const [sei, mei] = e.name.split(/\s+/);
+      return [sei, mei, e.stand, e.def.nickname, e.def.stand.split('・')[0]].some(w => w && text.includes(w));
+    }) || null;
   }
 
   // ---------- 知覚 ----------
@@ -266,7 +322,7 @@ export class Battle {
     }
     const entry = { t: this.t, text, obsText, kind, actor: actor ? actor.id : null, visibleTo, heardBy };
     this.log.push(entry);
-    if (kind === 'ability' && pos) this.fx.push({ kind: 'flash', x: pos.x, y: pos.y, t: this.t, color: actor ? actor.color : '#fff', visibleTo });
+    if (kind === 'ability' && pos) this.fx.push({ kind: 'flash', seq: ++this.fxSeq, x: pos.x, y: pos.y, t: this.t, color: actor ? actor.color : '#fff', visibleTo });
     if (this.log.length > 400) this.log.shift();
 
     for (const c of this.chars) {
@@ -303,33 +359,46 @@ export class Battle {
     if (c.lastSpeech && c.lastSpeech.text === text && this.t - c.lastSpeech.t < 10) return;
     c.lastSpeech = { text, t: this.t };
     c.speech = { text, until: this.t + 3.5 };
-    const listener = this.enemyOf(c);
     const stolen = this.captureSound(c, RULES.speechRadius, 'speech', text, c);
-    const heard = !stolen && this.canHear(listener, c.x, c.y, RULES.speechRadius, this.baseZ(c) + EYE_H);
     const entry = { t: this.t, text: `${c.name}「${text}」`, kind: 'speech', actor: c.id, visibleTo: new Set([c.id]), heardBy: new Set() };
-    if (heard) {
+    let heard = false;
+    for (const listener of this.chars) {
+      if (listener === c || !listener.alive || stolen) continue;
+      if (!this.canHear(listener, c.x, c.y, RULES.speechRadius, this.baseZ(c) + EYE_H)) continue;
       entry.visibleTo.add(listener.id);
       entry.heardBy.add(listener.id);
       this.recordSound(listener, c, 'speech', text);
+      if (listener.team !== c.team) heard = true;
     }
     c.speech.heardByEnemy = heard;
+    c.speech.heardBy = entry.heardBy;
     this.log.push(entry);
   }
 
+  // 見えている敵を記憶する。2対2では味方にも位置を知らせる（携帯で連絡を取り合っている）
   updatePerception(c) {
-    const e = this.enemyOf(c);
-    if (e.alive && this.canSee(c, e.x, e.y)) {
+    for (const e of this.enemiesOf(c)) {
+      if (!e.alive || !this.canSee(c, e.x, e.y)) continue;
       if (this.t - c.memory.sawEnemyAt > 1.5) c.memory.newlySpotted = true;
-      c.memory.lastSeen = { x: e.x, y: e.y, floor: e.floor, t: this.t, facing: e.facing };
+      const rec = { id: e.id, name: e.name, x: e.x, y: e.y, floor: e.floor, t: this.t, facing: e.facing };
+      c.memory.seen[e.id] = rec;
       c.memory.sawEnemyAt = this.t;
+      for (const a of this.alliesOf(c)) if (a.alive) a.memory.seen[e.id] = { ...rec, via: c.name };
     }
+    const e = this.enemyOf(c);
+    const all = Object.values(c.memory.seen).filter(r => this.chars.find(x => x.id === r.id)?.alive);
+    c.memory.lastSeen = c.memory.seen[e.id] || all.sort((a, z) => z.t - a.t)[0] || null;
   }
 
-  perceivedEnemy(c) {
-    const e = this.enemyOf(c);
+  perceivedEnemy(c, e = this.enemyOf(c)) {
     if (e.alive && this.canSee(c, e.x, e.y)) return { x: e.x, y: e.y, floor: e.floor, visible: true, char: e };
-    if (c.memory.lastSeen) return { ...c.memory.lastSeen, visible: false, char: null };
+    const rec = c.memory.seen[e.id] || (e === this.enemyOf(c) ? c.memory.lastSeen : null);
+    if (rec) return { ...rec, visible: false, char: null };
     return null;
+  }
+
+  teamAlive(team) {
+    return this.chars.some(c => c.team === team && c.alive);
   }
 
   // ---------- ダメージ ----------
@@ -362,7 +431,9 @@ export class Battle {
       text: `${target.name} に${label ? `${label}で` : ''}${dmg}ダメージ${guarded ? '（ガード）' : ''}`,
       kind: 'damage', actor: source, affected: target, pos: target, sound: 9, soundKind: 'impact',
     });
-    this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', visibleTo: entry.visibleTo });
+    this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', big: dmg >= 15, visibleTo: entry.visibleTo });
+    // 演出用：打撃の瞬間（画面側でヒットストップ・揺れ・擬音にする）
+    this.fx.push({ kind: 'hit', seq: ++this.fxSeq, x: target.x, y: target.y, z: this.baseZ(target) + 1.1, dmg, guarded, hitKind: kind, target: target.id, t: this.t, visibleTo: entry.visibleTo, ang: from ? angleTo(from.x, from.y, target.x, target.y) : this.rng() * Math.PI * 2 });
     // 怯み：構えや詠唱を中断させる
     // 同じ瞬間に放たれる攻撃は相打ちにする（処理順で有利不利が出ないように）
     const releasing = target.windup && target.windup.until <= this.t + RULES.dt + 1e-6;
@@ -373,7 +444,8 @@ export class Battle {
     if (target.hp <= 0) {
       target.alive = false;
       target.vx = target.vy = 0;
-      this.emit({ text: `${target.name} は再起不能（リタイヤ）！`, kind: 'ko', all: true });
+      const ko = this.emit({ text: `${target.name} は再起不能（リタイヤ）！`, kind: 'ko', all: true });
+      this.fx.push({ kind: 'ko', seq: ++this.fxSeq, x: target.x, y: target.y, z: this.baseZ(target) + 1, t: this.t, name: target.name, visibleTo: ko.visibleTo });
     }
     return dmg;
   }
@@ -450,13 +522,15 @@ export class Battle {
     this.updateObjects(dt);
     for (const c of this.chars) if (c.units) this.updateUnits(c, dt);
     this.updateProjectiles(dt);
-    this.fx = this.fx.filter(f => this.t - f.t < 1.2);
+    this.fx = this.fx.filter(f => this.t - f.t < (f.kind === 'ko' ? 2.5 : 1.2));
 
-    const alive = this.chars.filter(c => c.alive);
-    if (alive.length < 2) {
+    const t0 = this.teamAlive(0), t1 = this.teamAlive(1);
+    if (!t0 || !t1) {
       this.over = true;
-      this.winner = alive[0] || null;
-      this.emit({ text: this.winner ? `勝者：${this.winner.name}『${this.winner.stand}』` : '相打ち', kind: 'system', all: true });
+      this.winnerTeam = t0 ? 0 : t1 ? 1 : null;
+      this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive);
+      const names = this.winnerTeam === null ? '' : this.chars.filter(c => c.team === this.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
+      this.emit({ text: this.winnerTeam === null ? '相打ち' : `勝者：${names}`, kind: 'system', all: true });
     }
   }
 
@@ -616,7 +690,7 @@ export class Battle {
     if (!bd || bd.sealed || !pointInRect(c.x, c.y, bd)) return;
     if (bd.exits.some(id => this.exitOpen(id))) return;
     // 閉じ込める相手が中にいなければ密室にはならない（自分だけが閉じこもることはない）
-    if (!this.chars.some(x => x !== c && x.alive && pointInRect(x.x, x.y, bd))) {
+    if (!this.chars.some(x => x.team !== c.team && x.alive && pointInRect(x.x, x.y, bd))) {
       this.emit({ text: `出口はすべて閉じたが、${bd.name}の中に相手がいないので密室にはならない`, kind: 'fail', actor: c });
       return;
     }
@@ -685,15 +759,19 @@ export class Battle {
   }
 
   separateChars() {
-    const [a, b] = this.chars;
-    if (!a.alive || !b.alive || a.floor !== b.floor || this.isAirborne(a) || this.isAirborne(b)) return;
-    const d = dist(a.x, a.y, b.x, b.y);
-    const min = a.r + b.r;
-    if (d < min && d > 1e-6) {
-      const push = (min - d) / 2;
-      const nx = (b.x - a.x) / d, ny = (b.y - a.y) / d;
-      a.x -= nx * push; a.y -= ny * push;
-      b.x += nx * push; b.y += ny * push;
+    for (let i = 0; i < this.chars.length; i++) {
+      for (let j = i + 1; j < this.chars.length; j++) {
+        const a = this.chars[i], b = this.chars[j];
+        if (!a.alive || !b.alive || a.floor !== b.floor || this.isAirborne(a) || this.isAirborne(b)) continue;
+        const d = dist(a.x, a.y, b.x, b.y);
+        const min = a.r + b.r;
+        if (d < min && d > 1e-6) {
+          const push = (min - d) / 2;
+          const nx = (b.x - a.x) / d, ny = (b.y - a.y) / d;
+          a.x -= nx * push; a.y -= ny * push;
+          b.x += nx * push; b.y += ny * push;
+        }
+      }
     }
   }
 
@@ -775,6 +853,8 @@ export class Battle {
       for (const c of this.chars) {
         if (!c.alive) continue;
         if (c.id === p.owner && this.t - p.born < 0.3) continue;
+        const thrower = this.chars.find(x => x.id === p.owner);
+        if (c !== thrower && thrower && c.team === thrower.team) continue; // 味方には当てない
         if (c.launch && c.launch.kind !== 'target') continue;
         const t = segCircle(p.x, p.y, x1, y1, c.x, c.y, c.r);
         if (t === null || t >= best) continue;
@@ -807,7 +887,7 @@ export class Battle {
       p.traveled += Math.hypot(x1 - p.x, y1 - p.y);
       p.x = x1; p.y = y1; p.z = z1;
       if (p.traveled > (p.maxRange ?? RULES.throwRange)) {
-        this.landItem(p.item, p.x, p.y, p.z >= FLOOR_H && upperFloorAt(w, p.x, p.y) ? 1 : 0, owner, true);
+        this.landItem(p.item, p.x, p.y, p.z >= FLOOR_H && upperFloorAt(w, p.x, p.y) ? 1 : 0, this.chars.find(c => c.id === p.owner), true);
         continue;
       }
       keep.push(p);
@@ -985,7 +1065,7 @@ export class Battle {
   swatUnits(c) {
     let n = 0;
     for (const owner of this.chars) {
-      if (!owner.units || owner === c) continue;
+      if (!owner.units || owner.team === c.team) continue;
       for (const u of owner.units) {
         if (u.state === 'dead') continue;
         const onBody = u.state === 'attached' && u.attachedTo === c.id;
@@ -1069,6 +1149,7 @@ export class Battle {
       if (fl !== null && fl < bt) { bt = fl; hit = { flame: true }; }
       for (const c of this.chars) {
         if (!c.alive || p.hit.has(c.id) || c.floor !== p.floor) continue;
+        if (c !== owner && owner && c.team === owner.team) continue; // 味方には当てない
         if (c === owner && p.bounces === 0 && this.t - p.born < 0.2) continue;
         if (this.isAirborne(c) || (c.launch && c.launch.kind !== 'target')) continue;
         const t = segCircle(p.x, p.y, x1, y1, c.x, c.y, c.r);

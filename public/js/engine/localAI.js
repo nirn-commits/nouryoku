@@ -195,8 +195,26 @@ function saginumaPlan(b, c, pe, say) {
   return null;
 }
 
+// 2対2：知っている敵の中から狙いを決める（近さと弱り具合。味方が狙っている敵にやや寄せる）
+function chooseFocus(b, c) {
+  const foes = b.enemiesOf(c).filter(e => e.alive);
+  if (foes.length < 2) { c.focusId = null; return; }
+  const allyTargets = b.alliesOf(c).filter(a => a.alive).map(a => b.enemyOf(a).id);
+  let best = null;
+  for (const e of foes) {
+    const vis = b.canSee(c, e.x, e.y);
+    const rec = vis ? e : c.memory.seen[e.id];
+    if (!rec) continue;
+    const age = vis ? 0 : b.t - rec.t;
+    const score = dist(c.x, c.y, rec.x, rec.y) + age * 0.8 + (e.hp / e.maxHp) * 8 - (allyTargets.includes(e.id) ? 4 : 0);
+    if (!best || score < best.score) best = { e, score };
+  }
+  c.focusId = best ? best.e.id : null;
+}
+
 export function localCpuPlan(b, c) {
   const rnd = b.rng;
+  chooseFocus(b, c);
   const pe = b.perceivedEnemy(c);
   const steps = [];
   let speech = null;
