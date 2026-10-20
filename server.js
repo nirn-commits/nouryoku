@@ -18,9 +18,9 @@ try {
 } catch { /* .env は任意 */ }
 
 const API_KEY = process.env.GEMINI_API_KEY || '';
-// 既定は Gemini 3 系の最新 Flash。使えない（404・無料枠なし等）場合は予備のモデルを順に試す
-const MODEL = process.env.GEMINI_MODEL || 'gemini-3.8-flash';
-const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.5-flash,gemini-3-flash-preview')
+// 既定は料金の安い Flash-Lite。使えない（404・無料枠なし等）場合は予備のモデルを順に試す
+const MODEL = process.env.GEMINI_MODEL || 'gemini-3.1-flash-lite';
+const FALLBACK_MODELS = (process.env.GEMINI_FALLBACK_MODELS ?? 'gemini-3.5-flash-lite,gemini-3-flash-preview')
   .split(',').map(x => x.trim()).filter(Boolean);
 let activeModel = MODEL;
 const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com';

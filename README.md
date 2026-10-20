@@ -14,7 +14,7 @@ npm start                 # → http://127.0.0.1:8787/
 - `GEMINI_API_KEY` が未設定でも遊べます。その場合は簡易のローカル日本語解析とルールベースのCPUで動きます。
 - APIキーはサーバー（`server.js`）だけが持ち、ブラウザには送られません。サーバーは既定で `127.0.0.1` のみで待ち受けます。
 - Gemini につながらない・遅い時は `npm run check` を実行すると、実際のゲームと同じ大きさの問い合わせを試し、所要時間や失敗の原因（APIキー・モデル名・利用上限・タイムアウトなど）を表示します。ゲーム中も、サーバーのターミナルに1回ごとの所要時間が出ます。
-- 既定のモデルは `gemini-3.8-flash` です。使えない場合（存在しない・無料枠がない・上限に達した）は、`GEMINI_FALLBACK_MODELS` のモデル（既定：`gemini-3.5-flash`、`gemini-3-flash-preview`）を順に試します。
+- 既定のモデルは、料金の最も安い `gemini-3.1-flash-lite` です。使えない場合（存在しない・無料枠がない・上限に達した）は、`GEMINI_FALLBACK_MODELS` のモデル（既定：`gemini-3.5-flash-lite`、`gemini-3-flash-preview`）を順に試します。解釈の精度を上げたい場合は `.env` で `GEMINI_MODEL=gemini-3.8-flash` などに変えます。
 - flash 系は既定で思考を最小限（`minimal`）にして速く返させます。解釈の精度を上げたい場合は `.env` の `GEMINI_THINKING_LEVEL` を `low` や `medium` にします（その分、応答は遅くなります）。
 - `?debug` を付けて開くと、霧なし・CPUの計画表示ありの観戦モードになります（調整用）。
 
