@@ -595,3 +595,22 @@ test('開始位置はランダムで、屋外の歩ける場所に、敵味方�
   }
   assert.ok(seen.size >= 10, '開始位置が毎回同じ');
 });
+
+test('2階へ：「階段を上る」で2階まで上がり、遠い家の2階へは歩き方の指定が無ければ走って向かう', () => {
+  const b = new Battle({ seed: 81, mapId: 'town', playerChar: 'sogo', cpuChar: 'kito', randomSpawn: false });
+  b.cpu.x = 1.5; b.cpu.y = 1.5;
+  const house = b.world.buildings.find(x => x.id === 'house_sato') || b.world.buildings.find(x => x.floors > 1);
+  b.player.x = house.x + house.w / 2; b.player.y = house.y + house.h / 2 + 0.5;
+  const p1 = compilePlan(b, b.player, localParse(b, b.player, '階段を上る'));
+  assert.ok(p1.steps[0].target.id.endsWith('_2f'), `階段を上るが2階を目指していない（${p1.steps[0].label}）`);
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+  b.setPlan(b.player, p1);
+  runFor(b, 8);
+  assert.equal(b.player.floor, 1, '2階に上がれていない');
+  // 遠くから「佐藤家の2階へ上がる」：走りに切り替わり、1回の予算内でほぼ着く
+  const b2 = new Battle({ seed: 82, mapId: 'town', playerChar: 'sogo', cpuChar: 'kito', randomSpawn: false });
+  const p2 = compilePlan(b2, b2.player, localParse(b2, b2.player, '鈴木家の2階に行く'));
+  assert.equal(p2.steps[0].mode, 'run', '遠い移動なのに歩きのまま');
+  const p3 = compilePlan(b2, b2.player, localParse(b2, b2.player, '鈴木家の2階に歩いて行く'));
+  assert.equal(p3.steps[0].mode, 'walk', '歩くと書いたのに走りになった');
+});

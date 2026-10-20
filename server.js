@@ -101,6 +101,7 @@ const COMMON_RULES = `
 - 条件付き行動（「〜したら」）は、その行動の step の condition に入れる（kind は rules.conditions のキー）。
 - 1回の計画は最大5手順。行動予算（見積もり10秒）を超えた手順は捨てられるので、重要な手順を先に置く。
 - 能力の追加指定：エコー・ビーチは count（個体数）と sound（footsteps/voice/loud/any）、セブンス・サンは bounces（反射回数1〜7）。2階の地点を指す時は floor=1。
+- 建物の2階へ行く時は、move の targetType=object・targetId に landmarks の2階の区域（例：<建物id>_2f）を指定すれば、扉と階段を自動で通って上がる。遠い場所への移動は mode=run にしないと1回の行動予算（約10秒）で着かないことがある。
 - melee は射程外なら自動で接近する。窓から外を見るなら「窓へ move」→「窓を look」。
 - 左右は画面の左右（x が小さい方が左）、上は y が小さい方（奥）。
 - interpretation には計画の要約を日本語1文で書く。

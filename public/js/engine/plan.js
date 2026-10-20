@@ -1,7 +1,7 @@
 // 行動計画：AI/解析器が出した「生の計画」を検証して実行可能な形に変換し、時間経過に沿って実行する
 import { ACTIONS, ABILITIES, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter, pointInRect } from './vec.js';
-import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt } from './world.js';
+import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt, findPath } from './world.js';
 import { applyAbility } from './abilities.js';
 import { itemDef } from './items.js';
 
@@ -95,7 +95,7 @@ function validateStep(b, c, raw, cursor) {
   if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in'].includes(action)) ttype = DEFAULT_TARGET[action];
   if (action.startsWith('stand_') && !c.def.standRange) return { error: `『${c.stand}』は群体のスタンドなので、本体のように出したり先行させたりはできない（能力の「聞き耳を立てる」「取り付く」で個体を送る）` };
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
-  const step = { action, mode, target: { type: ttype }, raw };
+  const step = { action, mode, target: { type: ttype }, raw, autoMode: action === 'move' && raw.mode !== 'run' && raw.mode !== 'walk' };
 
   // 能力の照合：存在しない能力・他人の能力は許可しない
   if (action === 'ability') {
@@ -190,16 +190,24 @@ function estimateCost(b, c, s, cursor) {
   const speed = s.mode === 'run' ? c.def.run : c.def.walk;
   let cost = 0;
   const from = cursor || c;
+  let climbs = 0;
   const approxDist = () => {
     const r = resolveTarget(b, c, s.target, s);
     if (r.error) return 6;
     if (s.target.type === 'direction') return s.distance ?? 5;
-    const d = dist(from.x, from.y, r.x, r.y);
+    let d = dist(from.x, from.y, r.x, r.y);
+    const ff = from.f ?? (from === c ? c.floor : 0), tf = r.f ?? 0;
+    // 階をまたぐ移動や遠い移動は、実際の経路（階段・扉の遠回りを含む）で測る
+    if (s.action === 'move' && (ff !== tf || d > 6)) {
+      const p = findPath(b.world, from.x, from.y, r.x, r.y, ff, tf);
+      if (p && p.length) d = Math.max(d, p.length);
+      climbs = Math.abs(tf - ff);
+    }
     if (s.target.type === 'enemy' && s.action === 'move') return Math.max(0, d - (s.distance ?? 1.3));
     return d;
   };
   switch (s.action) {
-    case 'move': cost = Math.max(0.3, (approxDist() * 1.25) / speed); break;
+    case 'move': cost = Math.max(0.3, (approxDist() * 1.15) / speed) + climbs * 1.2; break;
     case 'chase': cost = s.duration; break;
     case 'melee': cost = 0.8 + clamp((approxDist() - 1.5) / c.def.run, 0, 2.5); break;
     case 'throw': cost = RULES.throwWindup + RULES.throwRecovery + 0.1; break;
@@ -241,6 +249,12 @@ export function compilePlan(b, c, raw, source = 'local') {
     const step = r.step;
     const remaining = RULES.budgetSeconds - plan.budget;
     if (plan.steps.length >= RULES.maxSteps || remaining < 0.3) { plan.truncated.push(step.label); continue; }
+    // 歩き方の指定が無い移動は、歩いて5秒を超える遠さか予算に収まらなければ走る
+    if ((step.est > remaining || step.est > 5) && step.autoMode && step.mode === 'walk') {
+      step.mode = 'run';
+      step.est = estimateCost(b, c, step, cursor);
+      step.label = describeStep(b, step);
+    }
     if (step.est > remaining) {
       if (step.action === 'move' || step.action === 'wait' || step.action === 'guard' || step.action === 'chase') {
         // 移動・待機は予算の範囲で打ち切る
@@ -257,7 +271,7 @@ export function compilePlan(b, c, raw, source = 'local') {
     plan.steps.push(step);
     if (step.action === 'move' && step.target.type !== 'direction') {
       const res = resolveTarget(b, c, step.target, step);
-      if (!res.error) cursor = { x: res.x, y: res.y };
+      if (!res.error) cursor = { x: res.x, y: res.y, f: res.f ?? 0 };
     }
   }
   return plan;

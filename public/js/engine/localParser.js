@@ -151,6 +151,12 @@ function findObjectRef(b, c, clause) {
     const o = pick(w.objects.filter(test));
     if (o) return { type: 'object', id: o.id, kind: o.kind };
   }
+  // 「階段を上る」「上の階へ」は、階段の場所ではなく2階そのものを目的地にする
+  if (floorWanted === null && /(階段|上の階)/.test(clause) && /(上が|上る|上って|登|のぼ|上へ|上に|上の階)/.test(clause) && !/降|下り/.test(clause) && c.floor === 0) {
+    const bd2 = (house && house.floors >= 2 ? house : null) || (b.buildingOf(c)?.floors >= 2 ? b.buildingOf(c) : null)
+      || nearestBy(w.buildings.filter(x => x.floors >= 2).map(x => ({ ...x, center: { x: x.x + x.w / 2, y: x.y + x.h / 2 } })), c.x, c.y);
+    if (bd2 && w.areas.some(a => a.id === `${bd2.id}_2f`)) return { type: 'object', id: `${bd2.id}_2f`, area: true };
+  }
   if (/階段/.test(clause)) {
     const o = pick(w.objects.filter(x => x.kind === 'stairs'));
     if (o) return { type: 'object', id: o.id };
@@ -409,7 +415,8 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const isMove = /上が|上る|登る|降り|下り|ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|回る|回って|進|戻|退|出る|出て|寄る/.test(clause);
   const isLook = /確認|見る|見て|覗|観察|様子|探す|探し|偵察|見張|警戒/.test(clause);
   if (isMove) {
-    const mode = run || /逃げ|駆け込/.test(clause) ? 'run' : 'walk';
+    // 歩き方の指定が無ければ、予算に収まらない遠い移動は走る（plan.js で判断）
+    const mode = run || /逃げ|駆け込/.test(clause) ? 'run' : /歩|ゆっくり|そっと|静かに|忍/.test(clause) ? 'walk' : 'auto';
     if (pt) steps.push({ action: 'move', mode, ...toTarget(pt) });
     else if (obj && (dir === 'cover' || obj.kind === 'bush')) steps.push({ action: 'move', mode, ...toTarget(obj) });
     else if (dir && dir !== 'left' && dir !== 'right' || (dir && !obj)) {
