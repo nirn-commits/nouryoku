@@ -6,7 +6,7 @@ import { buildObservation } from './perception.js';
 import { localCpuPlan } from './localAI.js';
 
 export class TurnController {
-  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 15000 } = {}) {
+  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 95000 } = {}) {
     this.b = battle;
     this.cpuRemote = cpuRemote;
     this.cpuTimeoutMs = cpuTimeoutMs;
@@ -40,8 +40,9 @@ export class TurnController {
           this.remoteFailures = 0;
           return plan;
         }
-      } catch {
+      } catch (e) {
         this.remoteFailures++;
+        b.emit({ text: `（CPU側の Gemini 呼び出しに失敗したため、CPU は簡易思考で行動します：${e.message}）`, kind: 'fail', all: true });
       }
     }
     return compilePlan(b, c, localCpuPlan(b, c), 'local');

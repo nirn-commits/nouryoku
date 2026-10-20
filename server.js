@@ -20,7 +20,7 @@ try {
 const API_KEY = process.env.GEMINI_API_KEY || '';
 const MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 const API_BASE = process.env.GEMINI_API_BASE || 'https://generativelanguage.googleapis.com';
-const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 12000);
+const TIMEOUT_MS = Number(process.env.GEMINI_TIMEOUT_MS || 30000);
 const PORT = Number(process.env.PORT || 8787);
 const HOST = process.env.HOST || '127.0.0.1';
 
@@ -115,38 +115,117 @@ observation（あなた自身が見聞きした情報だけ）をもとに、次
 ${COMMON_RULES}`;
 }
 
-async function callGemini(systemText, userText) {
-  const url = `${API_BASE}/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`;
-  const body = {
-    systemInstruction: { parts: [{ text: systemText }] },
-    contents: [{ role: 'user', parts: [{ text: userText }] }],
-    generationConfig: {
-      temperature: 0.4,
-      responseMimeType: 'application/json',
-      responseSchema: PLAN_SCHEMA,
-    },
-  };
-  if (process.env.GEMINI_THINKING_BUDGET) {
-    body.generationConfig.thinkingConfig = { thinkingBudget: Number(process.env.GEMINI_THINKING_BUDGET) };
+// Gemini の失敗理由を、原因の分かる日本語にする（APIキーそのものは含めない）
+class GeminiError extends Error {
+  constructor(message, detail = '', fatal = false) {
+    super(message);
+    this.detail = detail;
+    this.fatal = fatal;
   }
+}
+
+function explainHttp(status, bodyText) {
+  let msg = '';
+  try { msg = JSON.parse(bodyText)?.error?.message || ''; } catch { msg = bodyText.slice(0, 200); }
+  const hint = {
+    400: 'リクエストの形式かモデル名が受け付けられませんでした',
+    401: 'APIキーが無効です（.env の GEMINI_API_KEY を確認してください）',
+    403: 'APIキーに権限がありません（キーの制限設定や、Gemini API が有効かを確認してください）',
+    404: `モデル「${MODEL}」が見つかりません（.env の GEMINI_MODEL を確認してください）`,
+    429: '利用上限に達しました（しばらく待つか、無料枠の上限を確認してください）',
+  }[status] || (status >= 500 ? 'Gemini 側の一時的な障害です' : 'Gemini の呼び出しに失敗しました');
+  // 400 でも本文で原因が分かるもの（再試行しても直らない）
+  if (/API key not valid|API_KEY_INVALID/i.test(msg)) return new GeminiError(`APIキーが無効です（.env の GEMINI_API_KEY を確認してください）（HTTP ${status}）`, msg, true);
+  if (/location is not supported/i.test(msg)) return new GeminiError(`お使いの地域からは Gemini API を利用できません（HTTP ${status}）`, msg, true);
+  if (/not found|is not supported for generateContent/i.test(msg)) return new GeminiError(`モデル「${MODEL}」が使えません（.env の GEMINI_MODEL を確認してください）（HTTP ${status}）`, msg, true);
+  return new GeminiError(`${hint}（HTTP ${status}）`, msg);
+}
+
+// 応答文から JSON を取り出す（```json で囲まれていても読めるように）
+function extractJson(text) {
+  const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
+  try { return JSON.parse(t); } catch { /* 続けて探す */ }
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a >= 0 && b > a) return JSON.parse(t.slice(a, b + 1));
+  throw new Error('JSON が見つからない');
+}
+
+async function requestOnce(body) {
+  if (typeof fetch !== 'function') throw new GeminiError('Node.js が古いため通信できません（18 以上が必要です）');
+  const url = `${API_BASE}/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   try {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY },
-      body: JSON.stringify(body),
-      signal: ctrl.signal,
-    });
-    if (!res.ok) throw new Error(`Gemini HTTP ${res.status}: ${(await res.text()).slice(0, 300)}`);
-    const data = await res.json();
-    const text = data?.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '';
-    const plan = JSON.parse(text);
-    if (!plan || !Array.isArray(plan.steps)) throw new Error('計画の形式が不正');
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': API_KEY },
+        body: JSON.stringify(body),
+        signal: ctrl.signal,
+      });
+    } catch (e) {
+      if (e.name === 'AbortError') throw new GeminiError(`Gemini の応答が${Math.round(TIMEOUT_MS / 1000)}秒以内に返りませんでした（.env の GEMINI_TIMEOUT_MS で延長できます）`);
+      throw new GeminiError('Gemini に接続できませんでした（インターネット接続やプロキシ設定を確認してください）', e.cause?.code || e.message);
+    }
+    const textBody = await res.text();
+    if (!res.ok) {
+      const err = explainHttp(res.status, textBody);
+      err.status = res.status;
+      throw err;
+    }
+    const data = JSON.parse(textBody);
+    const cand = data?.candidates?.[0];
+    if (!cand) {
+      const reason = data?.promptFeedback?.blockReason;
+      throw new GeminiError(reason ? `入力が安全フィルタで止められました（${reason}）` : 'Gemini から応答の候補が返りませんでした');
+    }
+    const text = cand.content?.parts?.map(p => p.text || '').join('') || '';
+    if (!text) throw new GeminiError(`Gemini の応答が空でした（終了理由：${cand.finishReason || '不明'}）`);
+    let plan;
+    try {
+      plan = extractJson(text);
+    } catch {
+      throw new GeminiError(`Gemini の応答を JSON として読めませんでした（終了理由：${cand.finishReason || '不明'}）`, text.slice(0, 200));
+    }
+    if (!plan || typeof plan !== 'object') throw new GeminiError('計画の形式が不正です');
+    if (!Array.isArray(plan.steps)) plan.steps = [];
+    if (!Array.isArray(plan.rejected)) plan.rejected = [];
     return plan;
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function callGemini(systemText, userText) {
+  const base = {
+    systemInstruction: { parts: [{ text: systemText }] },
+    contents: [{ role: 'user', parts: [{ text: userText }] }],
+  };
+  const thinking = process.env.GEMINI_THINKING_BUDGET !== undefined && process.env.GEMINI_THINKING_BUDGET !== ''
+    ? { thinkingBudget: Number(process.env.GEMINI_THINKING_BUDGET) }
+    : null;
+  // モデルによっては応答スキーマや思考設定を受け付けないので、400 の場合は設定を減らして再試行する
+  const variants = [
+    { temperature: 0.4, responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA, ...(thinking ? { thinkingConfig: thinking } : {}) },
+    { temperature: 0.4, responseMimeType: 'application/json', responseSchema: PLAN_SCHEMA },
+    { temperature: 0.4, responseMimeType: 'application/json' },
+  ];
+  if (!thinking) variants.shift();
+  let lastErr;
+  for (const [i, generationConfig] of variants.entries()) {
+    try {
+      const sys = i === variants.length - 1
+        ? `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(PLAN_SCHEMA)}`
+        : systemText;
+      return await requestOnce({ ...base, systemInstruction: { parts: [{ text: sys }] }, generationConfig });
+    } catch (e) {
+      lastErr = e;
+      if (e.status !== 400 || e.fatal) break;
+      console.error(`[gemini] 設定を減らして再試行します：${e.message} ${e.detail || ''}`);
+    }
+  }
+  throw lastErr;
 }
 
 function readBody(req, limit = 256 * 1024) {
@@ -188,8 +267,8 @@ async function handlePlan(req, res) {
     const plan = await callGemini(system, user);
     sendJson(res, 200, { plan, ms: Date.now() - started, model: MODEL });
   } catch (e) {
-    console.error(`[gemini] ${role}: ${e.message}`);
-    sendJson(res, 502, { error: e.name === 'AbortError' ? 'Gemini の応答がタイムアウトしました' : 'Gemini の呼び出しに失敗しました' });
+    console.error(`[gemini] ${role}: ${e.message}${e.detail ? `\n  詳細: ${e.detail}` : ''}`);
+    sendJson(res, 502, { error: e instanceof GeminiError ? e.message : `Gemini の呼び出しに失敗しました（${e.message}）`, detail: e.detail || '' });
   }
 }
 
@@ -215,7 +294,25 @@ export function createServer() {
   });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+async function checkGemini() {
+  console.log(`Node.js ${process.version} / モデル: ${MODEL}`);
+  if (!API_KEY) { console.log('✕ GEMINI_API_KEY が設定されていません（.env を確認してください）'); process.exit(1); }
+  console.log(`APIキー: 設定あり（末尾 …${API_KEY.slice(-4)}）`);
+  const started = Date.now();
+  try {
+    const plan = await callGemini(playerPrompt(), `# ルール\n${JSON.stringify(rulesSummary())}\n\n# 戦況\n{"self":{"pos":[3,20],"abilities":[]},"enemy":{"visible":false},"map":{"landmarks":[{"id":"house_left","name":"左の家","kind":"building"}]}}\n\n# プレイヤーの行動指示\n左の家へ走る`);
+    console.log(`✓ 接続成功（${Date.now() - started}ms）`);
+    console.log(JSON.stringify(plan, null, 1));
+  } catch (e) {
+    console.log(`✕ ${e.message}`);
+    if (e.detail) console.log(`  詳細: ${e.detail}`);
+    process.exit(1);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url) && process.argv.includes('--check')) {
+  await checkGemini();
+} else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   createServer().listen(PORT, HOST, () => {
     console.log(`能力バトル: http://${HOST}:${PORT}/`);
     console.log(API_KEY ? `Gemini: 有効（${MODEL}）` : 'Gemini: 無効（GEMINI_API_KEY 未設定のため、ローカル解析で動作します）');

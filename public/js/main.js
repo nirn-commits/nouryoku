@@ -53,7 +53,7 @@ const EXAMPLES = {
 
 // ---------- API ----------
 
-async function apiPlan(payload, timeoutMs = 13000) {
+async function apiPlan(payload, timeoutMs = 95000) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -64,7 +64,7 @@ async function apiPlan(payload, timeoutMs = 13000) {
       signal: ctrl.signal,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`${data.error || `HTTP ${res.status}`}${data.detail ? `／詳細：${data.detail}` : ''}`);
     return data.plan;
   } finally {
     clearTimeout(timer);
