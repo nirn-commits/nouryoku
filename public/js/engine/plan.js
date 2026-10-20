@@ -1044,7 +1044,8 @@ function openClose(open) {
       if (D.phase === 'approach') {
         // スタンドを出していれば、スタンドの手が届く所（射程の分だけ遠く）から素早く開け閉めできる
         const reach = 1.0 + (c.standBody ? c.def.standRange || 0 : 0);
-        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= reach && hasLOS(b.world, c.x, c.y, n.x, n.y)) {
+        // スタンドは壁をすり抜けるので、出していれば壁越しの扉にも手が届く
+        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= reach && (c.standBody || hasLOS(b.world, c.x, c.y, n.x, n.y))) {
           D.phase = 'act';
           D.until = b.t + (c.standBody ? 0.15 : 0.35);
           st.locked = true;

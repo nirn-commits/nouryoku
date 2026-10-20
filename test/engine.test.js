@@ -667,3 +667,17 @@ test('錠二：コンビニ（扉2つ・はめ殺しのガラス）でも、ガ�
   assert.ok(b.log.some(l => l.text.includes('まだ開いている出口がある')), '閉め残しを知らせていない');
   assert.ok(bd.sealed, 'コンビニで密室にならない');
 });
+
+test('スタンド：壁をすり抜けて先行し、壁越しに見える', () => {
+  const { b, bd } = kitoRoom();
+  const me = b.player, foe = b.cpu;
+  // 錠二は右の家の中、北の壁の内側。敵は壁の外側
+  me.x = 25; me.y = bd.y + 0.8; me.facing = -Math.PI / 2;
+  foe.x = 25; foe.y = bd.y - 2.5;
+  assert.ok(!b.canSee(me, foe.x, foe.y), '最初から壁越しに見えている');
+  b.setPlan(foe, compilePlan(b, foe, { steps: [{ action: 'wait', targetType: 'none', duration: 3 }] }));
+  b.setPlan(me, compilePlan(b, me, { steps: [{ action: 'stand_move', targetType: 'direction', direction: 'up' }] }));
+  runFor(b, 1);
+  assert.ok(me.standBody.y < bd.y, 'スタンドが壁の外へ出ていない');
+  assert.ok(b.canSee(me, foe.x, foe.y), 'スタンドの位置から壁の外が見えていない');
+});

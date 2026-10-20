@@ -215,7 +215,7 @@ export class Battle {
     return c.standBody;
   }
 
-  // 先行したスタンド：目標へ向かうが、本体から射程より遠くへは行けず、壁も抜けられない
+  // 先行したスタンド：目標へ向かうが、本体から射程より遠くへは行けない。壁はすり抜ける（階はまたげない）
   updateStand(c, dt) {
     const s = c.standBody;
     if (!s) return;
@@ -231,10 +231,6 @@ export class Battle {
     if (g.x !== undefined) { gx = g.x; gy = g.y; } else { gx = c.x + Math.cos(c.facing) * 0.6; gy = c.y + Math.sin(c.facing) * 0.6; }
     const dx = gx - c.x, dy = gy - c.y, d = Math.hypot(dx, dy);
     if (d > R) { gx = c.x + (dx / d) * R; gy = c.y + (dy / d) * R; }
-    const z = c.floor * FLOOR_H + 1.2;
-    for (let k = 0; k < 8 && !hasLOS(this.world, c.x, c.y, gx, gy, null, z, z); k++) {
-      gx = c.x + (gx - c.x) * 0.7; gy = c.y + (gy - c.y) * 0.7;
-    }
     const m = dist(s.x, s.y, gx, gy), step = RULES.standSpeed * dt;
     if (m > step) { s.x += ((gx - s.x) / m) * step; s.y += ((gy - s.y) / m) * step; } else { s.x = gx; s.y = gy; }
     // 本体から離れて引きずられる時も射程は守る
