@@ -8,7 +8,7 @@ import { TurnController } from './engine/controller.js';
 import { Renderer } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
 import { MAPS } from './engine/maps.js';
-import { loadFxSheet, saveFxBlob } from './fx.js';
+import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -192,28 +192,6 @@ function clearPortrait(id) {
   try { localStorage.removeItem(PORTRAIT_KEY(id)); } catch {}
   delete portraitSrc[id];
   preloadPortraits();
-  // エフェクト素材（public/fx/effects.png またはブラウザに保存した画像）
-  const fxStatus = sheet => {
-    $('#fx-status').textContent = sheet
-      ? `読み込み済み：${sheet.source}（${sheet.w}×${sheet.h}px${sheet.keyed ? '・市松模様の背景を自動で抜きました' : ''}）`
-      : '素材なし（プログラムで描いたエフェクトを使います）';
-    $('#fx-clear').classList.toggle('hidden', !sheet || !sheet.source.startsWith('ブラウザ'));
-  };
-  const reloadFx = () => loadFxSheet().then(sheet => { state.renderer.sheet = sheet; fxStatus(sheet); }).catch(() => fxStatus(null));
-  reloadFx();
-  const fxIn = document.createElement('input');
-  fxIn.type = 'file';
-  fxIn.accept = 'image/*';
-  fxIn.addEventListener('change', async () => {
-    const f = fxIn.files[0];
-    fxIn.value = '';
-    if (!f) return;
-    $('#fx-status').textContent = '読み込み中…';
-    await saveFxBlob(f).catch(() => alert('ブラウザに保存できませんでした'));
-    reloadFx();
-  });
-  $('#fx-btn').addEventListener('click', () => fxIn.click());
-  $('#fx-clear').addEventListener('click', async () => { await saveFxBlob(null).catch(() => {}); reloadFx(); });
 }
 
 function portraitSlot(id, label) {
@@ -221,11 +199,25 @@ function portraitSlot(id, label) {
     <div class="pbtns"><button type="button" class="pbtn" data-up="${id}">${label}の画像…</button>${storedPortrait(id) ? `<button type="button" class="pbtn" data-clear="${id}">消す</button>` : ''}</div></div>`;
 }
 
+// キャラチップの正面（南向き）の1コマを画像にする（タイトルのカードやカットインに使う）
+const chipThumbCache = {};
+function chipThumb(id) {
+  if (chipThumbCache[id]) return chipThumbCache[id];
+  const chip = state.chips && state.chips[id];
+  if (!chip) return null;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 48;
+  cv.getContext('2d').drawImage(chip.img, 0, 0, 48, 48, 0, 0, 48, 48);
+  return (chipThumbCache[id] = cv.toDataURL());
+}
+
 // 能力発動時のカットイン
 function showCutin(c, text) {
   const el = $('#cutin');
-  const src = portraitSrc[`${c.charId}_stand`] || portraitSrc[c.charId];
+  const chipSrc = chipThumb(`${c.charId}_stand`) || chipThumb(c.charId);
+  const src = portraitSrc[`${c.charId}_stand`] || portraitSrc[c.charId] || chipSrc;
   if (!el || !src) return;
+  el.classList.toggle('pixel', !portraitSrc[`${c.charId}_stand`] && !portraitSrc[c.charId]);
   el.style.setProperty('--c', c.color);
   el.innerHTML = `<img src="${src}" alt=""><div class="cap"><b>『${escapeHtml(c.stand)}』</b><span>${escapeHtml(text)}</span></div>`;
   el.classList.remove('show');
@@ -246,6 +238,7 @@ function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
       <div class="portraits">${portraitSlot(c.id, '本体')}${portraitSlot(`${c.id}_stand`, 'スタンド')}</div>
+      ${chipThumb(c.id) || chipThumb(`${c.id}_stand`) ? `<div class="chips">${[c.id, `${c.id}_stand`].map(id => chipThumb(id) ? `<img class="chip" src="${chipThumb(id)}" alt="">` : '').join('')}</div>` : ''}
       <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">スタンド『${c.stand}』</div></div></div>
       ${c.profile ? `<p class="profile">${c.profile}</p>` : ''}
       <p class="persona">${c.personality}</p>
@@ -623,6 +616,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   renderCharCards();
   renderMapCards();
   preloadPortraits();
+  loadChips(Object.keys(CHARACTERS).flatMap(k => [k, `${k}_stand`])).then(chips => { state.renderer.chips = chips; state.chips = chips; renderCharCards(); });
   // エフェクト素材（public/fx/effects.png またはブラウザに保存した画像）
   const fxStatus = sheet => {
     $('#fx-status').textContent = sheet

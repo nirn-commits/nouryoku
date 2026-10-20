@@ -145,6 +145,8 @@ npm start                 # → http://127.0.0.1:8787/
 | `assets/inbox/` | 名前・形式を問わず、とりあえず入れる場所（Claude が振り分ける） |
 | `public/img/` | キャラクター画像（`sogo.png`・`sogo_stand.png` など。`public/img/README.md` 参照） |
 | `public/fx/` | エフェクトのスプライトシート `effects.png`（`public/fx/README.md` 参照） |
+| `public/chips/` | 戦闘画面のキャラチップ（ドット絵。`public/chips/README.md` 参照） |
+| `assets/source/` | 受け取った素材の元ファイル（zip など） |
 | `public/sound/` | 効果音・BGM（読み込みは今後対応。`public/sound/README.md` 参照） |
 
 GitHub の画面からは、各フォルダを開いて「Add file」→「Upload files」で追加できます（ブランチは `claude/fervent-ptolemy-o27x6o` を選んでください）。

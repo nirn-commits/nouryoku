@@ -54,6 +54,12 @@ function shade(hex, f) {
   return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
 }
 
+const CHIP_CELL = 48;
+// キャラチップの表示サイズ（48px のコマを整数倍に近い大きさで）
+function chipSizeFor(P) {
+  return Math.round(Math.max(36, Math.min(144, P * 2.0)) / 12) * 12;
+}
+
 // 打撃の種類と強さに応じた擬音
 function onomatopoeia(f) {
   const strong = f.dmg >= 15;
@@ -85,6 +91,7 @@ export class Renderer {
     this.shakeAmp = 0;
     this.shakeAt = 0;
     this.sheet = null; // エフェクト素材（無ければプログラムで描く）
+    this.chips = {}; // キャラチップ（public/chips/<id>.png・<id>_stand.png）
   }
 
   // 素材の1コマを、中心 (cx, cy)・高さ h ピクセルで描く
@@ -754,7 +761,35 @@ export class Renderer {
     }
   }
 
-  // スタンドの姿：本体の色で半透明に光る人型。本体から離れていれば細い線でつなぐ
+  // キャラチップの1コマを描く（足元が (x, footY)）。fps>0 なら走りのアニメ
+  drawChip(chip, x, footY, size, facing, fps, t, { prone = false, flash = false, invuln = false, alpha = 1, glow = null } = {}) {
+    const ctx = this.ctx;
+    const k = ((Math.round(facing / (Math.PI / 4)) % 8) + 8) % 8; // 0=東 1=南東 2=南 …
+    const dirIdx = [2, 1, 0, 7, 6, 5, 4, 3][k]; // シートの並び：南・南東・東・北東・北・北西・西・南西
+    let sx = dirIdx * CHIP_CELL, sy = 0;
+    if (fps && chip.rows >= 5) {
+      // 走り：東西南北の4方向。斜めは横向きの絵を使う
+      const run = { 0: 1, 1: 1, 2: 0, 3: 3, 4: 3, 5: 3, 6: 2, 7: 1 }[k];
+      sx = (Math.floor(t * fps) % 8) * CHIP_CELL;
+      sy = (run + 1) * CHIP_CELL;
+    }
+    ctx.save();
+    ctx.imageSmoothingEnabled = false;
+    ctx.globalAlpha = (ctx.globalAlpha ?? 1) * alpha;
+    if (glow) { ctx.shadowColor = glow; ctx.shadowBlur = 10; }
+    if (flash) ctx.filter = 'brightness(3)';
+    else if (invuln) ctx.filter = 'brightness(1.5)';
+    if (prone) {
+      ctx.translate(x, footY - size * 0.15);
+      ctx.rotate(Math.PI / 2);
+      ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, -size / 2, -size / 2, size, size);
+    } else {
+      ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, Math.round(x - size / 2), Math.round(footY - size), size, size);
+    }
+    ctx.restore();
+  }
+
+  // スタンドの姿：チップがあればその絵、無ければ本体の色で半透明に光る人型。本体から離れていれば細い線でつなぐ
   drawStand(b, c) {
     const ctx = this.ctx, P = this.px;
     const sb = c.standBody;
@@ -768,6 +803,17 @@ export class Renderer {
       ctx.lineWidth = 1.5;
       ctx.beginPath(); ctx.moveTo(c.x * P, this.sy(c.y, b.baseZ(c) + 1.2)); ctx.lineTo(x, this.sy(sb.y, z + 1.2)); ctx.stroke();
       ctx.setLineDash([]);
+    }
+    const schip = this.chips && this.chips[`${c.charId}_stand`];
+    if (schip) {
+      const size = chipSizeFor(P);
+      this.drawChip(schip, x, footY, size, sb.facing, 0, b.t, { alpha: 0.85, glow: c.color });
+      ctx.globalAlpha = 0.9;
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(9, P * 0.36)}px sans-serif`;
+      ctx.fillText(`『${c.stand}』`, x - size * 0.4, footY - size - 2);
+      ctx.restore();
+      return;
     }
     ctx.shadowColor = c.color;
     ctx.shadowBlur = 12;
@@ -924,8 +970,11 @@ export class Renderer {
     }
     ctx.globalAlpha = c.floor === 0 && b.bushAt(c.x, c.y) ? 0.55 : 1;
     const h = 1.75;
-    const x = c.x * P, footY = this.sy(c.y, z), headY = this.sy(c.y, z + h);
-    const bw = c.r * 1.3 * P;
+    const chip = this.chips && this.chips[c.charId];
+    const chipSize = chipSizeFor(P);
+    const x = c.x * P, footY = this.sy(c.y, z);
+    const headY = chip ? footY - chipSize * 0.95 : this.sy(c.y, z + h);
+    const bw = chip ? chipSize * 0.22 : c.r * 1.3 * P;
     // スタンドのオーラ
     ctx.fillStyle = c.windup ? 'rgba(255,80,80,0.35)' : `${c.color}33`;
     ctx.beginPath(); ctx.ellipse(x, (footY + headY) / 2, bw * 1.6, (footY - headY) * 0.75, 0, 0, Math.PI * 2); ctx.fill();
@@ -945,29 +994,38 @@ export class Renderer {
       }
       ctx.restore();
     }
-    // 体（縦長のカプセル）と頭。殴られた瞬間は白く光る
     const prone = s.proneUntil > b.t;
     const hitFlash = b.t - c.lastDamagedAt < 0.12;
-    ctx.fillStyle = hitFlash ? '#fff' : prone ? '#777' : c.color;
-    ctx.strokeStyle = s.invulnUntil > b.t ? '#fff' : '#111';
-    ctx.lineWidth = 2;
-    if (prone) {
-      ctx.fillRect(x - bw * 1.5, footY - bw, bw * 3, bw);
+    if (chip) {
+      // キャラチップ：足元に本人の色の輪、向きと移動でコマを選ぶ
+      ctx.strokeStyle = isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(x, footY, c.r * P * 1.1, c.r * P * 0.65, 0, 0, Math.PI * 2); ctx.stroke();
+      const moving = Math.hypot(c.vx, c.vy) > 0.4;
+      this.drawChip(chip, x, footY, chipSize, c.facing, moving ? (Math.hypot(c.vx, c.vy) > c.def.walk + 0.3 ? 14 : 9) : 0, b.t, { prone, flash: hitFlash, invuln: s.invulnUntil > b.t });
     } else {
+      // 体（縦長のカプセル）と頭。殴られた瞬間は白く光る
+      ctx.fillStyle = hitFlash ? '#fff' : prone ? '#777' : c.color;
+      ctx.strokeStyle = s.invulnUntil > b.t ? '#fff' : '#111';
+      ctx.lineWidth = 2;
+      if (prone) {
+        ctx.fillRect(x - bw * 1.5, footY - bw, bw * 3, bw);
+      } else {
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(x - bw / 2, headY + bw * 0.6, bw, footY - headY - bw * 0.6, bw / 2) : ctx.rect(x - bw / 2, headY + bw * 0.6, bw, footY - headY - bw * 0.6);
+        ctx.fill(); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x, headY + bw * 0.4, bw * 0.55, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      }
+      // 向き（足元の矢印）
+      ctx.fillStyle = '#fff';
+      const fx0 = x + Math.cos(c.facing) * c.r * 1.7 * P, fy0 = footY + Math.sin(c.facing) * c.r * 1.7 * P * 0.6;
       ctx.beginPath();
-      ctx.roundRect ? ctx.roundRect(x - bw / 2, headY + bw * 0.6, bw, footY - headY - bw * 0.6, bw / 2) : ctx.rect(x - bw / 2, headY + bw * 0.6, bw, footY - headY - bw * 0.6);
-      ctx.fill(); ctx.stroke();
-      ctx.beginPath(); ctx.arc(x, headY + bw * 0.4, bw * 0.55, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.moveTo(fx0, fy0);
+      ctx.lineTo(x + Math.cos(c.facing + 2.6) * c.r * P * 0.8, footY + Math.sin(c.facing + 2.6) * c.r * P * 0.5);
+      ctx.lineTo(x + Math.cos(c.facing - 2.6) * c.r * P * 0.8, footY + Math.sin(c.facing - 2.6) * c.r * P * 0.5);
+      ctx.closePath();
+      ctx.fill();
     }
-    // 向き（足元の矢印）
-    ctx.fillStyle = '#fff';
-    const fx0 = x + Math.cos(c.facing) * c.r * 1.7 * P, fy0 = footY + Math.sin(c.facing) * c.r * 1.7 * P * 0.6;
-    ctx.beginPath();
-    ctx.moveTo(fx0, fy0);
-    ctx.lineTo(x + Math.cos(c.facing + 2.6) * c.r * P * 0.8, footY + Math.sin(c.facing + 2.6) * c.r * P * 0.5);
-    ctx.lineTo(x + Math.cos(c.facing - 2.6) * c.r * P * 0.8, footY + Math.sin(c.facing - 2.6) * c.r * P * 0.5);
-    ctx.closePath();
-    ctx.fill();
     // 手に持っている物
     if (c.held) {
       this.drawItem({ ...c.held, x: c.x + Math.cos(c.facing + 0.8) * c.r * 1.2, y: c.y + Math.sin(c.facing + 0.8) * c.r * 1.2 }, z + 1.0, false);

@@ -164,3 +164,8 @@ button:disabled { opacity: .5; cursor: default; }
 
 .fx-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: center; margin-bottom: 12px; }
 .fx-row a { color: #9be7ff; font-size: 13px; }
+
+/* キャラチップ（ドット絵） */
+.chips { display: flex; gap: 6px; justify-content: center; margin: 4px 0; }
+.chip { width: 96px; height: 96px; image-rendering: pixelated; background: rgba(255,255,255,0.05); border-radius: 6px; }
+.cutin.pixel img { image-rendering: pixelated; height: 192px; }

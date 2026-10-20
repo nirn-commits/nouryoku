@@ -76,7 +76,8 @@ function loadImage(src) {
 
 // ---------- 読み込み ----------
 
-// 背景が透過されていない画像（市松模様が描き込まれた画像）は、各コマの縁の色を背景として抜く
+// 背景が透過されていない画像（市松模様が描き込まれた画像）は、背景を抜いて透過にする
+// 市松の2色と升目の位置をコマごとに割り出し、各画素の「本来の背景色」からの差を不透明度にする（半透明の煙や光も残る）
 function keyOutChecker(ctx, w, h, scale) {
   const data = ctx.getImageData(0, 0, w, h);
   const px = data.data;
@@ -84,30 +85,71 @@ function keyOutChecker(ctx, w, h, scale) {
   for (let i = 3; i < px.length; i += 4 * 97) if (px[i] < 250) { opaque = false; break; }
   if (!opaque) return false;
   const rects = [];
-  for (const v of Object.values(ATLAS)) for (const r of Array.isArray(v) ? v : Object.values(v)) rects.push(r);
+  for (const v of Object.values(ATLAS)) for (const r of Array.isArray(v) ? v : Object.values(v)) {
+    rects.push([Math.max(0, Math.floor(r[0] * scale)), Math.max(0, Math.floor(r[1] * scale)), Math.min(w, Math.ceil((r[0] + r[2]) * scale)), Math.min(h, Math.ceil((r[1] + r[3]) * scale))]);
+  }
+  const at = (x, y) => (y * w + x) * 4;
+  const key = i => (px[i] << 16) | (px[i + 1] << 8) | px[i + 2];
+  // 市松の2色：コマの中で最も多い2色
+  const counts = new Map();
+  for (const [x0, y0, x1, y1] of rects) {
+    for (let y = y0; y < y1; y += 4) for (let x = x0; x < x1; x += 4) {
+      const k = key(at(x, y));
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+  }
+  const [ka, kb] = [...counts.entries()].sort((a, z) => z[1] - a[1]).slice(0, 2).map(e => e[0]);
+  if (ka === undefined || kb === undefined) return false;
+  const rgb = k => [(k >> 16) & 255, (k >> 8) & 255, k & 255];
+  const A = rgb(ka), B = rgb(kb);
+  // シートの地の色（コマの外の暗い色）：コマの縁に入り込んだ区切り線を消すのに使う
+  const inRect = (x, y) => rects.some(([x0, y0, x1, y1]) => x >= x0 && x < x1 && y >= y0 && y < y1);
+  let D = null;
+  for (let y = h - 1; y > 0 && !D; y -= 7) for (let x = w - 1; x > 0; x -= 7) if (!inRect(x, y)) { const i = (y * w + x) * 4; D = [px[i], px[i + 1], px[i + 2]]; break; }
+  const near = (i, c) => Math.abs(px[i] - c[0]) + Math.abs(px[i + 1] - c[1]) + Math.abs(px[i + 2] - c[2]) <= 4;
   const keep = new Uint8Array(w * h);
-  for (const [bx, by, bw, bh] of rects) {
-    const x0 = Math.max(0, Math.floor(bx * scale)), y0 = Math.max(0, Math.floor(by * scale));
-    const x1 = Math.min(w, Math.ceil((bx + bw) * scale)), y1 = Math.min(h, Math.ceil((by + bh) * scale));
-    // 縁の画素で多い2色を背景色とみなす
-    const counts = new Map();
-    const sample = (x, y) => {
-      const i = (y * w + x) * 4;
-      const key = ((px[i] >> 3) << 10) | ((px[i + 1] >> 3) << 5) | (px[i + 2] >> 3);
-      const e = counts.get(key) || { n: 0, r: px[i], g: px[i + 1], b: px[i + 2] };
-      e.n++;
-      counts.set(key, e);
-    };
-    for (let x = x0; x < x1; x++) { sample(x, y0); sample(x, y1 - 1); }
-    for (let y = y0; y < y1; y++) { sample(x0, y); sample(x1 - 1, y); }
-    const bgs = [...counts.values()].sort((a, z) => z.n - a.n).slice(0, 2);
+  for (const [x0, y0, x1, y1] of rects) {
+    // 升目の境目（2色が入れ替わる位置）の x・y の余りを数えて、升目の位置と大きさ（既定16px）を決める
+    const cell = Math.max(4, Math.round(16 * scale));
+    const hx = new Array(cell).fill(0), hy = new Array(cell).fill(0);
+    for (let y = y0; y < y1; y += 2) for (let x = x0 + 1; x < x1; x++) {
+      const i = at(x, y), j = at(x - 1, y);
+      if ((near(i, A) && near(j, B)) || (near(i, B) && near(j, A))) hx[x % cell]++;
+    }
+    for (let x = x0; x < x1; x += 2) for (let y = y0 + 1; y < y1; y++) {
+      const i = at(x, y), j = at(x, y - 1);
+      if ((near(i, A) && near(j, B)) || (near(i, B) && near(j, A))) hy[y % cell]++;
+    }
+    const ox = hx.indexOf(Math.max(...hx)), oy = hy.indexOf(Math.max(...hy));
+    const par = (x, y) => (Math.floor((x - ox) / cell) + Math.floor((y - oy) / cell)) & 1;
+    // どちらの偶奇が A か
+    let agree = 0, total = 0;
+    for (let y = y0; y < y1; y += 3) for (let x = x0; x < x1; x += 3) {
+      const i = at(x, y);
+      const isA = near(i, A), isB = near(i, B);
+      if (!isA && !isB) continue;
+      total++;
+      if ((par(x, y) === 0) === isA) agree++;
+    }
+    const flip = agree < total / 2;
     for (let y = y0; y < y1; y++) {
       for (let x = x0; x < x1; x++) {
-        const i = (y * w + x) * 4;
-        let dmin = 999;
-        for (const c of bgs) dmin = Math.min(dmin, Math.abs(px[i] - c.r) + Math.abs(px[i + 1] - c.g) + Math.abs(px[i + 2] - c.b));
-        if (dmin < 18) px[i + 3] = 0;
-        else if (dmin < 40) px[i + 3] = Math.min(px[i + 3], Math.round(((dmin - 18) / 22) * 255));
+        const i = at(x, y);
+        const bg = (par(x, y) === 0) !== flip ? A : B;
+        // コマの縁の2px は区切り線が入りやすいので抜く
+        if (x - x0 < 2 || x1 - 1 - x < 2 || y - y0 < 2 || y1 - 1 - y < 2) { px[i + 3] = 0; keep[y * w + x] = 1; continue; }
+        if (D && Math.abs(px[i] - D[0]) + Math.abs(px[i + 1] - D[1]) + Math.abs(px[i + 2] - D[2]) <= 6) { px[i + 3] = 0; keep[y * w + x] = 1; continue; }
+        // 色を不透明度に変換（GIMP の「色を透明度に」と同じ考え方）
+        let a = 0;
+        for (let c = 0; c < 3; c++) {
+          const p = px[i + c], q = bg[c];
+          const ac = p > q ? (p - q) / (255 - q) : p < q ? (q - p) / q : 0;
+          if (ac > a) a = ac;
+        }
+        a = Math.min(1, a * 1.5);
+        if (a < 0.06) { px[i + 3] = 0; keep[y * w + x] = 1; continue; }
+        for (let c = 0; c < 3; c++) px[i + c] = Math.max(0, Math.min(255, Math.round(bg[c] + (px[i + c] - bg[c]) / a)));
+        px[i + 3] = Math.round(a * 255);
         keep[y * w + x] = 1;
       }
     }
@@ -147,4 +189,18 @@ export async function loadFxSheet() {
 export function frameRect(sheet, rect) {
   const s = sheet.scale;
   return [rect[0] * s, rect[1] * s, rect[2] * s, rect[3] * s];
+}
+
+// ---------- キャラチップ ----------
+// public/chips/<id>.png：48px のコマ。1段目＝待機の8方向（南・南東・東・北東・北・北西・西・南西）、
+// 2〜5段目（あれば）＝走りの8コマ（南・東・北・西）。スタンドは <id>_stand.png（1段目のみ）
+export async function loadChips(ids) {
+  const out = {};
+  await Promise.all(ids.map(async id => {
+    try {
+      const img = await loadImage(`chips/${id}.png`);
+      out[id] = { img, rows: Math.floor(img.naturalHeight / 48) };
+    } catch { /* 無ければ従来の描き方 */ }
+  }));
+  return out;
 }
