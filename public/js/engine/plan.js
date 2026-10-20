@@ -31,7 +31,9 @@ function targetName(b, t) {
     const bd = b.world.buildings.find(x => x.id === t.id);
     if (bd) return bd.name;
     const door = b.world.buildings.flatMap(x => x.doors).find(d => d.id === t.id);
-    return door ? door.name : t.id;
+    if (door) return door.name;
+    const area = b.world.areas.find(a => a.id === t.id);
+    return area ? area.name : t.id;
   }
   return '';
 }
@@ -67,6 +69,7 @@ function resolveObjectId(b, id) {
   if (b.objectById(id)) return id;
   if (b.world.buildings.some(x => x.id === id)) return id;
   if (b.world.buildings.some(x => x.doors.some(d => d.id === id))) return id;
+  if (b.world.areas.some(a => a.id === id)) return id;
   return null;
 }
 
@@ -300,6 +303,13 @@ export function resolveTarget(b, c, t, step = {}) {
       }
       const door = b.world.buildings.flatMap(x => x.doors).find(d => d.id === t.id);
       if (door) return { x: door.x, y: door.y, door };
+      const area = b.world.areas.find(a => a.id === t.id);
+      if (area) {
+        // 区域：中心付近の歩ける場所（自分が既に中にいれば今の場所）
+        if (c.x >= area.x && c.x <= area.x + area.w && c.y >= area.y && c.y <= area.y + area.h) return { x: c.x, y: c.y, area };
+        const p = nearestWalkable(b.world, area.x + area.w / 2, area.y + area.h / 2, 5) || { x: area.x + area.w / 2, y: area.y + area.h / 2 };
+        return { x: p.x, y: p.y, area };
+      }
       return { error: '対象が既に存在しない' };
     }
     case 'projectile': {
@@ -401,6 +411,10 @@ function approach(b, c, st, tx, ty, stopDist, run) {
 
 function moveGoal(b, c, st, res) {
   const s = st.def;
+  if (res.obj && !res.obj.blocksMove) {
+    // 植え込みなど通れる物体は、その中に入る
+    return { x: res.center.x, y: res.center.y, stop: 0.3 };
+  }
   if (res.obj) {
     // 物体のそば（自分のいる側）
     const n = nearestPointOnRect(c.x, c.y, res.obj);

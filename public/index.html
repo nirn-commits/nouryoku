@@ -12,6 +12,8 @@
     <h1>能力バトル<small>自由記述型・超能力バトル</small></h1>
     <p class="lead">行動を<b>自然文</b>で書いて戦え。相手も同時に、独自に考えて動いている。</p>
     <p id="ai-status" class="ai-status">AI 接続を確認中…</p>
+    <h2>戦場</h2>
+    <div id="map-cards" class="map-cards"></div>
     <h2>あなたが操るキャラクター</h2>
     <div id="char-cards" class="char-cards"></div>
     <div class="start-row"><button id="start-btn" class="big">戦闘開始</button></div>
@@ -50,6 +52,7 @@
         </div>
         <div class="controls">
           <button id="pause-btn">一時停止</button>
+          <button id="zoom-btn" title="Z キーでも切り替え">拡大表示</button>
           <label>再生速度
             <select id="speed">
               <option value="0.25">0.25×</option>

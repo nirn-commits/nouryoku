@@ -24,9 +24,9 @@ async function playTurns(b, maxTurns) {
 
 test('ターン制で CPU 同士の戦闘が例外なく決着する', async () => {
   for (let seed = 1; seed <= 8; seed++) {
-    const b = new Battle({ seed, playerChar: seed % 2 ? 'makabe' : 'karasuma', cpuChar: seed % 2 ? 'karasuma' : 'makabe' });
-    const tc = await playTurns(b, 60);
-    assert.ok(b.over, `seed ${seed} が60手以内に決着しない`);
+    const b = new Battle({ seed, playerChar: seed % 2 ? 'makabe' : 'karasuma', cpuChar: seed % 2 ? 'karasuma' : 'makabe', mapId: seed % 2 ? 'town' : 'lot' });
+    const tc = await playTurns(b, 80);
+    assert.ok(b.over, `seed ${seed}（${b.mapId}）が80手以内に決着しない`);
     assert.equal(tc.phase, 'over');
     for (const c of b.chars) assert.ok(Number.isFinite(c.x) && Number.isFinite(c.y));
   }
@@ -48,7 +48,7 @@ test('CPU の計画は入力ターン開始時点で立てられ、プレイヤ�
 });
 
 test('追尾は動く敵を追いかけ、間合いに入ったら次の攻撃に移る', () => {
-  const b = new Battle({ seed: 9, playerChar: 'makabe', cpuChar: 'karasuma' });
+  const b = new Battle({ seed: 9, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
   b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
   b.player.x = 6; b.player.y = 19; b.player.facing = 0;
   b.cpu.x = 12; b.cpu.y = 19; b.cpu.facing = 0;
@@ -64,7 +64,7 @@ test('追尾は動く敵を追いかけ、間合いに入ったら次の攻撃�
 });
 
 test('存在しない能力・他人の能力・戦場外の地点は計画から除外される', () => {
-  const b = new Battle({ seed: 3, playerChar: 'makabe', cpuChar: 'karasuma' });
+  const b = new Battle({ seed: 3, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
   const plan = compilePlan(b, b.player, {
     interpretation: 't',
     steps: [
@@ -83,7 +83,7 @@ test('存在しない能力・他人の能力・戦場外の地点は計画か�
 });
 
 test('行動予算を超えた手順は切り捨てられる', () => {
-  const b = new Battle({ seed: 3 });
+  const b = new Battle({ seed: 3, mapId: 'lot' });
   const steps = Array.from({ length: 9 }, () => ({ action: 'guard', targetType: 'none', duration: 3 }));
   const plan = compilePlan(b, b.player, { steps });
   assert.ok(plan.budget <= 10 + 1e-9);
@@ -92,7 +92,7 @@ test('行動予算を超えた手順は切り捨てられる', () => {
 });
 
 test('CPU の観測には、見えていない敵の現在位置もプレイヤーの計画も含まれない', () => {
-  const b = new Battle({ seed: 5 });
+  const b = new Battle({ seed: 5, mapId: 'lot' });
   const secret = '秘密の作戦テキスト';
   const plan = compilePlan(b, b.player, { interpretation: secret, speech: null, steps: [{ action: 'wait', targetType: 'none', duration: 3 }] });
   b.setPlan(b.player, plan);
@@ -107,7 +107,7 @@ test('CPU の観測には、見えていない敵の現在位置もプレイヤ�
 });
 
 test('建物の外から中への経路は壁を通らない', () => {
-  const b = new Battle({ seed: 7 });
+  const b = new Battle({ seed: 7, mapId: 'lot' });
   const p = findPath(b.world, 2.5, 21, 8, 6.5);
   assert.ok(p && !p.partial);
   let px = 2.5, py = 21;
@@ -122,7 +122,7 @@ test('建物の外から中への経路は壁を通らない', () => {
 });
 
 test('ローカル解析：仕様書の入力例', () => {
-  const b = new Battle({ seed: 1, playerChar: 'makabe', cpuChar: 'karasuma' });
+  const b = new Battle({ seed: 1, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
   b.player.memory.lastSeen = { x: 20, y: 10, t: 0 };
   const p1 = compilePlan(b, b.player, localParse(b, b.player, '左の家に駆け込み、窓から敵の位置を確認する'));
   assert.deepEqual(p1.steps.map(s => s.action), ['move', 'move', 'look']);
@@ -137,7 +137,7 @@ test('ローカル解析：仕様書の入力例', () => {
 });
 
 test('走って摩擦低下の領域に入ると転倒する', () => {
-  const b = new Battle({ seed: 2, playerChar: 'makabe', cpuChar: 'karasuma' });
+  const b = new Battle({ seed: 2, playerChar: 'makabe', cpuChar: 'karasuma', mapId: 'lot' });
   b.player.x = 10; b.player.y = 19; b.player.facing = 0;
   b.cpu.x = 14; b.cpu.y = 19; b.cpu.facing = Math.PI;
   b.world.objects = b.world.objects.filter(o => o.kind !== 'crate');
@@ -146,4 +146,63 @@ test('走って摩擦低下の領域に入ると転倒する', () => {
   for (let i = 0; i < 60; i++) b.step();
   assert.ok(b.cpu.status.proneUntil > 0, '転倒していない');
   assert.ok(b.cpu.memory.observed.length > 0, '能力の観察情報が記録されていない');
+});
+
+test('住宅街：物体が重ならず、主要な場所すべてへ出現地点から歩いて行ける', () => {
+  const b = new Battle({ seed: 11, mapId: 'town' });
+  const w = b.world;
+  const solid = w.objects.filter(o => o.blocksMove && !o.id.startsWith('outer_'));
+  for (let i = 0; i < solid.length; i++) {
+    for (let j = i + 1; j < solid.length; j++) {
+      const a = solid[i], c = solid[j];
+      if (a.kind === 'wall' && c.kind === 'wall') continue; // 壁の角どうしは重なってよい
+      const overlap = a.x < c.x + c.w - 0.01 && a.x + a.w > c.x + 0.01 && a.y < c.y + c.h - 0.01 && a.y + a.h > c.y + 0.01;
+      assert.ok(!overlap, `${a.name} と ${c.name} が重なっている`);
+    }
+  }
+  const sp = w.spawns.player;
+  const goals = [
+    ...w.buildings.map(bd => [bd.name, bd.x + bd.w / 2, bd.y + bd.h / 2]),
+    ...w.areas.map(a => [a.name, a.x + a.w / 2, a.y + a.h / 2]),
+    ['CPU 出現地点', w.spawns.cpu.x, w.spawns.cpu.y],
+  ];
+  for (const [name, x, y] of goals) {
+    const p = findPath(w, sp.x, sp.y, x, y);
+    assert.ok(p && !p.partial, `${name} へ行けない`);
+  }
+});
+
+test('住宅街：植え込みの中にいると離れた所からは見えない', () => {
+  const b = new Battle({ seed: 12, mapId: 'town' });
+  const bush = b.objectById('bush_park_2');
+  b.cpu.x = bush.x + bush.w / 2; b.cpu.y = bush.y + bush.h / 2;
+  b.player.x = b.cpu.x - 8; b.player.y = b.cpu.y; b.player.facing = 0;
+  assert.equal(b.canSee(b.player, b.cpu.x, b.cpu.y), false);
+  b.player.x = b.cpu.x - 2;
+  assert.equal(b.canSee(b.player, b.cpu.x, b.cpu.y), true);
+  assert.equal(b.canSee(b.cpu, b.player.x, b.player.y), true);
+});
+
+test('住宅街：車に衝撃を与えると防犯アラームが遠くまで聞こえる', () => {
+  const b = new Battle({ seed: 13, mapId: 'town' });
+  const car = b.objectById('car_park_1');
+  b.cpu.x = 40; b.cpu.y = 21;
+  b.damageObject(car, 10, b.player);
+  assert.ok(car.alarmUntil > b.t);
+  assert.ok(b.cpu.memory.heard.some(h => h.kind === 'alarm'), 'CPU にアラームが聞こえていない');
+});
+
+test('住宅街：ローカル解析が新しい場所・物を指せる', () => {
+  const b = new Battle({ seed: 14, mapId: 'town', playerChar: 'makabe' });
+  const cases = [
+    ['コンビニに駆け込む', 'store'],
+    ['公園の植え込みに隠れる', 'bush_'],
+    ['工事現場へ向かう', 'area_site'],
+    ['自販機を押す', 'vending_'],
+  ];
+  for (const [text, id] of cases) {
+    const plan = compilePlan(b, b.player, localParse(b, b.player, text));
+    assert.ok(plan.steps.length, `${text}：手順がない（${plan.rejected}）`);
+    assert.ok(plan.steps[0].target.id.startsWith(id), `${text}：対象が ${plan.steps[0].target.id}`);
+  }
 });

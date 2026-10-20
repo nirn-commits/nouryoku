@@ -7,6 +7,7 @@ import { localParse } from './engine/localParser.js';
 import { TurnController } from './engine/controller.js';
 import { Renderer } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
+import { MAPS } from './engine/maps.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -16,6 +17,7 @@ const state = {
   gemini: false,
   model: '',
   chosen: 'makabe',
+  mapId: 'town',
   battle: null,
   turn: null,
   renderer: null,
@@ -39,11 +41,16 @@ const EXAMPLES = {
     '飛んできたナイフの軌道を能力で逸らし、その隙に距離を詰める',
     '近くの木箱の摩擦を消してから、敵に向かって押し出す',
     '敵を追いかけて殴る',
+    '公園の植え込みに隠れて、敵が近づいてきたら足元を滑らせる',
+    'コンビニの商品棚の摩擦を消して、敵に向かって押し出す',
+    '駐車場の車を殴って防犯アラームを鳴らし、その隙に裏口へ回る',
     '物陰に隠れて、敵が見えたらナイフを投げる',
     '「出てこいよ、臆病者」と挑発して2秒待つ',
   ],
   karasuma: [
     '周囲の音を消して、敵を歩いて追いかけて殴る',
+    '工事現場の柱の陰に隠れて、敵が近づいてきたら棘を突き出す',
+    '植え込みに潜んで待ち伏せし、敵が見えたらナイフを投げる',
     '3mの距離を保って敵を尾行する',
     '正面から攻撃すると見せかけて、背後の壁を破壊して瓦礫を落とす',
     '敵の目の前に壁を作って通路を塞ぎ、右の家に入る',
@@ -109,6 +116,13 @@ function abilityHtml(id) {
     <div class="weak">弱点：${a.weakness}</div></div>`;
 }
 
+function renderMapCards() {
+  $('#map-cards').innerHTML = Object.values(MAPS).map(m => `
+    <div class="map-card ${state.mapId === m.id ? 'chosen' : ''}" data-id="${m.id}">
+      <b>${m.name}</b><div class="meta">${m.desc}</div>
+    </div>`).join('');
+}
+
 function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
@@ -123,7 +137,7 @@ function renderCharCards() {
 
 function startBattle() {
   const cpuChar = state.chosen === 'makabe' ? 'karasuma' : 'makabe';
-  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, cpuChar });
+  const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, cpuChar, mapId: state.mapId });
   state.battle = b;
   state.ended = false;
   state.logCount = 0;
@@ -351,7 +365,18 @@ function insertText(t) {
 window.addEventListener('DOMContentLoaded', async () => {
   state.renderer = new Renderer($('#field'));
   renderCharCards();
+  renderMapCards();
   await checkStatus();
+  $('#map-cards').addEventListener('click', e => {
+    const card = e.target.closest('.map-card');
+    if (card) { state.mapId = card.dataset.id; renderMapCards(); }
+  });
+  const toggleZoom = () => {
+    if (!state.battle) return;
+    const z = state.renderer.toggleZoom(state.battle);
+    $('#zoom-btn').textContent = z === 'near' ? '全体表示' : '拡大表示';
+  };
+  $('#zoom-btn').addEventListener('click', toggleZoom);
   $('#char-cards').addEventListener('click', e => {
     const card = e.target.closest('.char-card');
     if (card) { state.chosen = card.dataset.id; renderCharCards(); }
@@ -368,6 +393,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#pause-btn').addEventListener('click', () => { state.paused = !state.paused; updatePause(); });
   $('#speed').addEventListener('change', e => { state.speed = Number(e.target.value); });
   window.addEventListener('keydown', e => {
+    if (e.code === 'KeyZ' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) toggleZoom();
     if (e.code === 'Space' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) {
       e.preventDefault();
       state.paused = !state.paused;

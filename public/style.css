@@ -55,6 +55,10 @@ h2 { font-size: 1.1rem; border-left: 4px solid var(--gold); padding-left: 8px; }
 .ab { background: var(--panel2); border-radius: 6px; padding: 8px; margin-top: 8px; }
 .ab ul { margin: 4px 0; padding-left: 18px; }
 .weak { color: #ffb3b3; font-size: .8rem; }
+.map-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+.map-card { background: var(--panel); border: 2px solid #444; border-radius: 8px; padding: 10px; cursor: pointer; font-size: .88rem; }
+.map-card.chosen { border-color: var(--gold); box-shadow: 0 0 0 2px var(--gold); }
+.map-card b { font-size: 1rem; }
 .start-row { text-align: center; margin: 18px 0; }
 .howto { background: var(--panel); border-radius: 8px; padding: 10px 16px; line-height: 1.7; font-size: .9rem; }
 .howto summary { cursor: pointer; color: var(--gold); font-weight: bold; }

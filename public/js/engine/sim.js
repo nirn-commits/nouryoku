@@ -1,6 +1,7 @@
 // 戦闘シミュレーション本体：物理・知覚・ダメージ・ログ。勝敗はここで確定する
 import { CHARACTERS, ABILITIES, RULES } from './data.js';
-import { createWorld, hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById } from './world.js';
+import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById } from './world.js';
+import { createWorld } from './maps.js';
 import { dist, angleTo, angDiff, circleRectPush, segRect, segCircle, distToRect, clamp, makeRng, pointInRect } from './vec.js';
 import { updateRunner, interruptStep, adoptPlan } from './plan.js';
 
@@ -30,19 +31,21 @@ function makeChar(id, charId, x, y, isCPU) {
 }
 
 export class Battle {
-  constructor({ seed = Date.now(), playerChar = 'makabe', cpuChar = 'karasuma' } = {}) {
+  constructor({ seed = Date.now(), playerChar = 'makabe', cpuChar = 'karasuma', mapId = 'town' } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
-    this.world = createWorld(seed);
+    this.mapId = mapId;
+    this.world = createWorld(seed, mapId);
     this.t = 0;
     this.log = [];
     this.fx = [];
     this.over = false;
     this.winner = null;
-    this.player = makeChar('player', playerChar, 2.5, 21, false);
-    this.cpu = makeChar('cpu', cpuChar, 33.5, 3, true);
-    this.player.facing = -Math.PI / 4;
-    this.cpu.facing = Math.PI * 0.75;
+    const sp = this.world.spawns;
+    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, false);
+    this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true);
+    this.player.facing = angleTo(sp.player.x, sp.player.y, this.world.w / 2, this.world.h / 2);
+    this.cpu.facing = angleTo(sp.cpu.x, sp.cpu.y, this.world.w / 2, this.world.h / 2);
     this.chars = [this.player, this.cpu];
     this.emit({ text: '―― 戦闘開始 ――', kind: 'system', all: true });
   }
@@ -60,7 +63,17 @@ export class Battle {
       const a = angleTo(viewer.x, viewer.y, x, y);
       if (Math.abs(angDiff(viewer.facing, a)) > RULES.visionFov / 2) return false;
     }
+    // 植え込みの中は、すぐそばか同じ植え込みの中からでないと見えない
+    if (!this.world.bushes) this.world.bushes = this.world.objects.filter(o => o.kind === 'bush');
+    for (const o of this.world.bushes) {
+      if (pointInRect(x, y, o) && d > 2.5 && !pointInRect(viewer.x, viewer.y, o)) return false;
+    }
     return hasLOS(this.world, viewer.x, viewer.y, x, y);
+  }
+
+  bushAt(x, y) {
+    if (!this.world.bushes) this.world.bushes = this.world.objects.filter(o => o.kind === 'bush');
+    return this.world.bushes.find(o => pointInRect(x, y, o)) || null;
   }
 
   canSeeChar(viewer, target) {
@@ -85,8 +98,11 @@ export class Battle {
     const heardBy = new Set();
     for (const c of this.chars) {
       if (all || c === actor || c === affected) { visibleTo.add(c.id); continue; }
-      if (pos && this.canSee(c, pos.x, pos.y)) visibleTo.add(c.id);
-      else if (pos && sound && this.canHear(c, pos.x, pos.y, sound)) { visibleTo.add(c.id); heardBy.add(c.id); }
+      const seen = pos && this.canSee(c, pos.x, pos.y);
+      const heard = pos && sound && this.canHear(c, pos.x, pos.y, sound);
+      if (seen || heard) visibleTo.add(c.id);
+      if (heard && !seen) heardBy.add(c.id);
+      if (heard && seen && soundKind === 'alarm') this.recordSound(c, pos, soundKind, obsText || text);
     }
     const entry = { t: this.t, text, obsText, kind, actor: actor ? actor.id : null, visibleTo, heardBy };
     this.log.push(entry);
@@ -196,7 +212,13 @@ export class Battle {
   // ---------- 環境 ----------
 
   damageObject(o, amount, source) {
-    if (o.indestructible || !this.world.objects.includes(o)) return;
+    if (!this.world.objects.includes(o)) return;
+    if (o.kind === 'car' && !(o.alarmUntil > this.t)) {
+      // 車に衝撃が加わると防犯アラームが鳴る（広い範囲に聞こえる）
+      o.alarmUntil = this.t + 6;
+      this.emit({ text: `${o.name}の防犯アラームがけたたましく鳴り響く！`, kind: 'env', pos: { x: o.x + o.w / 2, y: o.y + o.h / 2 }, sound: 40, soundKind: 'alarm', actor: source });
+    }
+    if (o.indestructible) return;
     o.hp -= amount;
     if (o.hp > 0) return;
     this.destroyObject(o, source);
@@ -295,6 +317,7 @@ export class Battle {
         let factor = 0.6 + 0.4 * Math.max(0, Math.cos(diff));
         if (grip) factor *= 0.35;
         if (onRubble(this.world)) factor *= 0.6;
+        if (this.bushAt(c.x, c.y)) factor *= 0.6;
         tvx *= factor; tvy *= factor;
         maxSp *= factor;
       }
@@ -364,6 +387,7 @@ export class Battle {
     if (c.stepAccum > (running ? 1.5 : 1.2)) {
       c.stepAccum = 0;
       if (speed > 0.8) this.noise(c, running ? 9 : 3, running ? 'footsteps_run' : 'footsteps');
+      if (speed > 0.8 && this.bushAt(c.x, c.y)) this.noise(c, 6, 'rustle');
     }
   }
 

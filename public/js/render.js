@@ -1,11 +1,14 @@
 // フィールド描画。プレイヤーが知覚できるものだけを描く（debug 時は全表示）
 import { RULES } from './engine/data.js';
+import { clamp } from './engine/vec.js';
 
 const SOUND_LABEL = {
   footsteps: '足音', footsteps_run: '駆ける足音', speech: '声', impact: '衝撃音', crash: '崩れる音',
   glass: 'ガラスの音', fall: '倒れる音', throw: '風切り音', swing: '風切り音', ability: '異音', combat: '物音',
-  env: '物音', damage: '打撃音',
+  env: '物音', damage: '打撃音', rustle: '葉擦れの音', alarm: '防犯アラーム',
 };
+
+const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
 
 export class Renderer {
   constructor(canvas) {
@@ -14,23 +17,35 @@ export class Renderer {
     this.px = 26;
     this.fog = null;
     this.fogFrame = 0;
+    this.zoom = 'fit'; // fit=全体表示 / near=自分の周りを拡大
+    this.offX = 0;
+    this.offY = 0;
+    this.dpr = 1;
   }
 
   resize(battle) {
     const wrap = this.canvas.parentElement;
-    const w = Math.min(wrap.clientWidth, 1000);
-    this.px = w / battle.world.w;
-    const dpr = window.devicePixelRatio || 1;
+    const w = Math.min(wrap.clientWidth, 1100);
+    const fit = w / battle.world.w;
+    this.viewW = w;
+    this.viewH = Math.round(fit * battle.world.h);
+    this.px = this.zoom === 'near' ? Math.max(fit * 2.2, 30) : fit;
+    this.dpr = window.devicePixelRatio || 1;
     this.canvas.style.width = `${w}px`;
-    this.canvas.style.height = `${this.px * battle.world.h}px`;
-    this.canvas.width = Math.round(w * dpr);
-    this.canvas.height = Math.round(this.px * battle.world.h * dpr);
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.canvas.style.height = `${this.viewH}px`;
+    this.canvas.width = Math.round(w * this.dpr);
+    this.canvas.height = Math.round(this.viewH * this.dpr);
+  }
+
+  toggleZoom(battle) {
+    this.zoom = this.zoom === 'fit' ? 'near' : 'fit';
+    this.resize(battle);
+    return this.zoom;
   }
 
   toWorld(clientX, clientY) {
     const r = this.canvas.getBoundingClientRect();
-    return { x: (clientX - r.left) / this.px, y: (clientY - r.top) / this.px };
+    return { x: (clientX - r.left + this.offX) / this.px, y: (clientY - r.top + this.offY) / this.px };
   }
 
   computeFog(b, viewer) {
@@ -51,25 +66,35 @@ export class Renderer {
     const see = (x, y) => debug || b.canSee(me, x, y);
     const W = b.world.w * P, H = b.world.h * P;
 
-    ctx.fillStyle = '#3d4436';
+    // カメラ（拡大時は自分を中心に）
+    if (this.zoom === 'near') {
+      this.offX = clamp(me.x * P - this.viewW / 2, 0, Math.max(0, W - this.viewW));
+      this.offY = clamp(me.y * P - this.viewH / 2, 0, Math.max(0, H - this.viewH));
+    } else {
+      this.offX = 0;
+      this.offY = 0;
+    }
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, this.viewW, this.viewH);
+    ctx.setTransform(this.dpr, 0, 0, this.dpr, -this.offX * this.dpr, -this.offY * this.dpr);
+
+    ctx.fillStyle = '#4a4f3f';
     ctx.fillRect(0, 0, W, H);
-    // 地面の模様
-    ctx.strokeStyle = 'rgba(255,255,255,0.03)';
-    ctx.lineWidth = 1;
-    for (let x = 0; x < b.world.w; x += 2) { ctx.beginPath(); ctx.moveTo(x * P, 0); ctx.lineTo(x * P, H); ctx.stroke(); }
-    for (let y = 0; y < b.world.h; y += 2) { ctx.beginPath(); ctx.moveTo(0, y * P); ctx.lineTo(W, y * P); ctx.stroke(); }
+    this.drawGround(b);
 
     for (const bd of b.world.buildings) {
-      ctx.fillStyle = '#5b4c3f';
+      ctx.fillStyle = { store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6' }[bd.kind] || '#6b5848';
       ctx.fillRect(bd.x * P, bd.y * P, bd.w * P, bd.h * P);
-      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillStyle = bd.kind === 'store' ? 'rgba(0,0,0,0.45)' : 'rgba(255,255,255,0.45)';
       ctx.font = `${Math.max(10, P * 0.45)}px sans-serif`;
       ctx.fillText(bd.name, (bd.x + 0.5) * P, (bd.y + 1) * P);
     }
     for (const r of b.world.rubble) {
-      ctx.fillStyle = 'rgba(120,110,100,0.55)';
+      const gravel = r.kind === 'gravel';
+      ctx.fillStyle = gravel ? 'rgba(170,150,110,0.6)' : 'rgba(120,110,100,0.55)';
       ctx.fillRect(r.x * P, r.y * P, r.w * P, r.h * P);
-      ctx.fillStyle = 'rgba(60,55,50,0.8)';
+      ctx.fillStyle = gravel ? 'rgba(110,95,70,0.8)' : 'rgba(60,55,50,0.8)';
       for (let i = 0; i < (r.w * r.h) * 3; i++) {
         const sx = r.x + ((i * 0.618) % 1) * r.w, sy = r.y + ((i * 0.377) % 1) * r.h;
         ctx.fillRect(sx * P, sy * P, P * 0.15, P * 0.12);
@@ -92,33 +117,7 @@ export class Renderer {
     }
 
     // 物体
-    for (const o of b.world.objects) {
-      const x = o.x * P, y = o.y * P, w = o.w * P, h = o.h * P;
-      if (o.kind === 'wall') {
-        ctx.fillStyle = o.indestructible ? '#1c1c22' : o.created ? '#6d5f86' : '#2c2b33';
-        ctx.fillRect(x, y, w, h);
-        if (!o.indestructible && o.hp < o.maxHp) {
-          ctx.fillStyle = `rgba(255,80,60,${0.5 * (1 - o.hp / o.maxHp)})`;
-          ctx.fillRect(x, y, w, h);
-        }
-      } else if (o.kind === 'window') {
-        ctx.fillStyle = '#9fd8f0';
-        ctx.fillRect(x, y, w, h);
-      } else if (o.kind === 'crate') {
-        ctx.fillStyle = o.slickUntil > b.t ? '#b9e6f5' : '#9a6b3c';
-        ctx.fillRect(x, y, w, h);
-        ctx.strokeStyle = '#5e3f20';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
-        ctx.beginPath(); ctx.moveTo(x + 2, y + 2); ctx.lineTo(x + w - 2, y + h - 2); ctx.moveTo(x + w - 2, y + 2); ctx.lineTo(x + 2, y + h - 2); ctx.stroke();
-        ctx.fillStyle = '#fff';
-        ctx.font = `${Math.max(9, P * 0.4)}px sans-serif`;
-        ctx.fillText(o.name.replace('木箱', ''), x + w / 2 - P * 0.12, y - 2);
-      } else if (o.kind === 'table') {
-        ctx.fillStyle = o.slickUntil > b.t ? '#b9e6f5' : '#6e4a2e';
-        ctx.fillRect(x, y, w, h);
-      }
-    }
+    for (const o of b.world.objects) this.drawObject(b, o, see);
     for (const bd of b.world.buildings) {
       for (const d of bd.doors) {
         ctx.fillStyle = 'rgba(255,220,150,0.5)';
@@ -126,9 +125,16 @@ export class Renderer {
       }
     }
 
+    ctx.font = `${Math.max(10, P * 0.5)}px sans-serif`;
+    ctx.fillStyle = 'rgba(255,255,255,0.28)';
+    for (const a of b.world.areas) {
+      if (a.id === 'area_main_road' || a.id === 'area_cross_road' || a.id === 'area_crossing' || a.id === 'area_site_gate') continue;
+      ctx.fillText(a.name, (a.x + 0.6) * P, (a.y + a.h - 0.6) * P);
+    }
+
     // 霧（見えていない場所を暗く）
     if (!debug) {
-      if (!this.fog || this.fogFrame++ % 4 === 0) this.computeFog(b, me);
+      if (!this.fog || this.fogFrame++ % 5 === 0) this.computeFog(b, me);
       const f = this.fog;
       ctx.fillStyle = 'rgba(8,8,16,0.42)';
       for (let r = 0; r < f.rows; r++) {
@@ -222,6 +228,157 @@ export class Renderer {
     }
   }
 
+  drawGround(b) {
+    const ctx = this.ctx, P = this.px;
+    for (const g of b.world.ground) {
+      const x = g.x * P, y = g.y * P, w = g.w * P, h = g.h * P;
+      if (g.kind === 'road') {
+        ctx.fillStyle = '#3b3b40';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+        ctx.setLineDash([P * 1.2, P * 1.2]);
+        ctx.lineWidth = Math.max(1, P * 0.08);
+        ctx.beginPath();
+        if (g.w > g.h) { ctx.moveTo(x, y + h / 2); ctx.lineTo(x + w, y + h / 2); } else { ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w / 2, y + h); }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else if (g.kind === 'crosswalk') {
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        for (let yy = g.y + 0.3; yy < g.y + g.h - 0.3; yy += 0.9) ctx.fillRect(x, yy * P, w, P * 0.45);
+      } else if (g.kind === 'site') {
+        ctx.fillStyle = '#6e5e46';
+        ctx.fillRect(x, y, w, h);
+      } else if (g.kind === 'lot') {
+        ctx.fillStyle = '#505055';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        for (let xx = 19.8; xx < 27.5; xx += 3.7) { ctx.beginPath(); ctx.moveTo(xx * P, 29 * P); ctx.lineTo(xx * P, 37 * P); ctx.stroke(); }
+      } else if (g.kind === 'park') {
+        ctx.fillStyle = '#3d5a34';
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+  }
+
+  drawObject(b, o, see) {
+    const ctx = this.ctx, P = this.px;
+    const x = o.x * P, y = o.y * P, w = o.w * P, h = o.h * P;
+    const slick = o.slickUntil > b.t;
+    const damaged = !o.indestructible && o.hp < o.maxHp;
+    switch (o.kind) {
+      case 'wall': {
+        ctx.fillStyle = o.indestructible ? '#1c1c22'
+          : o.created ? '#6d5f86'
+            : o.style === 'block' ? '#8d8b84'
+              : o.style === 'panel' ? '#d8d0b0'
+                : o.style === 'concrete' ? '#a3a3a3' : '#2c2b33';
+        ctx.fillRect(x, y, w, h);
+        if (o.style === 'panel') {
+          ctx.fillStyle = 'rgba(40,90,160,0.6)';
+          if (o.w > o.h) ctx.fillRect(x, y + h * 0.35, w, h * 0.3); else ctx.fillRect(x + w * 0.35, y, w * 0.3, h);
+        }
+        break;
+      }
+      case 'window':
+        ctx.fillStyle = '#9fd8f0';
+        ctx.fillRect(x, y, w, h);
+        break;
+      case 'crate':
+        ctx.fillStyle = slick ? '#b9e6f5' : '#9a6b3c';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = '#5e3f20';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+        ctx.beginPath(); ctx.moveTo(x + 2, y + 2); ctx.lineTo(x + w - 2, y + h - 2); ctx.moveTo(x + w - 2, y + 2); ctx.lineTo(x + 2, y + h - 2); ctx.stroke();
+        break;
+      case 'table':
+        ctx.fillStyle = slick ? '#b9e6f5' : '#7a5232';
+        ctx.fillRect(x, y, w, h);
+        break;
+      case 'shelf':
+        ctx.fillStyle = slick ? '#b9e6f5' : '#b59a6a';
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = 'rgba(230,80,80,0.7)';
+        for (let i = 0; i < Math.max(o.w, o.h) / 0.5; i++) {
+          if (o.w > o.h) ctx.fillRect(x + (i * 0.5 + 0.1) * P, y + h * 0.25, P * 0.25, h * 0.5);
+          else ctx.fillRect(x + w * 0.25, y + (i * 0.5 + 0.1) * P, w * 0.5, P * 0.25);
+        }
+        break;
+      case 'vending':
+        ctx.fillStyle = slick ? '#b9e6f5' : '#d63031';
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x + w * 0.15, y + h * 0.15, w * 0.7, h * 0.35);
+        break;
+      case 'drum':
+        ctx.fillStyle = slick ? '#b9e6f5' : '#2d6fb5';
+        ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = '#1b4475'; ctx.lineWidth = 1.5; ctx.stroke();
+        break;
+      case 'cone':
+        ctx.fillStyle = '#ff7f27';
+        ctx.beginPath(); ctx.moveTo(x + w / 2, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h); ctx.closePath(); ctx.fill();
+        break;
+      case 'car': {
+        const hash = [...o.id].reduce((a, ch) => a + ch.charCodeAt(0), 0);
+        ctx.fillStyle = /トラック/.test(o.name) ? '#e8e2d0' : CAR_COLORS[hash % CAR_COLORS.length];
+        const r = Math.min(w, h) * 0.25;
+        ctx.beginPath();
+        ctx.roundRect ? ctx.roundRect(x, y, w, h, r) : ctx.rect(x, y, w, h);
+        ctx.fill();
+        ctx.fillStyle = 'rgba(40,60,80,0.75)';
+        if (o.w > o.h) { ctx.fillRect(x + w * 0.25, y + h * 0.15, w * 0.15, h * 0.7); ctx.fillRect(x + w * 0.62, y + h * 0.15, w * 0.12, h * 0.7); }
+        else { ctx.fillRect(x + w * 0.15, y + h * 0.25, w * 0.7, h * 0.15); ctx.fillRect(x + w * 0.15, y + h * 0.62, w * 0.7, h * 0.12); }
+        if (o.alarmUntil > b.t && Math.floor(b.t * 4) % 2 === 0) {
+          ctx.strokeStyle = '#ffd60a'; ctx.lineWidth = 3; ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+        }
+        break;
+      }
+      case 'steel':
+        ctx.fillStyle = '#6f7378';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = '#3d4044'; ctx.lineWidth = 1;
+        for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(x, y + (h * i) / 4); ctx.lineTo(x + w, y + (h * i) / 4); ctx.stroke(); }
+        break;
+      case 'hole':
+        ctx.fillStyle = '#17110c';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = '#f1c40f'; ctx.setLineDash([6, 4]); ctx.lineWidth = 2;
+        ctx.strokeRect(x - 2, y - 2, w + 4, h + 4);
+        ctx.setLineDash([]);
+        break;
+      case 'tree':
+        ctx.fillStyle = '#1f4d22';
+        ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w * 0.9, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#5b3a1e';
+        ctx.fillRect(x + w * 0.3, y + h * 0.3, w * 0.4, h * 0.4);
+        break;
+      case 'pole':
+        ctx.fillStyle = '#777';
+        ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, w / 2, 0, Math.PI * 2); ctx.fill();
+        break;
+      case 'bush':
+        ctx.fillStyle = 'rgba(46,110,46,0.85)';
+        ctx.fillRect(x, y, w, h);
+        ctx.fillStyle = 'rgba(80,150,70,0.8)';
+        for (let i = 0; i < o.w * o.h * 2; i++) {
+          const sx = o.x + ((i * 0.618) % 1) * o.w, sy = o.y + ((i * 0.381) % 1) * o.h;
+          ctx.beginPath(); ctx.arc(sx * P, sy * P, P * 0.25, 0, Math.PI * 2); ctx.fill();
+        }
+        break;
+    }
+    if (damaged) {
+      ctx.fillStyle = `rgba(255,80,60,${0.45 * (1 - o.hp / o.maxHp)})`;
+      ctx.fillRect(x, y, w, h);
+    }
+    if (o.kind === 'crate' && P > 14) {
+      ctx.fillStyle = '#fff';
+      ctx.font = `${Math.max(9, P * 0.4)}px sans-serif`;
+      ctx.fillText(o.name.replace(/木箱|（.*）/g, ''), x + w / 2 - P * 0.12, y - 2);
+    }
+  }
+
   drawChar(b, c, isMe) {
     const ctx = this.ctx, P = this.px;
     const x = c.x * P, y = c.y * P, r = c.r * P;
@@ -242,6 +399,8 @@ export class Renderer {
       ctx.closePath();
       ctx.fill();
     }
+    // 植え込みの中にいる時は薄く描く
+    ctx.globalAlpha = b.bushAt(c.x, c.y) ? 0.55 : 1;
     // スタンドのオーラ
     ctx.fillStyle = c.windup ? 'rgba(255,80,80,0.35)' : `${c.color}33`;
     ctx.beginPath(); ctx.arc(x, y, r * 1.9, 0, Math.PI * 2); ctx.fill();
@@ -276,7 +435,9 @@ export class Renderer {
     if (s.proneUntil > b.t) tags.push('転倒');
     if (s.stunUntil > b.t) tags.push('怯み');
     if (s.deafUntil > b.t) tags.push('無音');
+    if (b.bushAt(c.x, c.y)) tags.push('潜伏');
     ctx.fillText(`${isMe ? '自分' : c.name}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - bw / 2, y - r - 14);
+    ctx.globalAlpha = 1;
   }
 
   drawSpeech(b, c, x, y, approx) {

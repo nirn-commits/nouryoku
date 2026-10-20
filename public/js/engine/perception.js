@@ -24,19 +24,29 @@ function stateWords(b, c) {
   return s;
 }
 
-export function landmarks(b) {
+// AI に渡す地形情報。建物・区域・扉は常に、細かい物体は観測者の近くのものだけ（トークン節約）
+export function landmarks(b, c = null) {
   const out = [];
   for (const bd of b.world.buildings) {
-    out.push({ id: bd.id, name: bd.name, kind: 'building', center: [r1(bd.x + bd.w / 2), r1(bd.y + bd.h / 2)], size: [bd.w, bd.h] });
-    for (const d of bd.doors) out.push({ id: d.id, name: d.name, kind: 'door', center: [r1(d.x), r1(d.y)] });
+    out.push({ id: bd.id, name: bd.name, kind: 'building', at: [r1(bd.x + bd.w / 2), r1(bd.y + bd.h / 2)], size: [bd.w, bd.h] });
+    for (const d of bd.doors) out.push({ id: d.id, name: d.name, kind: 'door', at: [r1(d.x), r1(d.y)] });
+  }
+  for (const a of b.world.areas) {
+    out.push({ id: a.id, name: a.name, kind: 'area', at: [r1(a.x + a.w / 2), r1(a.y + a.h / 2)], size: [r1(a.w), r1(a.h)] });
   }
   for (const o of b.world.objects) {
-    const c = rectCenter(o);
-    out.push({
-      id: o.id, name: o.name, kind: o.kind, center: [r1(c.x), r1(c.y)], size: [r1(o.w), r1(o.h)],
-      hp: o.indestructible ? null : Math.max(0, Math.round(o.hp)),
-      movable: !!o.movable, blocksSight: !!o.blocksSight,
-    });
+    if (o.id.startsWith('outer_')) continue;
+    const cc = rectCenter(o);
+    if (c) {
+      const d = dist(c.x, c.y, cc.x, cc.y);
+      const wallLike = o.kind === 'wall' && !o.created;
+      if (d > (wallLike ? 12 : 25)) continue;
+    }
+    const item = { id: o.id, name: o.name, kind: o.kind, at: [r1(cc.x), r1(cc.y)] };
+    if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
+    if (!o.indestructible) item.hp = Math.max(0, Math.round(o.hp));
+    if (o.movable) item.movable = true;
+    out.push(item);
   }
   return out;
 }
@@ -61,6 +71,15 @@ export function rulesSummary() {
     budget: `1回の計画は最大${RULES.maxSteps}手順・見積もり${RULES.budgetSeconds}秒まで。超過分は実行されない`,
     vision: `視界は前方${Math.round((RULES.visionFov * 180) / Math.PI)}°・${RULES.visionRange}mで壁に遮られる（窓・机は視線を通す）。${RULES.nearAwareness}m以内は背後でも気配で分かる`,
     melee: `近接攻撃の射程${RULES.meleeRange}m、振りかぶり${RULES.meleeWindup}秒（その間に避けられうる）`,
+    environment: {
+      wall: '壁・塀・柱。移動も視線も遮る。壊せる（外壁は不可）',
+      window: '窓・ガラス。視線は通す。割れると通り抜けられる',
+      bush: '植え込み。通れるが遅く音が出る。中にいると2.5m以内に近づかれない限り見つからない（中から外は見える）',
+      car: '車。遮蔽物になる。衝撃を与えると防犯アラームが鳴り、遠くまで聞こえる（陽動に使える）',
+      hole: '掘削穴。通れないが視線は通る',
+      movable: '木箱・ドラム缶・商品棚・自販機・机・三角コーンは押せる（重い物ほど動きにくい）',
+      area: 'kind=area は区域。move の対象にすると中心付近へ向かう',
+    },
   };
 }
 
@@ -120,6 +139,6 @@ export function buildObservation(b, c) {
     knives_on_ground: b.world.pickups.filter(p => b.canSee(c, p.x, p.y)).map(p => [r1(p.x), r1(p.y)]),
     observed_enemy_abilities: c.memory.observed.slice(),
     recent_events: recent,
-    map: { size: [b.world.w, b.world.h], landmarks: landmarks(b) },
+    map: { size: [b.world.w, b.world.h], landmarks: landmarks(b, c), note: '細かい物体は近く（約25m以内）のものだけ載っている' },
   };
 }

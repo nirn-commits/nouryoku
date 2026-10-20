@@ -86,7 +86,7 @@ const COMMON_RULES = `
 
 # 出力の規則
 - steps[].action は rules.actions の id のみ。能力を使う場合は action="ability" とし、ability と effect に observation.self.abilities の id を正確に入れる。
-- targetType: enemy=敵 / self=自分 / object=戦場の物体・建物・扉（targetId に observation.map.landmarks の id）/ point=座標（x,y メートル）/ projectile=飛来物 / direction=方向（direction に rules.directions のいずれか。cover=物陰）/ none=対象なし。
+- targetType: enemy=敵 / self=自分 / object=戦場の物体・建物・扉・区域（targetId に observation.map.landmarks の id）/ point=座標（x,y メートル）/ projectile=飛来物 / direction=方向（direction に rules.directions のいずれか。cover=物陰）/ none=対象なし。
 - 能力の効果ごとに使える targetType が決まっている（abilities[].effects[].targets）。合わない組み合わせは使わない。
 - 存在しない能力・効果やルールにない現象（時間停止・瞬間移動・回復・発火など）を作らない。実行できない部分は steps に入れず rejected に日本語で理由を書く。
 - 条件付き行動（「〜したら」）は、その行動の step の condition に入れる（kind は rules.conditions のキー）。

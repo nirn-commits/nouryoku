@@ -37,20 +37,101 @@ function splitClauses(text) {
   return text
     .replace(/(してから|それから|そのあと|その後|その隙に|そして|次に|ながら|つつ)/g, '、')
     // 「〜まで走って投げる」のように移動の後に別の行動が続く場合は分ける
-    .replace(/((?:走っ|ダッシュし|歩い|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
+    .replace(/((?:消し|奪っ|走っ|ダッシュし|歩い|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
     .split(/[、。,.\n!！?？]+/)
     .map(s => s.trim())
     .filter(Boolean);
 }
 
+// 文中の物体の言い方 → 該当する物体の条件
+const OBJECT_WORDS = [
+  [/自販機|自動販売機/, o => o.kind === 'vending'],
+  [/商品棚|本棚|棚/, o => o.kind === 'shelf'],
+  [/ドラム缶/, o => o.kind === 'drum'],
+  [/コーン/, o => o.kind === 'cone'],
+  [/トラック/, o => o.kind === 'car' && /トラック/.test(o.name)],
+  [/(?<!駐)車(?!場)|自動車|クルマ/, o => o.kind === 'car'],
+  [/鉄骨|資材/, o => o.kind === 'steel'],
+  [/掘削穴|穴の(そば|近く|縁|手前)/, o => o.kind === 'hole'],
+  [/植え込み|茂み|草むら|生け垣|やぶ/, o => o.kind === 'bush'],
+  [/木の(陰|後ろ|裏)|木へ|木まで|木に|樹/, o => o.kind === 'tree'],
+  [/電柱/, o => o.kind === 'pole'],
+  [/柱/, o => o.id.startsWith('site_pillar')],
+  [/レジ|カウンター/, o => o.id === 'store_counter'],
+  [/ベンチ/, o => o.id === 'park_bench'],
+  [/机|テーブル|座卓|食卓/, o => o.kind === 'table'],
+  [/仮囲い|フェンス/, o => o.style === 'panel'],
+];
+
+const AREA_WORDS = [
+  [/工事現場|現場の中|建設現場/, 'area_site'],
+  [/ゲート/, 'area_site_gate'],
+  [/公園/, 'area_park'],
+  [/駐車場/, 'area_parking'],
+  [/コンビニの前|店の前|店先/, 'area_store_front'],
+  [/交差点/, 'area_crossing'],
+  [/大通り|道路|通り/, 'area_main_road'],
+];
+
+const DIR_WORDS = [
+  [/左|西/, (o, c) => o.x < c.x], [/右|東/, (o, c) => o.x > c.x],
+  [/奥|北|上/, (o, c) => o.y < c.y], [/手前|南|下/, (o, c) => o.y > c.y],
+];
+
+function centerOf(o) {
+  return o.center || { x: o.x + (o.w || 0) / 2, y: o.y + (o.h || 0) / 2 };
+}
+
+function inside(o, bd) {
+  const cc = centerOf(o);
+  return cc.x >= bd.x && cc.x <= bd.x + bd.w && cc.y >= bd.y && cc.y <= bd.y + bd.h;
+}
+
+function findBuildingRef(b, c, clause) {
+  const w = b.world;
+  // 名前・別名での言及（「コンビニ」「佐藤家」「事務所」など）
+  let best = null;
+  for (const bd of w.buildings) {
+    for (const n of [bd.name, ...(bd.aliases || [])]) {
+      if (clause.includes(n) && (!best || n.length > best.len)) best = { bd, len: n.length, name: n };
+    }
+  }
+  if (best) return { ...best.bd, idx: clause.lastIndexOf(best.name), ref: best.bd };
+  // 「左の家」「北の建物」など、自分から見た方向での言及
+  const m = clause.match(/(左|右|西|東|北|南|奥|手前|上|下)(?:の|側の|手の)(?:家|建物|民家)/);
+  const houses = w.buildings.filter(x => x.kind === 'house');
+  if (m) {
+    const test = DIR_WORDS.find(([re]) => re.test(m[1]))[1];
+    const cands = houses.filter(h => test(centerOf(h), c));
+    if (cands.length) return { ...nearestBy(cands, c.x, c.y), idx: m.index };
+  }
+  const g = clause.search(/家|建物|民家|屋内|室内/);
+  if (g >= 0) return { ...nearestBy(houses.length ? houses : w.buildings, c.x, c.y), idx: g };
+  return null;
+}
+
 function findObjectRef(b, c, clause) {
   const w = b.world;
   const pe = b.perceivedEnemy(c);
-  const leftHouse = w.buildings.find(x => x.id === 'house_left');
-  const rightHouse = w.buildings.find(x => x.id === 'house_right');
-  const house = /左の家|左の建物|左側の家/.test(clause) ? leftHouse
-    : /右の家|右の建物|右側の家/.test(clause) ? rightHouse
-      : /家|建物|屋内|室内/.test(clause) ? nearestBy(w.buildings.map(x => ({ ...x, center: { x: x.x + x.w / 2, y: x.y + x.h / 2 } })), c.x, c.y) : null;
+  const nearEnemy = /敵の(近く|そば|横|後ろ|背後|側)|背後の|後ろの/.test(clause) && pe;
+  const ref = nearEnemy ? pe : c;
+  const house = findBuildingRef(b, c, clause);
+  let area = null;
+  for (const [re, id] of AREA_WORDS) {
+    const m2 = clause.match(re);
+    const a = m2 && w.areas.find(x => x.id === id);
+    if (a) { area = { ...a, idx: m2.index }; break; }
+  }
+  // 「コンビニの棚」「公園の植え込み」のように場所が添えられていれば、その中の物を優先する
+  const pick = list => {
+    if (!list.length) return null;
+    for (const place of [house, area]) {
+      if (!place) continue;
+      const inPlace = list.filter(o => inside(o, place));
+      if (inPlace.length) return nearestBy(inPlace, ref.x, ref.y);
+    }
+    return nearestBy(list, ref.x, ref.y);
+  };
 
   const m = clause.match(/木箱([A-HＡ-Ｈa-h])/);
   if (m) {
@@ -59,34 +140,34 @@ function findObjectRef(b, c, clause) {
     if (o) return { type: 'object', id: o.id };
   }
   if (/木箱|箱/.test(clause)) {
-    const crates = w.objects.filter(o => o.kind === 'crate');
-    const ref = /敵の(近く|そば|横)/.test(clause) && pe ? pe : c;
-    const o = nearestBy(crates, ref.x, ref.y);
+    const o = pick(w.objects.filter(x => x.kind === 'crate'));
     if (o) return { type: 'object', id: o.id };
   }
-  if (/机|テーブル/.test(clause)) {
-    const o = nearestBy(w.objects.filter(x => x.kind === 'table'), c.x, c.y);
+  for (const [re, test] of OBJECT_WORDS) {
+    if (!re.test(clause)) continue;
+    const o = pick(w.objects.filter(test));
+    if (o) return { type: 'object', id: o.id, kind: o.kind };
+  }
+  if (/窓|ガラス/.test(clause)) {
+    const o = pick(w.objects.filter(x => x.kind === 'window'));
     if (o) return { type: 'object', id: o.id };
   }
-  if (/窓/.test(clause)) {
-    const wins = w.objects.filter(o => o.kind === 'window' && (!house || o.building === house.id));
-    const o = nearestBy(wins, c.x, c.y);
-    if (o) return { type: 'object', id: o.id };
-  }
-  if (/入口|扉|ドア|玄関/.test(clause)) {
-    const doors = w.buildings.filter(x => !house || x === house).flatMap(x => x.doors);
+  if (/入口|扉|ドア|玄関|裏口|自動ドア/.test(clause)) {
+    let doors = w.buildings.filter(x => !house || x.id === house.id).flatMap(x => x.doors);
+    if (/裏口/.test(clause)) doors = doors.filter(d => /裏口/.test(d.name)).concat(doors.length ? [] : doors);
     const d = nearestBy(doors.map(d => ({ ...d, center: d })), c.x, c.y);
     if (d) return { type: 'object', id: d.id };
   }
-  if (/中央の壁|真ん中の壁/.test(clause)) return { type: 'object', id: 'center_wall_1' };
-  if (/壁/.test(clause)) {
-    const walls = w.objects.filter(o => o.kind === 'wall' && !o.indestructible);
-    // 「背後の壁」「敵の近くの壁」は敵の近くの壁
-    const ref = /背後|後ろ|敵の|そば|近く/.test(clause) && pe ? pe : c;
-    const o = nearestBy(walls, ref.x, ref.y);
+  if (/中央の壁|真ん中の壁/.test(clause) && b.objectById('center_wall_1')) return { type: 'object', id: 'center_wall_1' };
+  if (/壁|塀/.test(clause)) {
+    let walls = w.objects.filter(o => o.kind === 'wall' && !o.indestructible);
+    if (/塀/.test(clause)) walls = walls.filter(o => o.style === 'block');
+    const o = pick(walls);
     if (o) return { type: 'object', id: o.id, wall: true };
   }
-  if (house) return { type: 'object', id: house.id };
+  // 「コンビニの駐車場」のように建物名と区域名が両方ある時は、後ろにある方（文の主語）を採る
+  if (house && (!area || house.idx >= area.idx)) return { type: 'object', id: house.id };
+  if (area) return { type: 'object', id: area.id, area: true };
   return null;
 }
 
@@ -120,9 +201,12 @@ function toTarget(ref) {
   return { targetType: 'enemy' };
 }
 
-function parseClause(b, c, clause, has) {
+function parseClause(b, c, clause, has, ctx = {}) {
   const steps = [];
-  const obj = findObjectRef(b, c, clause);
+  const found = findObjectRef(b, c, clause);
+  if (found) ctx.lastObj = found;
+  // 「〜の摩擦を消して押し出す」の「押し出す」のように目的語が省かれたら、直前に出てきた物を指す
+  const obj = found || (/押|引|壊|殴|叩|弾|滑ら|摩擦/.test(clause) ? ctx.lastObj : null);
   const pt = pointRef(clause);
   const dir = dirRef(clause);
   const run = /走|駆け|急い|ダッシュ|全力|一気|飛び込/.test(clause);
@@ -131,14 +215,14 @@ function parseClause(b, c, clause, has) {
   // --- 能力 ---
   if (has.friction && /摩擦|滑ら|滑り|すべ|転倒|転ば|ツルツル|足を取|足元をすく|グリップ|足を重く|足止め/.test(clause)) {
     const effect = /グリップ|重く|足止め|鈍く|粘/.test(clause) ? 'grip' : 'slick';
-    if (/木箱|箱|机/.test(clause) && obj && effect === 'slick') steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(obj) });
+    if (obj && b.objectById(obj.id)?.movable && effect === 'slick') steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(obj) });
     else if (pt) steps.push({ action: 'ability', ability: 'friction', effect, ...toTarget(pt) });
     else steps.push({ action: 'ability', ability: 'friction', effect, targetType: 'enemy' });
     return steps;
   }
   if (has.vector && /逸ら|そら|反転|跳ね返|弾き返|ベクトル|軌道|押し戻|吹き飛ば|弾き飛ば|弾く/.test(clause)) {
     if (/ナイフ|飛来|飛んで|飛び道具|投げ/.test(clause)) steps.push({ action: 'ability', ability: 'vector', effect: 'redirect', targetType: 'projectile', direction: 'toward_enemy' });
-    else if (/木箱|箱|机/.test(clause) && obj) steps.push({ action: 'ability', ability: 'vector', effect: 'repel', ...toTarget(obj) });
+    else if (obj && b.objectById(obj.id)?.movable) steps.push({ action: 'ability', ability: 'vector', effect: 'repel', ...toTarget(obj) });
     else steps.push({ action: 'ability', ability: 'vector', effect: 'repel', targetType: 'enemy' });
     return steps;
   }
@@ -172,7 +256,7 @@ function parseClause(b, c, clause, has) {
     steps.push({ action: 'throw', ...(pt ? toTarget(pt) : { targetType: 'enemy' }) });
     return steps;
   }
-  if (/壁|木箱|箱|窓|机/.test(clause) && /壊|破壊|崩|割|殴|叩き割/.test(clause) && obj) {
+  if (/壁|塀|木箱|箱|窓|ガラス|机|棚|自販機|自動販売機|ドラム缶|車|柱|仮囲い/.test(clause) && /壊|破壊|崩|割|殴|叩|蹴/.test(clause) && obj) {
     steps.push({ action: 'melee', targetType: 'object', targetId: obj.id });
     return steps;
   }
@@ -206,11 +290,12 @@ function parseClause(b, c, clause, has) {
     });
     return steps;
   }
-  const isMove = /ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|進|戻|退|出る|出て|寄る/.test(clause);
+  const isMove = /ダッシュ|疾走|歩く|歩い|突っ走|移動|行く|行って|向か|駆け込|入る|入り|入って|走|近づ|詰め|離れ|逃げ|隠れ|下が|回り込|回る|回って|進|戻|退|出る|出て|寄る/.test(clause);
   const isLook = /確認|見る|見て|覗|観察|様子|探す|探し|偵察|見張|警戒/.test(clause);
   if (isMove) {
     const mode = run || /逃げ|駆け込/.test(clause) ? 'run' : 'walk';
     if (pt) steps.push({ action: 'move', mode, ...toTarget(pt) });
+    else if (obj && (dir === 'cover' || obj.kind === 'bush')) steps.push({ action: 'move', mode, ...toTarget(obj) });
     else if (dir && dir !== 'left' && dir !== 'right' || (dir && !obj)) {
       const dm = clause.match(/(\d+(?:\.\d+)?)\s*(?:m|ｍ|メートル)/);
       steps.push({ action: 'move', mode, targetType: 'direction', direction: dir, ...(dm ? { distance: Number(dm[1]) } : {}) });
@@ -258,6 +343,7 @@ export function localParse(b, c, text) {
   // 座標の区切りで文が分かれないようにする
   body = body.replace(/([（(]\s*-?\d+(?:\.\d+)?)\s*[,、，]\s*(-?\d+(?:\.\d+)?\s*[)）])/g, '$1／$2');
   let pendingCond = null;
+  const ctx = {};
   for (let clause of splitClauses(body)) {
     let cond = null;
     for (const [re, f] of COND) {
@@ -271,7 +357,7 @@ export function localParse(b, c, text) {
     }
     if (foreignRes.some(re => re.test(clause))) continue;
     if (/^(と|って|と言って|と言い)?(挑発|叫|言|呟|告げ|笑|宣言|問いかけ)/.test(clause) || /^(と|って)$/.test(clause)) continue;
-    const steps = clause ? parseClause(b, c, clause, has) : [];
+    const steps = clause ? parseClause(b, c, clause, has, ctx) : [];
     if (!steps.length) {
       if (cond) { pendingCond = cond; continue; }
       if (clause.length > 1 && !IMPOSSIBLE.some(([re]) => re.test(clause))) raw.rejected.push(`「${clause}」を行動として解釈できなかった`);
