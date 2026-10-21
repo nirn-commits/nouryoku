@@ -22,6 +22,9 @@ function makeChar(id, charId, x, y, isCPU, team) {
     alive: true,
     status: { proneUntil: 0, stunUntil: 0, guardUntil: 0, invulnUntil: 0, recoverUntil: 0, deafUntil: 0, hideUntil: 0, counterUntil: 0, umbrellaUntil: 0, grabbedUntil: 0 },
     balls: def.balls || 0,
+    // リトル・レッド・コルベット：残した口（最大8）、車両の通った跡、車両が体の上を走った人
+    mouths: def.abilities.includes('corvette') ? [] : null,
+    carTrail: [], carTouch: {}, clench: null,
     // エコー・ビーチの24体（背中の◆の数が1〜24、長い腕が左右半々）
     units: def.abilities.includes('echo')
       ? Array.from({ length: 24 }, (_, i) => ({
@@ -177,7 +180,8 @@ export class Battle {
   canSee(viewer, x, y, tz) {
     if (this.canSeeFrom(viewer, viewer.x, viewer.y, this.baseZ(viewer) + EYE_H, viewer.facing, x, y, tz, true)) return true;
     const s = viewer.standBody;
-    if (s && s.floor === viewer.floor && dist(s.x, s.y, viewer.x, viewer.y) > 0.5) {
+    // 車両の周りの様子は本体には見えない（リトル・レッド・コルベット）
+    if (s && !viewer.def.standBlind && s.floor === viewer.floor && dist(s.x, s.y, viewer.x, viewer.y) > 0.5) {
       return this.canSeeFrom(viewer, s.x, s.y, s.floor * FLOOR_H + EYE_H, s.facing, x, y, tz, false);
     }
     return false;
@@ -210,7 +214,7 @@ export class Battle {
   // 近接攻撃や弾の出どころ：スタンドを先行させていればその位置
   standOrigin(c) {
     const s = c.standBody;
-    return s && s.floor === c.floor ? s : c;
+    return s && s.floor === c.floor && !c.def.standBlind ? s : c;
   }
 
   // スタンドを出す（既に出ていればそのまま）
@@ -234,15 +238,21 @@ export class Battle {
     }
     const g = s.goal || {};
     if (g.char && g.char.alive && this.canSee(c, g.char.x, g.char.y)) { g.x = g.char.x; g.y = g.char.y; }
+    else if (g.char && g.char.alive && c.def.standBlind) {
+      // 見えていなくても、最後に分かっている位置へ走らせる
+      const rec = c.memory.seen[g.char.id];
+      if (rec) { g.x = rec.x; g.y = rec.y; }
+    }
     let gx, gy;
     if (g.x !== undefined) { gx = g.x; gy = g.y; } else { gx = c.x + Math.cos(c.facing) * 0.6; gy = c.y + Math.sin(c.facing) * 0.6; }
     const dx = gx - c.x, dy = gy - c.y, d = Math.hypot(dx, dy);
     if (d > R) { gx = c.x + (dx / d) * R; gy = c.y + (dy / d) * R; }
-    const m = dist(s.x, s.y, gx, gy), step = RULES.standSpeed * dt;
+    const m = dist(s.x, s.y, gx, gy), step = (c.def.standSpeed ?? RULES.standSpeed) * dt;
     if (m > step) { s.x += ((gx - s.x) / m) * step; s.y += ((gy - s.y) / m) * step; } else { s.x = gx; s.y = gy; }
     // 本体から離れて引きずられる時も射程は守る
     const bd = dist(c.x, c.y, s.x, s.y);
     if (bd > R + 0.05) { s.x = c.x + ((s.x - c.x) / bd) * R; s.y = c.y + ((s.y - c.y) / bd) * R; }
+    if (c.mouths) this.trackCar(c, s);
     if (g.char && g.char.alive && this.canSee(c, g.char.x, g.char.y)) s.facing = angleTo(s.x, s.y, g.char.x, g.char.y);
     else if (d > 0.3) s.facing = angleTo(c.x, c.y, g.x ?? gx, g.y ?? gy);
     else s.facing = c.facing;
@@ -307,7 +317,7 @@ export class Battle {
 
   standHit(c, dmg, what, owner) {
     this.emit({ text: `${c.name} の『${c.stand}』が${what}を受け止めた！`, obsText: `${c.name} のスタンドが${what}を受け止めた！`, kind: 'combat', actor: c, pos: c.standBody, sound: 6, soundKind: 'impact' });
-    this.damage(c, Math.max(1, Math.round(dmg * RULES.standBlock)), { source: owner, kind: 'stand', label: 'スタンドへの衝撃の反動' });
+    this.damage(c, Math.max(1, Math.round(dmg * (c.def.standFeedback ?? RULES.standBlock))), { source: owner, kind: 'stand', label: 'スタンドへの衝撃の反動' });
   }
 
   smokeBetween(x0, y0, x1, y1) {
@@ -596,6 +606,24 @@ export class Battle {
       this.recordSound(listener, c, 'speech', text);
       if (listener.team !== c.team) heard = true;
     }
+    // リトル・レッド・コルベット：全部の口から同じ声が出る（噛みつきは外れる）
+    if (c.mouths && c.mouths.length && !(c.status.grabbedUntil > this.t)) {
+      if (c.clench) this.releaseClench(c, '喋ったので');
+      const spots = this.mouthSpots(c);
+      for (const m of spots) {
+        for (const listener of this.chars) {
+          if (listener === c || !listener.alive || entry.heardBy.has(listener.id)) continue;
+          if (m.on === listener.id || this.canHear(listener, m.x, m.y, RULES.speechRadius * 0.8, (m.floor ?? 0) * FLOOR_H + 1)) {
+            entry.visibleTo.add(listener.id);
+            entry.heardBy.add(listener.id);
+            this.recordSound(listener, { x: m.x, y: m.y, floor: m.floor }, 'speech', text);
+            if (listener.team !== c.team) { heard = true; if (m.on === listener.id) this.noticeMouth(listener, m); }
+          }
+        }
+        m.revealedUntil = this.t + 3;
+      }
+      entry.text += `（${spots.length}個の口からも同じ声）`;
+    }
     c.speech.heardByEnemy = heard;
     c.speech.heardBy = entry.heardBy;
     this.log.push(entry);
@@ -673,6 +701,16 @@ export class Battle {
         this.emit({ text: `${target.name} は${source.name}の${label || '攻撃'}を受け流し、打ち返した！`, kind: 'combat', actor: target, affected: source, pos: target, sound: 6, soundKind: 'impact' });
         source.status.stunUntil = Math.max(source.status.stunUntil, this.t + 0.6);
         this.damage(source, target.def.power * 1.2, { source: target, kind: 'counter', from: target, label: '受け流しからの反撃' });
+        return 0;
+      }
+    }
+    // 自分の腕や肩の口：食いしばっていれば、拳や刃を噛んで受け止める（口は壊れる）
+    if ((kind === 'melee' || kind === 'grab') && source && target.clench && target.mouths) {
+      const guard = target.mouths.find(m => m.on === target.id);
+      if (guard) {
+        target.mouths = target.mouths.filter(m => m !== guard);
+        source.status.stunUntil = Math.max(source.status.stunUntil, this.t + 0.7);
+        this.emit({ text: `${target.name} の腕の口が${source.name}の${label || '攻撃'}に噛みついて受け止めた！（口は砕けた・残り${target.mouths.length}個）`, kind: 'combat', actor: target, affected: source, pos: target, sound: 6, soundKind: 'impact', hint: ABILITIES.corvette.observedHint });
         return 0;
       }
     }
@@ -902,6 +940,7 @@ export class Battle {
     }
     for (const c of this.chars) if (c.burst && c.alive) this.updateBurst(c);
     for (const c of this.chars) if (c.alive) this.updateLinger(c);
+    for (const c of this.chars) if (c.alive && c.mouths) this.updateMouths(c, dt);
     this.updateSeals();
 
     for (const c of this.chars) {
@@ -941,7 +980,9 @@ export class Battle {
     if (!c.standBody) c.sp = Math.min(c.maxSp, c.sp + c.def.spRegen * dt);
     else {
       // 出している間は少しずつエネルギーを使い、尽きると自然に戻る
-      c.sp = Math.max(0, c.sp - RULES.standDrain * dt);
+      // 遠隔操作の車両は、出したままでも少しずつ回復する
+      const regen = c.def.standBlind ? c.def.spRegen * 0.5 : 0;
+      c.sp = Math.min(c.maxSp, Math.max(0, c.sp + (regen - (c.def.standDrain ?? RULES.standDrain)) * dt));
       if (c.sp <= 0) {
         c.standBody = null;
         this.emit({ text: `スタンドエネルギーが尽き、『${c.stand}』が体に戻った`, kind: 'fail', actor: c });
@@ -993,8 +1034,10 @@ export class Battle {
     } else {
       c.kbx = c.kby = 0;
       c.kbSlam = null;
-      let tvx = incapacitated ? 0 : c.desired.vx;
-      let tvy = incapacitated ? 0 : c.desired.vy;
+      // 口に噛みつかれていると動きが鈍る（足首なら大きく）
+      const bitten = s.bittenUntil > this.t ? s.bittenSlow : 1;
+      let tvx = incapacitated ? 0 : c.desired.vx * bitten;
+      let tvy = incapacitated ? 0 : c.desired.vy * bitten;
       if (Math.hypot(tvx, tvy) > 0.01) {
         // 旋回：向きと進行方向がずれているほど遅くなる
         const diff = Math.abs(angDiff(c.facing, Math.atan2(tvy, tvx)));
@@ -1395,13 +1438,13 @@ export class Battle {
       if (radius >= 9) {
         const z0 = this.zOf(pos);
         const free = owner.units.find(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, pos.x, pos.y) <= RULES.unitHearRange && Math.abs(u.floor * FLOOR_H - z0) < 2.5);
-        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner); this.unitHeard(owner, sourceChar, free); return true; }
+        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar, false); this.unitHeard(owner, sourceChar, free); return true; }
       }
       // 取り付いた個体：その人物から出る音を拾い続ける（保持は最後の1音）
       if (sourceChar) {
         const att = owner.units.find(u => u.state === 'attached' && u.attachedTo === sourceChar.id);
         if (att) {
-          att.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner);
+          att.sound = this.makeSound(kind, radius, text, sourceChar, false);
           if (sourceChar !== owner) this.noticeSilence(sourceChar, kind);
           return true;
         }
@@ -1420,7 +1463,7 @@ export class Battle {
         u = near.reduce((a, x) => (x.sound.radius < a.sound.radius ? x : a));
         if (u.sound.radius >= radius) continue;
       }
-      u.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner);
+      u.sound = this.makeSound(kind, radius, text, sourceChar, false);
       this.unitHeard(owner, sourceChar, u);
       return true;
     }
@@ -1439,7 +1482,7 @@ export class Battle {
     return { weak, kind, radius, text: kind === 'speech' ? text : null, from: who ? who.name : null, label: `${who ? `${who.name}の` : ''}${label}`, at: this.t };
   }
 
-  // 大きな音（轟音の材料）：自分で立てた音（weak）は数えない
+  // 大きな音（轟音の材料）。weak は開戦前から抱えている囮用の足音だけ
   isLoud(sound) {
     // 敵の駆ける足音（半径9m）も材料になる：敵の通り道に個体を置いて集める
     return !!sound && !sound.weak && sound.radius >= 9 && sound.kind !== 'speech';
@@ -1550,7 +1593,7 @@ export class Battle {
       target.status.deafUntil = this.t + 10;
       target.status.proneUntil = Math.max(target.status.proneUntil, this.t + 2.5);
       interruptStep(this, target, '轟音で平衡感覚を失った', true);
-      this.damage(target, 8 + loud * 4, { source: owner, kind: 'roar', label: '轟音' });
+      this.damage(target, 6 + loud * 3, { source: owner, kind: 'roar', label: '轟音' });
     } else {
       target.status.stunUntil = Math.max(target.status.stunUntil, this.t + 0.4);
       this.emit({ text: '……音が足りない。怯ませただけだ', kind: 'fail', actor: owner });
@@ -1573,9 +1616,108 @@ export class Battle {
         this.damage(owner, 2, { source: c, kind: 'unit', label: `◆${u.n}が潰された痛み` });
       }
     }
+    for (const owner of this.chars) {
+      if (!owner.mouths || owner.team === c.team) continue;
+      const before = owner.mouths.length;
+      // 背中など手の届きにくい所の口は、払っても半分ほどしか落とせない
+      owner.mouths = owner.mouths.filter(m => !((m.on === c.id && this.rng() < 0.5) || (!m.on && m.floor === c.floor && dist(m.x, m.y, c.x, c.y) <= 1.2)));
+      n += before - owner.mouths.length;
+      const car = owner.standBody;
+      if (car && car.floor === c.floor && dist(car.x, car.y, c.x, c.y) <= 1.5) {
+        owner.standBody = null;
+        n++;
+        this.emit({ text: `${c.name} が足元を走り回る小さな車両を叩き落とした！`, kind: 'combat', actor: c, affected: owner, pos: car, sound: 6, soundKind: 'impact' });
+        this.damage(owner, 10, { source: c, kind: 'stand', label: '車両が受けた衝撃の反動' });
+      }
+    }
     c.memory.suspectAttached = false;
     c.memory.silenced = 0;
     return n;
+  }
+
+  // ---------- リトル・レッド・コルベット：口の複製 ----------
+
+  // 車両の通った跡（10秒）と、体の上を走った人（3秒）を覚える
+  trackCar(c, s) {
+    const last = c.carTrail[c.carTrail.length - 1];
+    if (!last || dist(last.x, last.y, s.x, s.y) > 0.3) c.carTrail.push({ x: s.x, y: s.y, floor: s.floor, t: this.t });
+    if (c.carTrail.length > 400 || (c.carTrail[0] && this.t - c.carTrail[0].t > 10)) c.carTrail = c.carTrail.filter(p => this.t - p.t <= 10);
+    for (const o of this.chars) {
+      if (!o.alive || o === c || o.floor !== s.floor || dist(o.x, o.y, s.x, s.y) > 0.7) continue;
+      c.carTouch[o.id] = this.t;
+      // 車両が人の体に乗り上げた手応えで、おおまかな位置が分かる
+      if (o.team !== c.team) {
+        const rec = { id: o.id, name: o.name, x: s.x, y: s.y, floor: s.floor, t: this.t, facing: o.facing, via: '車両の手応え' };
+        c.memory.seen[o.id] = rec;
+        for (const a of this.alliesOf(c)) if (a.alive) a.memory.seen[o.id] = { ...rec, via: `${c.name}の車両` };
+      }
+    }
+  }
+
+  // 口の今の位置（人に付いた口はその人と一緒に動く）
+  mouthSpots(c) {
+    return (c.mouths || []).map(m => {
+      if (!m.on) return m;
+      const o = this.chars.find(x => x.id === m.on);
+      if (o) { m.x = o.x; m.y = o.y; m.floor = o.floor; }
+      return m;
+    });
+  }
+
+  noticeMouth(e, m) {
+    e.memory.suspectAttached = true;
+    m.known = true;
+    const hint = ABILITIES.corvette.observedHint;
+    if (!e.memory.observed.includes(hint)) e.memory.observed.push(hint);
+  }
+
+  releaseClench(c, why) {
+    if (!c.clench) return;
+    c.clench = null;
+    for (const m of c.mouths || []) m.biting = null;
+    this.emit({ text: `${c.name} の食いしばりが外れた${why ? `（${why}）` : ''}`, kind: 'fail', actor: c });
+  }
+
+  // 食いしばり・あくび・口を押さえられる
+  updateMouths(c, dt) {
+    const s = c.status;
+    if (!c.mouths.length) { if (c.clench) c.clench = null; return; }
+    // 組み付かれて口を押さえられると、能力全体が止まる
+    if (s.grabbedUntil > this.t) { if (c.clench) this.releaseClench(c, '口を押さえられた'); return; }
+    if (c.clench && (this.t >= c.clench.until || s.proneUntil > this.t + 0.5)) this.releaseClench(c, this.t >= c.clench.until ? '' : '倒れて歯が離れた');
+    if (c.clench) {
+      for (const m of this.mouthSpots(c)) {
+        if (m.on === c.id) continue;
+        const foe = m.on ? this.chars.find(x => x.id === m.on && x.team !== c.team) : this.enemiesOf(c).find(e => e.alive && e.floor === m.floor && !this.isAirborne(e) && dist(e.x, e.y, m.x, m.y) <= (m.biting === e.id ? 1.3 : 0.8));
+        if (!foe || !foe.alive) { m.biting = null; continue; }
+        if (m.biting !== foe.id) {
+          m.biting = foe.id; m.nextBite = this.t + 1;
+          this.noticeMouth(foe, m);
+          this.emit({ text: `${m.on ? `${foe.name}の体の口` : `${m.name}の口`}が${foe.name}${m.on ? 'に' : 'の足首に'}噛みついた！`, obsText: `${foe.name} の${m.on ? '背中' : '足首'}に、どこからか現れた口が噛みついている！`, kind: 'combat', actor: c, affected: foe, pos: foe, sound: 4, soundKind: 'impact', hint: ABILITIES.corvette.observedHint });
+          this.damage(foe, 5, { source: c, kind: 'bite', label: '噛みつき' });
+        } else if (this.t >= m.nextBite) {
+          m.nextBite = this.t + 1;
+          this.damage(foe, 3, { source: c, kind: 'bite', label: '噛みつき（食いしばり）' });
+        }
+        const prev = foe.status.bittenUntil > this.t ? foe.status.bittenSlow : 1;
+        foe.status.bittenUntil = this.t + 0.15;
+        foe.status.bittenSlow = Math.min(prev, m.on ? 0.65 : 0.3);
+      }
+    } else if (this.rng() < dt / 70) {
+      // うっかりあくび：全部の口が同じ動きをして、居場所がばれる
+      this.emit({ text: `${c.name} はうっかりあくびをした。${c.mouths.length}個の口が一斉に「ふぁ……」`, kind: 'fail', actor: c });
+      this.noise(c, 6, 'speech');
+      for (const m of this.mouthSpots(c)) {
+        m.revealedUntil = this.t + 3;
+        for (const e of this.enemiesOf(c)) {
+          if (!e.alive) continue;
+          if (m.on === e.id || this.canHear(e, m.x, m.y, 6, (m.floor ?? 0) * FLOOR_H + 1)) {
+            this.recordSound(e, { x: m.x, y: m.y, floor: m.floor }, 'speech', 'ふぁ……');
+            if (m.on === e.id) this.noticeMouth(e, m);
+          }
+        }
+      }
+    }
   }
 
   // ---------- セブンス・サン：跳弾 ----------

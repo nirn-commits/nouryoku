@@ -7,6 +7,6 @@
 | `<id>.png` | 本体。48px のコマ。1段目＝待機の8方向（南・南東・東・北東・北・北西・西・南西）、2〜5段目＝走りの8コマ（南・東・北・西） |
 | `<id>_stand.png` | スタンド。1段目（待機の8方向）のみ |
 
-id は `sogo`・`kito`・`nanami`・`saginuma`。
+id は `sogo`・`kito`・`nanami`・`saginuma`・`saragiin`・`mikuriya`。
 
 `assets/source/` の zip（8方向の rotations と running アニメーションの書き出し）から作っています。新しく書き出した zip を `assets/inbox/` に入れてもらえれば、同じ形のシートに変換します。

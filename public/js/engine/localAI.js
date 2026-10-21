@@ -295,6 +295,55 @@ function saragiinPlan(b, c, pe, say) {
   return null;
 }
 
+const clampW = (b, v, k) => Math.max(1, Math.min((k === 'w' ? b.world.w : b.world.h) - 1, v));
+
+// 御厨 しずく：本体は離れて隠れ、車両を敵の体の上に走らせて口を残し、食いしばって噛み続ける
+function mikuriyaPlan(b, c, pe, say) {
+  const steps = [];
+  const e = b.enemyOf(c);
+  const onFoe = c.mouths.some(m => m.on === e.id);
+  const onSelf = c.mouths.some(m => m.on === c.id);
+  const d = pe ? dist(c.x, c.y, pe.x, pe.y) : 99;
+  // 詰め寄られた：腕の口で受け止めながら下がる
+  if (pe && pe.visible && d < 3.5) {
+    if (!onSelf) steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'self' });
+    steps.push({ action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 3 });
+    if (!c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 8 });
+    return { interpretation: '（CPU・ローカル）腕の口で受け止めながら距離を取る', speech: null, steps };
+  }
+  if (onFoe) {
+    // 噛みついたまま、物陰へ静かに離れる
+    if (!c.clench) steps.push({ action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 6 });
+    steps.push({ action: 'move', mode: 'walk', targetType: 'direction', direction: d < 12 ? 'away_from_enemy' : 'cover', distance: 5 });
+    steps.push({ action: 'hide', targetType: 'none', duration: 3 });
+    return { interpretation: '（CPU・ローカル）食いしばって噛みつかせたまま隠れる', speech: null, steps };
+  }
+  if (pe && d < 45) {
+    if (!onSelf && b.rng() < 0.5) steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'self' });
+    const fresh = pe.visible || b.t - pe.t < 1.5;
+    if (fresh) steps.push({ action: 'stand_move', targetType: 'enemy' });
+    else {
+      // 位置が古い：最後に分かった所の周りを車両で走り回って探す（体に乗り上げれば手応えで分かる）
+      for (let i = 0; i < 2; i++) {
+        const a = b.rng() * Math.PI * 2, r = 1.5 + b.rng() * 3.5;
+        steps.push({ action: 'stand_move', targetType: 'point', x: clampW(b, pe.x + Math.cos(a) * r, 'w'), y: clampW(b, pe.y + Math.sin(a) * r, 'h') });
+      }
+    }
+    steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' });
+    return { interpretation: fresh ? '（CPU・ローカル）車両を敵の体の上に走らせて口を残す' : '（CPU・ローカル）車両で敵のいそうな所を走り回って探す', speech: c.clench ? null : say(0.3), steps };
+  }
+  // 敵が分からない：音のした方へ車両を走らせて探る
+  const h = [...c.memory.heard].reverse().find(x => b.t - x.t < 10);
+  if (h) {
+    steps.push({ action: 'stand_move', targetType: 'point', x: h.x, y: h.y });
+    steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'point', x: h.x, y: h.y });
+    steps.push({ action: 'hide', targetType: 'none', duration: 3 });
+    return { interpretation: '（CPU・ローカル）物音のした所に口を仕掛ける', speech: null, steps };
+  }
+  return null;
+}
+
 // 2対2：知っている敵の中から狙いを決める（近さと弱り具合。味方が狙っている敵にやや寄せる）
 function chooseFocus(b, c) {
   const foes = b.enemiesOf(c).filter(e => e.alive);
@@ -346,7 +395,7 @@ export function localCpuPlan(b, c) {
   const healing = healPlan(b, c);
   if (healing && b.t < RULES.timeLimit - 20) return healing;
   const plan = hurry(b, c, basePlan(b, c));
-  if (!c.def.standRange || !plan.steps) return plan;
+  if (!c.def.standRange || c.def.standBlind || !plan.steps) return plan;
   const steps = plan.steps;
   const melee = steps.some(st => st.action === 'melee' && (st.targetType || 'enemy') === 'enemy');
   const usesSp = c.def.abilities.some(id => id === 'perpendicular' || id === 'seventh');
@@ -396,6 +445,10 @@ function basePlan(b, c) {
   if (c.def.abilities.includes('seventh')) {
     const sp = saginumaPlan(b, c, pe, line);
     if (sp) return sp;
+  }
+  if (c.def.abilities.includes('corvette')) {
+    const mp = mikuriyaPlan(b, c, pe, line);
+    if (mp) return mp;
   }
   if (c.def.abilities.includes('vacant')) {
     const vp = saragiinPlan(b, c, pe, line);

@@ -880,13 +880,13 @@ test('観戦モード：プレイヤーのキャラも CPU が考えて動き、
 
 // ---------- ガン待ち対策（A1・A3・B5）と回復・干渉できる物 ----------
 
-test('七海：自分で立てた大きな音は轟音の材料にならない（敵の立てた音はなる）', () => {
+test('七海：自分で立てた大きな音も、敵の立てた音も轟音の材料になる', () => {
   const b = duel('nanami', 'kito');
   b.cpu.x = 30;
   const u = b.player.units.find(x => x.state === 'home');
   u.state = 'deployed'; u.x = 25; u.y = 9; u.floor = 0;
   b.emit({ text: '木箱を殴った', kind: 'env', actor: b.player, pos: { x: 25.3, y: 9, floor: 0 }, sound: 10, soundKind: 'impact' });
-  assert.ok(u.sound && !b.isLoud(u.sound), '自分の音が大きな音として数えられた');
+  assert.ok(u.sound && b.isLoud(u.sound), '自分の音が大きな音にならない');
   const u2 = b.player.units.find(x => x.state === 'home');
   u2.state = 'deployed'; u2.x = 28; u2.y = 9; u2.floor = 0;
   b.emit({ text: '敵が木箱を殴った', kind: 'env', actor: b.cpu, pos: { x: 28.3, y: 9, floor: 0 }, sound: 10, soundKind: 'impact' });
@@ -1027,4 +1027,35 @@ test('プリティ・ヴェイカント：足場を崩す・得物を崩す・�
   plan(b, b.cpu, [{ action: 'move', targetType: 'point', x: 20, y: 9, mode: 'walk' }]);
   run(b, 3);
   assert.ok(!b.world.zones.some(z => z.kind === 'powder_trap'), '仕込んだ床を踏んでも抜けない');
+});
+
+test('リトル・レッド・コルベット：車両を走らせて口を残し、食いしばって噛む／腕の口で拳を受け止める／喋ると外れる', () => {
+  const run = (b, s) => { for (let i = 0; i < s * 30; i++) b.step(); };
+  const b = duel('mikuriya', 'kito');
+  b.cpu.x = 30;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 6 }]);
+  plan(b, b.player, [
+    { action: 'stand_move', targetType: 'enemy' },
+    { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' },
+    { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'self' },
+    { action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 3 },
+  ]);
+  const hp = b.cpu.hp;
+  run(b, 3);
+  assert.equal(b.player.mouths.length, 2, '口が残らない');
+  assert.ok(b.player.mouths.some(m => m.on === b.cpu.id));
+  assert.ok(b.cpu.hp < hp, '噛みついてもダメージがない');
+  assert.ok(b.cpu.status.bittenUntil > b.t - 0.2, '噛まれても鈍らない');
+  // 腕の口が拳を受け止める
+  b.player.clench = { since: b.t, until: b.t + 3 };
+  const myHp = b.player.hp;
+  b.damage(b.player, 15, { source: b.cpu, kind: 'melee', from: b.cpu, label: '拳' });
+  assert.equal(b.player.hp, myHp, '腕の口で受け止められない');
+  assert.ok(!b.player.mouths.some(m => m.on === b.player.id));
+  // 喋ると外れる
+  b.speak(b.player, '……うるさい');
+  assert.equal(b.player.clench, null);
+  // 敵は体の口を払い落とせる
+  for (let i = 0; i < 20 && b.player.mouths.some(m => m.on === b.cpu.id); i++) b.swatUnits(b.cpu);
+  assert.ok(!b.player.mouths.some(m => m.on === b.cpu.id), '払っても落ちない');
 });

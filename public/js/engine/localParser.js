@@ -306,6 +306,27 @@ function parseClause(b, c, clause, has, ctx = {}) {
   if (/煙幕/.test(clause)) return [{ action: 'use_item', targetType: mentionsEnemy ? 'enemy' : 'none' }];
   if (/傘/.test(clause) && /開|広げ|盾|防/.test(clause)) return [{ action: 'use_item', targetType: 'none' }];
 
+  // --- リトル・レッド・コルベット：車両を走らせ、口を残す・噛む・口から喋る ---
+  if (has.corvette) {
+    const sec = clause.match(/(\d+(?:\.\d+)?)\s*秒/);
+    if (/口を(全部|すべて|全て)?消/.test(clause)) return [{ action: 'ability', ability: 'corvette', effect: 'dismiss', targetType: 'none' }];
+    if (/口を?(つけ|付け|残|置|作)/.test(clause)) {
+      const self = /自分|腕|肩|盾/.test(clause) && !mentionsEnemy;
+      if (self) return [{ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'self' }];
+      if (/味方/.test(clause)) return [{ action: 'stand_move', targetType: 'ally' }, { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'ally' }];
+      const where = pt ? toTarget(pt) : obj ? { targetType: 'object', targetId: obj.id } : mentionsEnemy || /背中|足首|体に/.test(clause) ? { targetType: 'enemy' } : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir, distance: 6 } : { targetType: 'enemy' };
+      return [{ action: 'stand_move', ...where }, { action: 'ability', ability: 'corvette', effect: 'mouth', ...where }];
+    }
+    if (/食いしば|噛みつ|噛ませ|噛む|噛ん|歯を/.test(clause)) return [{ action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', ...(sec ? { duration: Number(sec[1]) } : {}) }];
+    if (/口(から|で)(喋|しゃべ|言|声|呼)|全部の口/.test(clause)) return [{ action: 'ability', ability: 'corvette', effect: 'call', targetType: 'none' }];
+    if (/(車両|車|コルベット|三輪|ミニ四駆)/.test(clause) && /走らせ|向かわせ|行かせ|送|回り込ませ|偵察/.test(clause)) {
+      // 「車両」の「車」を駐車中の車と取り違えない
+      const obj2 = findObjectRef(b, c, clause.replace(/車両|コルベット|三輪|ミニ四駆|車を/g, ''));
+      const where = pt ? toTarget(pt) : obj2 ? { targetType: 'object', targetId: obj2.id } : mentionsEnemy ? { targetType: 'enemy' } : dir ? { targetType: 'direction', direction: dir === 'cover' ? 'forward' : dir, distance: 10 } : { targetType: 'enemy' };
+      return [{ action: 'stand_move', ...where }];
+    }
+  }
+
   // --- プリティ・ヴェイカント：粉にする・元に戻す ---
   if (has.vacant) {
     if (/元に戻|元通り|復元|穴を塞|塞ぎ直|粉を集め/.test(clause)) {
@@ -328,7 +349,7 @@ function parseClause(b, c, clause, has, ctx = {}) {
   // --- スタンドの出し入れ・先行 ---
   if (/スタンド/.test(clause) && !/スタンド(で|の拳)(殴|攻撃|叩)/.test(clause)) {
     if (/スタンドを?(戻|引っ込|しま|消)/.test(clause)) return [{ action: 'stand_in', targetType: 'none' }];
-    if (/先行|先に|先へ|前に出|前へ|行かせ|向かわせ|進ませ|覗|偵察|送り|送っ|伸ば|回り込ませ|飛ばし/.test(clause)) {
+    if (/先行|先に|先へ|前に出|前へ|行かせ|向かわせ|進ませ|走らせ|覗|偵察|送り|送っ|伸ば|回り込ませ|飛ばし/.test(clause)) {
       const t = pt ? toTarget(pt) : obj ? { targetType: 'object', targetId: obj.id } : mentionsEnemy ? { targetType: 'enemy' } : dir ? { targetType: 'direction', direction: dir === 'cover' ? 'forward' : dir } : { targetType: 'direction', direction: 'forward' };
       return [{ action: 'stand_move', ...t }];
     }
@@ -562,6 +583,7 @@ export function localParse(b, c, text) {
     echo: /エコー・ビーチ|足音を置|声を置|轟音を(集|置)|個体を/,
     seventh: /セブンス・サン|跳弾|パチンコ玉を弾/,
     vacant: /プリティ・ヴェイカント|粉にする|粉にして|粉々にし|粉を集め/,
+    corvette: /リトル・レッド・コルベット|口の複製|口を(残|付け|つけ)/,
   };
   const foreignRes = [];
   for (const [k, re] of Object.entries(foreign)) {

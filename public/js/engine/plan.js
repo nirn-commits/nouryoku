@@ -111,7 +111,8 @@ function validateStep(b, c, raw, cursor) {
   const action = str(raw.action);
   if (!ACTIONS[action]) return { error: `不明な行動「${action || '（空）'}」は実行できない` };
   let ttype = str(raw.targetType) || DEFAULT_TARGET[action];
-  if (ttype === 'none' && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in', 'counter', 'hide', 'search', 'use_item'].includes(action)) ttype = DEFAULT_TARGET[action];
+  const noneOk = action === 'ability' && ABILITIES[str(raw.ability)]?.effects[str(raw.effect)]?.targets.includes('none');
+  if (ttype === 'none' && !noneOk && !['wait', 'guard', 'jump_down', 'swat', 'pickup', 'drop', 'stand_out', 'stand_in', 'counter', 'hide', 'search', 'use_item'].includes(action)) ttype = DEFAULT_TARGET[action];
   if (action.startsWith('stand_') && !c.def.standRange) return { error: `『${c.stand}』は群体のスタンドなので、本体のように出したり先行させたりはできない（能力の「聞き耳を立てる」「取り付く」で個体を送る）` };
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw, autoMode: action === 'move' && raw.mode !== 'run' && raw.mode !== 'walk' };
@@ -191,6 +192,7 @@ function validateStep(b, c, raw, cursor) {
   else if (action === 'chase') step.duration = clamp(d ?? 4, 0.5, 8);
   else if (action === 'wait') step.duration = clamp(d ?? (raw.condition ? 0 : 1), 0, 6);
   else if (action === 'hide') step.duration = clamp(d ?? 3, 0.5, 8);
+  else if (action === 'ability' && step.ability === 'corvette' && step.effect === 'bite') step.duration = clamp(d ?? 4, 0.5, 8);
   else step.duration = 0;
 
   if (raw.condition && typeof raw.condition === 'object' && raw.condition.kind) {
@@ -253,7 +255,7 @@ function estimateCost(b, c, s, cursor) {
     case 'drop': cost = 0.1; break;
     case 'look': cost = 0.6; break;
     case 'stand_out': case 'stand_in': cost = 0.2; break;
-    case 'stand_move': cost = 0.4; break;
+    case 'stand_move': cost = c.def.standBlind ? 2 : 0.4; break;
     case 'wait': cost = s.duration; break;
     case 'ability': cost = ABILITIES[s.ability].castTime + 0.25; break;
   }
@@ -1266,11 +1268,19 @@ const EXEC = {
       if (res.error) return res.error;
       const s = b.standOut(c);
       s.goal = { x: res.x, y: res.y, char: res.char || null };
-      selfLog(b, c, `『${c.stand}』を${targetName(b, st.def.target)}の方へ先行させる（射程${c.def.standRange}m）`);
-      st.data.until = b.t + 0.4;
+      selfLog(b, c, `『${c.stand}』を${targetName(b, st.def.target)}の方へ${c.def.standBlind ? '走らせる' : '先行させる'}（射程${c.def.standRange}m）`);
+      // 遠くまで走る車両は、着くまで（最大4秒）待つ
+      st.data.until = b.t + (c.def.standBlind ? Math.min(4, dist(s.x, s.y, res.x, res.y) / (c.def.standSpeed || RULES.standSpeed) + 0.3) : 0.4);
       return null;
     },
-    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+    update(b, c, st) {
+      const s = c.standBody;
+      if (c.def.standBlind && s && s.goal) {
+        const g = s.goal.char || s.goal;
+        if (dist(s.x, s.y, g.x, g.y) < 0.5) return 'done';
+      }
+      return b.t >= st.data.until ? 'done' : 'running';
+    },
   },
 
   stand_in: {
@@ -1304,7 +1314,7 @@ const EXEC = {
     update(b, c, st) {
       if (b.t < st.data.until) return 'running';
       const n = b.swatUnits(c);
-      selfLog(b, c, n ? `小さな何かを${n}体払い潰した` : '払ったが、何も手応えがない');
+      selfLog(b, c, n ? `小さな何かを${n}つ払い落とした` : '払ったが、何も手応えがない');
       return 'done';
     },
   },
@@ -1367,8 +1377,9 @@ const EXEC = {
       }
       if (c.sp < ab.cost) return `スタンドエネルギーが足りない（必要${ab.cost}）`;
       const res = resolveTarget(b, c, s.target, s);
-      if (res.error) return res.error;
-      st.data.aim = res;
+      // 口を残す：見えていなくても、車両が体の上を走った相手には付けられる（判定は能力側）
+      if (res.error && s.ability !== 'corvette') return res.error;
+      st.data.aim = res.error ? { x: c.x, y: c.y, self: true } : res;
       st.data.until = b.t + (ab.effects[s.effect].castTime ?? ab.castTime);
       st.data.phase = 'cast';
       st.locked = true;
@@ -1414,7 +1425,7 @@ function meleeRange(c) {
   const it = c.held ? itemDef(c.held) : null;
   if (it && weaponMelee(c) > c.def.power) return base + it.reach;
   // 出しているスタンドは敵へ飛び出して殴るので、射程の分だけ届く
-  return c.standBody ? base + (c.def.standRange || 0) * 0.5 : base;
+  return c.standBody && !c.def.standBlind ? base + (c.def.standRange || 0) * 0.5 : base;
 }
 
 function weaponMelee(c) {
@@ -1457,7 +1468,7 @@ function openClose(open) {
       const n = nearestPointOnRect(c.x, c.y, o);
       if (D.phase === 'approach') {
         // スタンドを出していれば、スタンドの手が届く所（射程の分だけ遠く）から素早く開け閉めできる
-        const reach = 1.0 + (c.standBody ? c.def.standRange || 0 : 0);
+        const reach = 1.0 + (c.standBody && !c.def.standBlind ? c.def.standRange || 0 : 0);
         // スタンドは壁をすり抜けるので、出していれば壁越しの扉にも手が届く
         if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= reach && (c.standBody || hasLOS(b.world, c.x, c.y, n.x, n.y))) {
           D.phase = 'act';

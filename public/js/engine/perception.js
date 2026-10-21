@@ -154,7 +154,14 @@ export function buildObservation(b, c) {
     stand: c.def.standRange ? (c.standBody ? { out: true, pos: [r1(c.standBody.x), r1(c.standBody.y)], range: c.def.standRange, note: '出している間はスタンドエネルギーが回復しない' } : { out: false, range: c.def.standRange }) : { note: '群体のスタンドなので stand_out / stand_move は使えない' },
     ...(c.def.balls ? { balls: c.balls } : {}),
     ...(c.units ? { echo_units: unitSummary(b, c) } : {}),
-    ...(c.memory.suspectAttached ? { notice: '自分の足音や声が消えている。体に何か小さな物が取り付いているかもしれない（swat で払える）' } : {}),
+    ...(c.mouths ? { mouths: {
+      count: c.mouths.length, max: 8,
+      clenching: c.clench ? r1(c.clench.until - b.t) : false,
+      list: b.mouthSpots(c).map(m => ({ on: m.on ? (m.on === c.id ? '自分の腕' : b.chars.find(x => x.id === m.on)?.name) : m.name, at: [r1(m.x), r1(m.y)], ...(m.biting ? { biting: b.chars.find(x => x.id === m.biting)?.name } : {}) })),
+      car: c.standBody ? { pos: [r1(c.standBody.x), r1(c.standBody.y)], note: '車両の周りは見えない（位置だけ分かる）。敵の体に乗り上げると手応えでおおまかな位置が分かる' } : '出していない',
+      note: '口を残すには先に stand_move で車両をそこ（人ならその体の上）へ走らせる。bite 中は喋れない',
+    } } : {}),
+    ...(c.memory.suspectAttached ? { notice: c.memory.observed.includes(ABILITIES.corvette.observedHint) ? '体に「口」が付いて噛みついてくる。swat で払い落とせる（背中の口は一度で落ちないこともある）' : '自分の足音や声が消えている。体に何か小さな物が取り付いているかもしれない（swat で払える）' } : {}),
     abilities: abilityCatalog(c),
   };
   const describeEnemy = e => {

@@ -397,6 +397,20 @@ export class Renderer {
       }
     }
 
+    // リトル・レッド・コルベットの口：自分の側には常に、相手には声や噛みつきで現れた時とすぐそばだけ見える
+    for (const c of b.chars) {
+      if (!c.mouths || !c.mouths.length) continue;
+      for (const m of b.mouthSpots(c)) {
+        const mine = c.team === me.team || debug;
+        const near = m.floor === me.floor && Math.hypot(m.x - me.x, m.y - me.y) <= 2.5;
+        if (!mine && !near && !(m.revealedUntil > b.t) && !(m.biting && see(m.x, m.y, (m.floor ?? 0) * FLOOR_H + 0.5))) continue;
+        const on = m.on && b.chars.find(x => x.id === m.on);
+        const mz = (m.floor ?? 0) * FLOOR_H + (on ? 1.25 : 0.05);
+        const mx = m.x * P + (on ? P * 0.22 : 0), my = this.sy(m.y, mz);
+        this.drawLips(mx, my, Math.max(5, P * 0.2), m.biting || c.clench, m.revealedUntil > b.t);
+      }
+    }
+
     // エコー・ビーチの個体：自分と味方の個体は常に、相手の個体はすぐそば（2.5m以内）だけ見える
     // 近くに固まった個体はまとめて、スタンドのチップ1つと体数の数字で示す
     for (const c of b.chars) {
@@ -982,15 +996,29 @@ export class Renderer {
     ctx.restore();
   }
 
+  // 唇の形（食いしばっている時は閉じた歯、喋った直後は開いた口）
+  drawLips(x, y, r, biting, open) {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.fillStyle = '#c81d25';
+    ctx.strokeStyle = '#2a0508';
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.ellipse(x, y, r, r * (open && !biting ? 0.62 : 0.45), 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = biting ? '#f4f1e8' : '#3a0a0e';
+    ctx.beginPath(); ctx.ellipse(x, y, r * 0.7, biting ? r * 0.14 : r * (open ? 0.3 : 0.08), 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+
   // スタンドの姿：チップがあればその絵、無ければ本体の色で半透明に光る人型。本体から離れていれば細い線でつなぐ
   drawStand(b, c) {
     const ctx = this.ctx, P = this.px;
     const sb = c.standBody;
-    const z = sb.floor * FLOOR_H + 0.35 + Math.sin(b.t * 4 + c.x) * 0.06;
+    const car = c.def.standBlind; // 遠隔操作の小さな車両は、床を走る（浮かない・本体と線でつながない）
+    const z = sb.floor * FLOOR_H + (car ? 0.02 : 0.35 + Math.sin(b.t * 4 + c.x) * 0.06);
     const x = sb.x * P, footY = this.sy(sb.y, z), headY = this.sy(sb.y, z + 1.85);
     const bw = c.r * 1.25 * P;
     ctx.save();
-    if (dist(sb.x, sb.y, c.x, c.y) > 0.4) {
+    if (!car && dist(sb.x, sb.y, c.x, c.y) > 0.4) {
       ctx.strokeStyle = `${c.color}66`;
       ctx.setLineDash([2, 4]);
       ctx.lineWidth = 1.5;
@@ -999,7 +1027,7 @@ export class Renderer {
     }
     const schip = this.chips && this.chips[`${c.charId}_stand`];
     if (schip) {
-      const size = chipSizeFor(P);
+      const size = Math.round(chipSizeFor(P) * (car ? 0.6 : 1));
       this.drawChip(schip, x, footY, size, sb.facing, 0, b.t, { alpha: 0.85, glow: c.color });
       ctx.globalAlpha = 0.9;
       ctx.fillStyle = '#fff';

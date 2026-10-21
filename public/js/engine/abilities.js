@@ -518,6 +518,65 @@ IMPL.vacant = (b, c, effect, res, ab, step) => {
   return fail('不明な効果');
 };
 
+// リトル・レッド・コルベット：車両の通った跡に口を残す／食いしばって噛む／全部の口から喋る
+IMPL.corvette = (b, c, effect, res, ab, step) => {
+  if (c.status.grabbedUntil > b.t) return fail('口を押さえられていて、能力が使えない');
+  if (effect === 'dismiss') {
+    const n = c.mouths.length;
+    c.mouths = [];
+    c.clench = null;
+    b.emit({ text: `『${ab.name}』— 残した口${n}個をすべて消した`, kind: 'ability', actor: c, pos: c });
+    return { ok: true };
+  }
+  if (effect === 'bite') {
+    if (!c.mouths.length) return fail('口をひとつも残していない');
+    const dur = step.duration || 4;
+    c.clench = { since: b.t, until: b.t + dur };
+    // 喋っている最中なら、そのセリフはここで途切れる
+    if (c.speech) c.speech.until = b.t;
+    b.emit({ text: `『${ab.name}』— 歯を食いしばる（${dur.toFixed(1)}秒・${c.mouths.length}個の口がすべて噛む）`, obsText: `${c.name} がぐっと歯を食いしばった`, kind: 'ability', actor: c, pos: c, hint: ab.observedHint });
+    return { ok: true };
+  }
+  if (effect === 'call') {
+    if (!c.mouths.length) return fail('口をひとつも残していない');
+    const text = (step.raw && typeof step.raw.text === 'string' && step.raw.text) || '……こっち';
+    c.lastSpeech = null;
+    b.speak(c, text);
+    return { ok: true };
+  }
+  // 口を残す
+  const add = m => {
+    if (c.mouths.length >= 8) c.mouths.shift();
+    c.mouths.push({ id: `mouth_${++b.mouthSeq || (b.mouthSeq = 1)}`, ...m, placedAt: b.t });
+  };
+  // 見えていなくても、車両が体の上を走った相手なら付けられる
+  const touched = step.target.type === 'enemy' ? b.enemiesOf(c).find(e => e.alive && (!step.target.charId || e.id === step.target.charId) && b.t - (c.carTouch[e.id] ?? -99) <= 3) : null;
+  const who = res.self ? c : res.ally || (res.char && res.char.alive ? res.char : null) || touched;
+  if (who) {
+    if (who !== c && !(b.t - (c.carTouch[who.id] ?? -99) <= 3)) return fail(`車両が${who.name}の体の上を走っていない（先に stand_move で車両を走らせる）`);
+    add({ on: who.id, x: who.x, y: who.y, floor: who.floor, name: who === c ? '自分の腕' : who.name });
+    if (!c.standBody) b.standOut(c);
+    b.emit({
+      text: `『${ab.name}』— ${who === c ? '自分の腕' : `${who.name}の体`}に口を残した（${c.mouths.length}/8）`,
+      obsText: who === c ? `${c.name} の腕に、唇のようなものが浮かんだ` : null,
+      kind: 'ability', actor: c, pos: who, hint: ab.observedHint,
+    });
+    return { ok: true };
+  }
+  if (step.target.type === 'enemy') return fail(res.error || '敵の位置が分からない');
+  if (res.error) return fail(res.error);
+  const at = res.center && res.obj ? { x: res.x, y: res.y } : res;
+  const floor = res.f ?? c.floor;
+  const car = c.standBody;
+  const near = (car && car.floor === floor && dist(car.x, car.y, at.x, at.y) <= 1.2)
+    || c.carTrail.some(p => p.floor === floor && b.t - p.t <= 10 && dist(p.x, p.y, at.x, at.y) <= 1.0);
+  if (!near) return fail('車両がその場所を通っていない（先に stand_move で走らせる）');
+  const name = res.obj ? res.obj.name : `(${at.x.toFixed(1)}, ${at.y.toFixed(1)})`;
+  add({ on: null, x: at.x, y: at.y, floor, name });
+  b.emit({ text: `『${ab.name}』— ${name}に口を残した（${c.mouths.length}/8）`, kind: 'ability', actor: c, pos: { x: at.x, y: at.y, floor } });
+  return { ok: true };
+};
+
 export function applyAbility(b, c, step, res) {
   const ab = ABILITIES[step.ability];
   return IMPL[step.ability](b, c, step.effect, res, ab, step);
