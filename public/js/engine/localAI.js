@@ -51,12 +51,12 @@ function sogoPlan(b, c, pe, say) {
     steps.push({ action: 'melee', targetType: 'enemy' });
     return { interpretation: '（CPU・ローカル）真上に打ち上げて、落ちた所を殴る', speech: say(0.3) || '10m、落ちるまで1.8秒', steps };
   }
-  if (ready && d <= 2) {
-    const slam = slamTarget(b, c, e);
+  const slam = ready && d <= 2 ? slamTarget(b, c, e) : null;
+  if (slam) {
     steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
     steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
     steps.push({ action: 'melee', targetType: 'enemy' });
-    return { interpretation: `（CPU・ローカル）${slam ? `${slam.o.name}まで${slam.d.toFixed(1)}m、叩きつける` : '弾き出して距離を取る'}`, speech: slam ? `${slam.o.name}まで${slam.d.toFixed(1)}m。届くな` : say(0.3), steps };
+    return { interpretation: `（CPU・ローカル）${slam.o.name}まで${slam.d.toFixed(1)}m、叩きつける`, speech: `${slam.o.name}まで${slam.d.toFixed(1)}m。届くな`, steps };
   }
   if (c.hp < c.maxHp * 0.35 && d < 6) {
     if (ready && surface) steps.push({ action: 'ability', ability: 'perpendicular', effect: 'self_launch', targetType: 'self' });
@@ -75,16 +75,18 @@ function sogoPlan(b, c, pe, say) {
       return { interpretation: `（CPU・ローカル）${it.name}を拾っておく`, speech: null, steps };
     }
   }
-  // 開けた場所では戦わない：物陰（遮蔽物のそば）へ移ってから待ち構える
-  if (!surface && d > 4 && b.rng() < 0.5) {
+  // 開けた場所では戦わない：物陰（遮蔽物のそば）へ移ってから待ち構える（遠距離の相手には待たずに詰める）
+  if (!surface && d > 4 && d < 10 && e.def.role !== 'ranged' && b.rng() < 0.15) {
     steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
     steps.push({ action: 'wait', targetType: 'none', duration: 1, condition: { kind: 'enemy_within', value: 2 } });
     steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
     return { interpretation: '（CPU・ローカル）有利な地形で待ち構える', speech: say(0.4), steps };
   }
+  // 詰めて殴る。叩きつけられる物が相手の後ろにあれば、弾き出しで決める
   steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
-  steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
-  return { interpretation: '（CPU・ローカル）接近して弾き出す', speech: say(0.3), steps };
+  if (ready && slamTarget(b, c, e)) steps.push({ action: 'ability', ability: 'perpendicular', effect: 'launch', targetType: 'enemy' });
+  else steps.push({ action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' });
+  return { interpretation: '（CPU・ローカル）詰めて殴る', speech: say(0.3), steps };
 }
 
 // 鬼頭 錠二：相手を建物に追い込み、出口をすべて自分で閉めて密室にしてから殴る
@@ -132,7 +134,7 @@ function kitoPlan(b, c, pe, say) {
     }
   }
   // 誘い込み：外で敵と向き合ったら、近くの家へ入って待つ（敵が追ってきたら閉じ込める）
-  if (!bd && pe && pe.visible && dist(c.x, c.y, pe.x, pe.y) < 16 && b.rng() < 0.45) {
+  if (!bd && pe && pe.visible && dist(c.x, c.y, pe.x, pe.y) > 5 && dist(c.x, c.y, pe.x, pe.y) < 16 && pe.char.def.role !== 'ranged' && b.rng() < 0.3) {
     const house = b.world.buildings
       .filter(x => x.w * x.h * x.floors <= 200 && x.exits.some(id => b.objectById(id)?.kind === 'door'))
       .map(x => ({ x, d: dist(c.x, c.y, x.x + x.w / 2, x.y + x.h / 2) }))
@@ -227,7 +229,8 @@ function saginumaPlan(b, c, pe, say) {
   if (!pe) return null;
   const d = dist(c.x, c.y, pe.x, pe.y);
   // 追われている：足元に玉を撒いて逃げる（走って追ってくれば転ぶ）
-  if (pe.visible && d < 8 && d > 3 && c.balls >= 8 && !b.world.zones.some(z => z.kind === 'caltrops' && z.owner === c.id) && b.rng() < 0.5) {
+  const chaser = pe.visible && pe.char.def.role !== 'ranged';
+  if (pe.visible && d < 8 && c.balls >= 8 && !b.world.zones.some(z => z.kind === 'caltrops' && z.owner === c.id) && b.rng() < (chaser ? 0.9 : 0.4)) {
     steps.push({ action: 'ability', ability: 'seventh', effect: 'caltrops', targetType: 'self' });
     steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 8 });
     steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 });
@@ -239,12 +242,12 @@ function saginumaPlan(b, c, pe, say) {
     return { interpretation: '（CPU・ローカル）牽制射撃しながら物陰へ', speech: null, steps };
   }
   if (pe.visible && d < 6) {
-    // 近づかれたら跳んで距離を取り、近距離の跳弾で迎え撃つ
+    // 近づかれたら、まず跳んで走って距離を取ってから撃つ（足は相手より速い）
     if (!c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 9 });
     steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 1 });
-    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 8 });
-    steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 });
-    return { interpretation: '（CPU・ローカル）距離を取りながら撃つ', speech: say(0.2), steps };
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover', distance: 6 });
+    return { interpretation: '（CPU・ローカル）走って距離を取ってから撃つ', speech: say(0.2), steps };
   }
   if (inFlight < 3 && b.t - pe.t < 10) {
     const bounces = 2 + Math.floor(b.rng() * 3); // 2〜4回。高反射を好む
@@ -254,7 +257,9 @@ function saginumaPlan(b, c, pe, say) {
       steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: bounces + 1 });
       steps.push({ action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: Math.max(1, bounces - 1) });
     }
-    steps.push({ action: 'wait', targetType: 'none', duration: 0.6 });
+    // 撃ったら間合いを保つ：近い相手からは下がる
+    if (pe.visible && d < c.def.keepDistance) steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: c.def.keepDistance - d + 3 });
+    else steps.push({ action: 'wait', targetType: 'none', duration: 0.6 });
     return { interpretation: `（CPU・ローカル）${bounces}回前後の跳弾で撃つ`, speech: say(0.25), steps };
   }
   return null;
@@ -323,7 +328,8 @@ function mikuriyaPlan(b, c, pe, say) {
   if (pe && d < 45) {
     if (!onSelf && b.rng() < 0.5) steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'self' });
     const fresh = pe.visible || b.t - pe.t < 1.5;
-    if (fresh) steps.push({ action: 'stand_move', targetType: 'enemy' });
+    const backOff = pe.visible && d < c.def.keepDistance;
+    if (fresh) steps.push({ action: 'stand_move', targetType: 'enemy', ...(backOff ? { duration: 0.3 } : {}) });
     else {
       // 位置が古い：最後に分かった所の周りを車両で走り回って探す（体に乗り上げれば手応えで分かる）
       for (let i = 0; i < 2; i++) {
@@ -332,6 +338,8 @@ function mikuriyaPlan(b, c, pe, say) {
       }
     }
     steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' });
+    // 車両を走らせている間も、本体は距離を取る（口を付けるのは離れてから）
+    if (backOff) steps.splice(steps.length - 1, 0, { action: 'move', mode: 'run', targetType: 'direction', direction: d < 6 ? 'away_from_enemy' : 'cover', distance: Math.min(10, c.def.keepDistance - d + 3) });
     return { interpretation: fresh ? '（CPU・ローカル）車両を敵の体の上に走らせて口を残す' : '（CPU・ローカル）車両で敵のいそうな所を走り回って探す', speech: c.clench ? null : say(0.3), steps };
   }
   // 敵が分からない：音のした方へ車両を走らせて探る
@@ -343,6 +351,46 @@ function mikuriyaPlan(b, c, pe, say) {
     return { interpretation: '（CPU・ローカル）物音のした所に口を仕掛ける', speech: null, steps };
   }
   return null;
+}
+
+// 計画が早く終わると、相手の計画が終わるまで棒立ちになる。最後に「待ちながらの反応」を足しておく
+// 遠距離型：近づかれたら離れる／近接型：殴り終えても追って殴り続ける
+function reactTail(b, c, plan) {
+  const steps = plan.steps;
+  if (!steps || !steps.length || steps.length >= 5) return plan;
+  const pe = b.perceivedEnemy(c);
+  if (!pe || b.t - pe.t > 6) return plan;
+  const endsInMelee = steps[steps.length - 1].action === 'melee';
+  if ((c.def.role === 'ranged' || c.def.role === 'mid') && !endsInMelee) {
+    if (steps[steps.length - 1].condition) return plan;
+    // 締めの待機は反応つきの待機に置き換え、離れる手順の分の枠を空ける
+    if (steps[steps.length - 1].action === 'wait') steps.pop();
+    while (steps.length > 3) steps.pop();
+    const keep = c.def.keepDistance || 10;
+    steps.push({ action: 'wait', targetType: 'none', duration: 0, condition: { kind: 'enemy_within', value: Math.max(c.def.role === 'mid' ? 3 : 5, keep - 4), timeout: 6 } });
+    if (steps.length < 5) steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: c.def.role === 'mid' ? 3 : 8 });
+  } else if (endsInMelee && steps.length <= 3) {
+    steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' });
+  }
+  return plan;
+}
+
+// 遠距離型の間合い：近すぎれば離れ、遠すぎれば間合いまで寄り、ちょうど良ければ様子を見る
+function keepDistance(b, c, e, d, speech, steps = []) {
+  const keep = c.def.keepDistance || 10;
+  if (d < keep - 1.5) {
+    if (d < 2.5 && !c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: d < 4 ? 'away_from_enemy' : 'cover', distance: Math.min(12, keep - d + 3) });
+    steps.push({ action: 'look', targetType: 'enemy' });
+    return { interpretation: `（CPU・ローカル）近すぎる（${d.toFixed(1)}m）ので間合いを取る`, speech, steps };
+  }
+  if (d > keep + 8) {
+    steps.push({ action: 'chase', targetType: 'enemy', mode: 'walk', distance: keep, duration: 4 });
+    return { interpretation: '（CPU・ローカル）間合いまで寄る', speech, steps };
+  }
+  steps.push({ action: 'look', targetType: 'enemy' });
+  steps.push({ action: 'wait', targetType: 'none', duration: 1, condition: { kind: 'enemy_within', value: Math.max(3, keep - 3) } });
+  return { interpretation: '（CPU・ローカル）間合いを保って様子を見る', speech, steps };
 }
 
 // 2対2：知っている敵の中から狙いを決める（近さと弱り具合。味方が狙っている敵にやや寄せる）
@@ -371,8 +419,10 @@ function hurry(b, c, plan) {
   const steps = ab.includes('seventh')
     ? [{ action: 'chase', targetType: 'enemy', mode: 'run', distance: 7, duration: 4 }, { action: 'ability', ability: 'seventh', effect: 'bank', targetType: 'enemy', bounces: 2 }]
     : ab.includes('echo')
-      ? [{ action: 'ability', ability: 'echo', effect: 'scratch', targetType: 'enemy', count: 8 }, { action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }]
-      : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }];
+      ? [{ action: 'chase', targetType: 'enemy', mode: 'run', distance: 10, duration: 3 }, { action: 'ability', ability: 'echo', effect: 'scratch', targetType: 'enemy', count: 8 }]
+      : ab.includes('corvette')
+        ? [{ action: 'stand_move', targetType: 'enemy' }, { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' }, { action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 5 }]
+        : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }];
   return { interpretation: '（CPU・ローカル）警察が来る前に判定を取り返すため攻める', speech: null, steps };
 }
 
@@ -412,7 +462,7 @@ export function localCpuPlan(b, c) {
   if (zp) return zp;
   const healing = healPlan(b, c);
   if (healing && b.t < RULES.timeLimit - 20) return healing;
-  const plan = hurry(b, c, basePlan(b, c));
+  const plan = reactTail(b, c, hurry(b, c, basePlan(b, c)));
   if (!c.def.standRange || c.def.standBlind || !plan.steps) return plan;
   const steps = plan.steps;
   const melee = steps.some(st => st.action === 'melee' && (st.targetType || 'enemy') === 'enemy');
@@ -491,13 +541,15 @@ function basePlan(b, c) {
       steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'cover' });
       return { interpretation: '（CPU・ローカル）劣勢のため身を隠す', speech, steps };
     }
+    // 遠距離・中距離型は殴り合わない：間合いを保つ
+    if (c.def.role === 'ranged' || c.def.role === 'mid') return keepDistance(b, c, e, d, speech, steps);
     if (e.windup && d < 2.5) {
-      if (!c.cd.dodge) steps.push({ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' });
-      else steps.push({ action: 'guard', targetType: 'enemy', duration: 1 });
+      // 近接型は下がらない：構えて受けるか、横へかわして殴り返す
+      if (rnd() < 0.5 || c.cd.dodge) steps.push({ action: 'guard', targetType: 'enemy', duration: 0.8 });
+      else steps.push({ action: 'dodge', targetType: 'direction', direction: rnd() < 0.5 ? 'left' : 'right', distance: 1.5 });
     }
     if (d < 2.2) {
-      steps.push({ action: 'melee', targetType: 'enemy' });
-      if (rnd() < 0.5) steps.push({ action: 'dodge', targetType: 'direction', direction: rnd() < 0.5 ? 'left' : 'right' });
+      steps.push({ action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' });
       return { interpretation: '（CPU・ローカル）接近戦', speech, steps };
     }
     if (c.held && d > 4 && d < 12 && rnd() < 0.35) {

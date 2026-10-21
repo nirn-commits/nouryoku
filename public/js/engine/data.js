@@ -162,7 +162,7 @@ export const ABILITIES = {
     desc: '全長40cmの三輪の小型車両のスタンド（首のない騎手が乗っている）。stand_move で本体から最大200m先まで走らせられ、壁も床も無視して走る（壁をすり抜ける）。ただし車両の周りの様子は本体には見えず、位置がおおまかに分かるだけ。車両が通った面（床・壁・物・人の体）に、しずくの口の複製を最大8個残せる。すべての口はしずく本人の口と同じ動きをする：しずくが喋れば全部の口から同じ声が出て、歯を食いしばれば全部の口が噛む。口は出力専用で、音を聞いたり感じたりはできない。口が壊されても本体は無傷だが、車両が受けたダメージはしずくに返る。',
     activation: '口を残すには、車両がその場所（人なら体の上）を直前に通っていること',
     effects: {
-      mouth: { name: '口を残す', targets: ['point', 'object', 'enemy', 'ally', 'self', 'direction'], desc: '車両が直前（10秒以内）に通った場所の近く（1m以内）に口の複製を1つ残す。人に付けるには、車両がその人の体の上を3秒以内に走っている必要がある（stand_move で敵へ車両を走らせてから使う）。自分の腕や肩に付けた口は盾になる。最大8個（超えると一番古い口が消える）。' },
+      mouth: { name: '口を残す', targets: ['point', 'object', 'enemy', 'ally', 'self', 'direction'], desc: '車両が直前（10秒以内）に通った場所の近く（1m以内）に口の複製を1つ残す。人に付けるには、車両がその人の体の上を5秒以内に走っている必要がある（stand_move で敵へ車両を走らせてから使う）。自分の腕や肩に付けた口は盾になる。最大8個（超えると一番古い口が消える）。' },
       bite: { name: '食いしばる', targets: ['none', 'self', 'enemy'], desc: 'duration 秒（既定4・最大8）歯を食いしばり、すべての口で噛む。敵の体の口はその敵に噛みつき続ける（最初に5、以後毎秒3ダメージ・動きが鈍る）。床や物の口は0.8m以内に来た敵の足首に噛みつく。自分の体の口は、正面から来た拳や刃を噛んで受け止める（その一撃は本体に通らず、口が壊れる・相手は一瞬動けない）。食いしばっている間は喋れず、喋ると外れる。' },
       call: { name: '口から喋る', targets: ['none'], desc: '全部の口から同じ声を出す（「」のセリフがあればそれを、なければ短く呼びかける）。離れた口から声を出して敵を誘導したり、遠くの味方に伝えたりできる。喋ると噛みつきは外れる。' },
       dismiss: { name: '口を消す', targets: ['none'], desc: '残した口をすべて消す。' },
@@ -182,6 +182,7 @@ export const STAT_LABELS = { power: '破壊力', speed: 'スピード', range: '
 export const CHARACTERS = {
   sogo: {
     id: 'sogo',
+    role: 'melee', // 戦い方：近接（詰めて殴る）
     name: '十河 矩比呂',
     reading: 'そごう のりひろ',
     nickname: 'ノリ',
@@ -199,12 +200,13 @@ export const CHARACTERS = {
   },
   nanami: {
     id: 'nanami',
+    role: 'ranged', keepDistance: 12, // 戦い方：遠距離（距離を取って戦う）
     name: '七海 灯',
     reading: 'ななみ あかり',
     stand: 'エコー・ビーチ',
     color: '#7ad1c5',
     hp: 95, sp: 100, spRegen: 5,
-    walk: 3.2, run: 5.6,
+    walk: 3.2, run: 6.1,
     power: 6, defense: 1.1,
     abilities: ['echo'],
     kg: 46,
@@ -215,12 +217,13 @@ export const CHARACTERS = {
   },
   saginuma: {
     id: 'saginuma',
+    role: 'ranged', keepDistance: 10, // 戦い方：遠距離（距離を取って戦う）
     name: '鷺沼 玲司',
     reading: 'さぎぬま れいじ',
     stand: 'セブンス・サン',
     color: '#b8a1e3',
     hp: 90, sp: 100, spRegen: 6, standRange: 1.2,
-    walk: 3.4, run: 6.0,
+    walk: 3.4, run: 6.3,
     power: 4, defense: 1.0, balls: 30,
     abilities: ['seventh'],
     kg: 62,
@@ -231,13 +234,14 @@ export const CHARACTERS = {
   },
   kito: {
     id: 'kito',
+    role: 'melee', // 戦い方：近接（詰めて殴る）
     name: '鬼頭 錠二',
     reading: 'きとう じょうじ',
     stand: 'ホテル・カリフォルニア',
     color: '#e85d04',
     hp: 110, sp: 100, spRegen: 5, standRange: 1.5,
     walk: 3.1, run: 5.6,
-    power: 19, defense: 0.85,
+    power: 17, defense: 0.85,
     meleeRange: 1.5, meleeArc: Math.PI / 4,
     abilities: ['hotel'],
     kg: 98,
@@ -248,13 +252,14 @@ export const CHARACTERS = {
   },
   saragiin: {
     id: 'saragiin',
+    role: 'mid', keepDistance: 4.5, // 戦い方：中距離（約5mを保つ）
     name: '蛇穴院 麗音',
     reading: 'さらぎいん れおん',
     stand: 'プリティ・ヴェイカント',
     color: '#f28ab2',
     hp: 95, sp: 100, spRegen: 6, standRange: 5,
     walk: 3.2, run: 5.6,
-    power: 9, defense: 1.0,
+    power: 11, defense: 1.0,
     abilities: ['vacant'],
     kg: 78,
     stats: { power: 'C', speed: 'B', range: 'C（約5m）', stamina: 'B', precision: 'A', growth: 'B' },
@@ -264,12 +269,13 @@ export const CHARACTERS = {
   },
   mikuriya: {
     id: 'mikuriya',
+    role: 'ranged', keepDistance: 14, // 戦い方：遠距離（距離を取って戦う）
     name: '御厨 しずく',
     reading: 'みくりや しずく',
     stand: 'リトル・レッド・コルベット',
     color: '#d64545',
     hp: 85, sp: 100, spRegen: 6, standRange: 200, standSpeed: 12, standDrain: 1, standFeedback: 1, standBlind: true,
-    walk: 3.2, run: 5.7,
+    walk: 3.2, run: 6.1,
     power: 7, defense: 1.0,
     abilities: ['corvette'],
     kg: 47,

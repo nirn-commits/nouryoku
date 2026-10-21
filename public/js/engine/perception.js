@@ -145,6 +145,7 @@ export function buildObservation(b, c) {
   const bd = b.buildingOf(c);
   const self = {
     name: c.name, stand: c.stand,
+    fighting_style: { melee: '近接型：距離を取らずに詰めて殴り続ける', mid: '中距離型：約5mの間合いで能力を使い、崩れた相手は殴る', ranged: `遠距離型：殴り合わず約${c.def.keepDistance}mの距離を保つ。近づかれたら先に離れてから攻撃する` }[c.def.role],
     pos: [r1(c.x), r1(c.y)], floor: c.floor + 1, facing_deg: deg(c.facing),
     hp: Math.round(c.hp), maxHp: c.maxHp, sp: Math.round(c.sp), held: c.held ? `${c.held.name}（殴る${meleeWith(c, c.held.kind)}・素手${c.def.power}・投げる${ITEM_KINDS[c.held.kind].throw}${ITEM_KINDS[c.held.kind].breaks ? '・割れ物' : ''}）` : null, kg: c.def.kg,
     touching: b.world.objects.filter(o => o.blocksMove && distToRect(c.x, c.y, o) <= c.r + 0.6).map(o => o.id),

@@ -550,10 +550,10 @@ IMPL.corvette = (b, c, effect, res, ab, step) => {
     c.mouths.push({ id: `mouth_${++b.mouthSeq || (b.mouthSeq = 1)}`, ...m, placedAt: b.t });
   };
   // 見えていなくても、車両が体の上を走った相手なら付けられる
-  const touched = step.target.type === 'enemy' ? b.enemiesOf(c).find(e => e.alive && (!step.target.charId || e.id === step.target.charId) && b.t - (c.carTouch[e.id] ?? -99) <= 3) : null;
+  const touched = step.target.type === 'enemy' ? b.enemiesOf(c).find(e => e.alive && (!step.target.charId || e.id === step.target.charId) && b.t - (c.carTouch[e.id] ?? -99) <= 5) : null;
   const who = res.self ? c : res.ally || (res.char && res.char.alive ? res.char : null) || touched;
   if (who) {
-    if (who !== c && !(b.t - (c.carTouch[who.id] ?? -99) <= 3)) return fail(`車両が${who.name}の体の上を走っていない（先に stand_move で車両を走らせる）`);
+    if (who !== c && !(b.t - (c.carTouch[who.id] ?? -99) <= 5)) return fail(`車両が${who.name}の体の上を走っていない（先に stand_move で車両を走らせる）`);
     add({ on: who.id, x: who.x, y: who.y, floor: who.floor, name: who === c ? '自分の腕' : who.name });
     if (!c.standBody) b.standOut(c);
     b.emit({

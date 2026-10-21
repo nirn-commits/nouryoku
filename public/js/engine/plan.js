@@ -193,6 +193,7 @@ function validateStep(b, c, raw, cursor) {
   else if (action === 'wait') step.duration = clamp(d ?? (raw.condition ? 0 : 1), 0, 6);
   else if (action === 'hide') step.duration = clamp(d ?? 3, 0.5, 8);
   else if (action === 'ability' && step.ability === 'corvette' && step.effect === 'bite') step.duration = clamp(d ?? 4, 0.5, 8);
+  else if (action === 'stand_move' && d !== null) step.duration = clamp(d, 0.2, 4); // 車両が着くのを待つ時間（短くすれば走らせたまま次へ）
   else step.duration = 0;
 
   if (raw.condition && typeof raw.condition === 'object' && raw.condition.kind) {
@@ -1270,7 +1271,7 @@ const EXEC = {
       s.goal = { x: res.x, y: res.y, char: res.char || null };
       selfLog(b, c, `『${c.stand}』を${targetName(b, st.def.target)}の方へ${c.def.standBlind ? '走らせる' : '先行させる'}（射程${c.def.standRange}m）`);
       // 遠くまで走る車両は、着くまで（最大4秒）待つ
-      st.data.until = b.t + (c.def.standBlind ? Math.min(4, dist(s.x, s.y, res.x, res.y) / (c.def.standSpeed || RULES.standSpeed) + 0.3) : 0.4);
+      st.data.until = b.t + (st.def.duration ? st.def.duration : c.def.standBlind ? Math.min(4, dist(s.x, s.y, res.x, res.y) / (c.def.standSpeed || RULES.standSpeed) + 0.3) : 0.4);
       return null;
     },
     update(b, c, st) {
