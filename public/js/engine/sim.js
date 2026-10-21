@@ -380,6 +380,19 @@ export class Battle {
   }
 
   // 少し後に鳴らす音（足音の行列など）。owner の個体が鳴らすので拾われない
+  // 先読み用の写し：盤面をまるごと複製する（記録・演出・予約済みの処理は持たない）。乱数は seed から作り直す
+  fork(seed = 1) {
+    const skip = new Set(['rng', 'scheduled', 'log', 'fx']);
+    const data = structuredClone(Object.fromEntries(Object.entries(this).filter(([k]) => !skip.has(k))));
+    const f = Object.assign(Object.create(Battle.prototype), data);
+    f.rng = makeRng(seed);
+    f.scheduled = [];
+    f.log = [];
+    f.fx = [];
+    f.isSim = true;
+    return f;
+  }
+
   schedule(t, fn) {
     (this.scheduled ||= []).push({ t, fn });
   }

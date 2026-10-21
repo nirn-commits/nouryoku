@@ -312,7 +312,7 @@ const IMPL = {
     // 反射回数 k で目標の近く（0.45m以内）を通る角度を探す
     // 当たる角度が連続している範囲の中央を選ぶ（かすめる角度より誤差に強い）
     const solve = k => {
-      const N = 1440;
+      const N = b.isSim ? 240 : 1440; // 先読みの中では粗く計算する
       const hits = [];
       for (let i = 0; i < N; i++) {
         const a = (i / N) * Math.PI * 2;

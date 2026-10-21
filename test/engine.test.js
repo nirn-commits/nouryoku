@@ -1078,3 +1078,17 @@ test('安全地帯：時間とともに狭まり、外にいると削られる�
   assert.equal(p.steps[0].action, 'move');
   assert.ok(dist(p.steps[0].x, p.steps[0].y, z.x, z.y) < b.zoneRadius(b.t + 10), '内側へ戻る計画になっていない');
 });
+
+test('先読み：盤面の写しを動かしても本物は変わらない／見えていない敵は記憶の位置で考える', () => {
+  const b = duel('kito', 'saginuma');
+  const f = b.fork(1);
+  f.player.x += 5; f.world.objects.pop(); for (let i = 0; i < 30; i++) f.step();
+  assert.equal(b.player.x, 22, '写しの変更が本物に影響した');
+  assert.equal(b.t, 0);
+  assert.ok(b.world.objects.length > f.world.objects.length);
+  // 本物の計画は先読みの後も実行できる
+  const p = localCpuPlan(b, b.player);
+  assert.ok(p.steps.length > 0);
+  plan(b, b.player, p.steps);
+  for (let i = 0; i < 30; i++) b.step();
+});

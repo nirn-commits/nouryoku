@@ -3,7 +3,7 @@
 import { RULES } from './data.js';
 import { compilePlan, planFinished } from './plan.js';
 import { buildObservation } from './perception.js';
-import { localCpuPlan } from './localAI.js';
+import { localCpuPlanAsync } from './localAI.js';
 
 export class TurnController {
   constructor(battle, { cpuRemote = null, cpuTimeoutMs = 400000 } = {}) {
@@ -45,7 +45,7 @@ export class TurnController {
         b.emit({ text: `（${c.name}の Gemini 呼び出しに失敗したため、簡易思考で行動します：${e.message}）`, kind: 'fail', all: true });
       }
     }
-    return compilePlan(b, c, localCpuPlan(b, c), 'local');
+    return compilePlan(b, c, await localCpuPlanAsync(b, c), 'local');
   }
 
   // プレイヤーの計画が確定したら、CPU の計画を待って同時に実行を始める
