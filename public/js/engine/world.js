@@ -25,6 +25,10 @@ const KINDS = {
   hole: { height: 0.05, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
   tree: { height: 5, blocksMove: true, blocksSight: true, movable: false, hp: 999, indestructible: true, soundDamp: 0.9 },
   pole: { height: 8, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
+  // 干渉できる物：水飲み場（水を飲んで少し回復）・発電機（動かすと周りの音をかき消す）・ゴミ箱（陰に深く隠れる）
+  fountain: { height: 1.0, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
+  generator: { height: 1.3, blocksMove: true, blocksSight: true, movable: false, hp: 999, indestructible: true, soundDamp: 0.9 },
+  trashcan: { height: 1.0, kg: 15, blocksMove: true, blocksSight: true, movable: true, hp: 25, mass: 0.8, soundDamp: 1 },
   // 植え込み：通れる（遅くなる）。外から中は近くでないと見えない
   bush: { height: 1.3, blocksMove: false, blocksSight: true, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
   // 階段：通れる。上り下りに約1秒かかる

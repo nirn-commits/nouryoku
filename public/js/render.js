@@ -32,6 +32,9 @@ function colorsOf(o, b) {
     case 'table': return ['#7a5232', '#5d3d24'];
     case 'shelf': return ['#c4a878', '#9a8259'];
     case 'vending': return ['#e04848', '#a82e2e'];
+    case 'fountain': return ['#9fd6e8', '#6a9fb3'];
+    case 'generator': return ['#e8c547', '#a88a24'];
+    case 'trashcan': return ['#5f7d5a', '#435a3f'];
     case 'drum': return ['#3478c0', '#235386'];
     case 'cone': return ['#ff8c3a', '#d0661c'];
     case 'car': {
@@ -361,6 +364,15 @@ export class Renderer {
         ctx.setLineDash([2, 4]);
         ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
+      } else if (z.kind === 'hum') {
+        // 動いている発電機：うなりの届く範囲
+        const ph = (b.t * 1.2) % 1;
+        ctx.strokeStyle = `rgba(232,197,71,${0.5 * (1 - ph)})`;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P * (0.3 + ph * 0.7), z.r * P * 0.7 * (0.3 + ph * 0.7), 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.fillStyle = 'rgba(232,197,71,0.9)';
+        ctx.font = `${Math.max(10, P * 0.4)}px sans-serif`;
+        ctx.fillText('♪ 発電機のうなり', zx + P * 0.6, zy - P * 0.8);
       } else if (z.kind === 'silence' && (debug || z.team === me.team)) {
         ctx.strokeStyle = 'rgba(122,209,197,0.8)';
         ctx.setLineDash([6, 4]);
@@ -859,7 +871,7 @@ export class Renderer {
   drawItem(it, z, label = true) {
     const ctx = this.ctx, P = this.px;
     const x = it.x * P, y = this.sy(it.y, z);
-    const colors = { vase: '#e6d3a3', bottle: '#7fd18b', kitchen_knife: '#ddd', pan: '#333', pipe: '#9aa', brick: '#b5523b', wrench: '#bbb', lumber: '#c49a62', umbrella: '#3a6ea5', extinguisher: '#d62828', stone: '#999', branch: '#7a5530' };
+    const colors = { drink: '#ff5d73', onigiri: '#f4f4f4', bandage: '#f3e6d0', first_aid: '#e63946', vase: '#e6d3a3', bottle: '#7fd18b', kitchen_knife: '#ddd', pan: '#333', pipe: '#9aa', brick: '#b5523b', wrench: '#bbb', lumber: '#c49a62', umbrella: '#3a6ea5', extinguisher: '#d62828', stone: '#999', branch: '#7a5530' };
     ctx.fillStyle = colors[it.kind] || '#ccc';
     ctx.strokeStyle = 'rgba(0,0,0,0.6)';
     ctx.lineWidth = 1;

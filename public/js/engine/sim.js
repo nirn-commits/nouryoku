@@ -27,7 +27,7 @@ function makeChar(id, charId, x, y, isCPU, team) {
       ? Array.from({ length: 24 }, (_, i) => ({
         n: i + 1, side: i % 2 ? 'R' : 'L', state: 'home', x, y, floor: 0, attachedTo: null, target: null,
         // 戦闘前に拾っておいた自分の足音（囮用）を3体が抱えている
-        sound: i < 3 ? { kind: 'footsteps_run', radius: 9, text: null, from: def.name, label: `${def.name}の駆ける足音` } : null,
+        sound: i < 3 ? { kind: 'footsteps_run', radius: 9, text: null, from: def.name, label: `${def.name}の駆ける足音`, weak: true } : null,
       }))
       : null,
     cd: {},
@@ -188,7 +188,7 @@ export class Battle {
     if (d > RULES.visionRange) return false;
     // 潜んでいる人物は6m（植え込みの中なら2.5m）より遠くからは見つからない
     const hidden = this.chars.find(h => h !== viewer && h.x === x && h.y === y && h.status.hideUntil > this.t);
-    if (hidden && d > (this.bushAt(hidden.x, hidden.y) ? 2.5 : 6)) return false;
+    if (hidden && d > (hidden.status.deepHide ? 1.5 : this.bushAt(hidden.x, hidden.y) ? 2.5 : 6)) return false;
     // 煙幕：煙の中や向こう側は見えない（すぐそば1.5m以内は見える）
     if (d > 1.5 && this.world.zones.length && this.smokeBetween(ox, oy, x, y)) return false;
     if (!aware || d > RULES.nearAwareness) {
@@ -326,6 +326,45 @@ export class Battle {
 
   addZone(z) {
     this.world.zones.push({ floor: 0, ...z });
+  }
+
+  // 同じ場所に長くとどまると、住人や通行人に気づかれて騒がれる（ガン待ち対策）
+  updateLinger(c) {
+    const L = c.linger;
+    const bd = this.buildingOf(c);
+    const key = bd ? `b:${bd.id}` : null;
+    // 建物の中なら同じ建物、外なら半径5m以内を「同じ場所」とみなす
+    if (!L || (key ? L.key !== key : (L.key !== null || dist(c.x, c.y, L.x, L.y) > 5))) {
+      c.linger = { x: c.x, y: c.y, key, since: this.t, warned: false };
+      return;
+    }
+    const stay = this.t - L.since;
+    if (!L.warned && stay >= RULES.lingerTime - 10) {
+      L.warned = true;
+      this.emit({ text: `（同じ場所に長くいる。あと10秒ほどで${key ? '住人' : '通行人'}に気づかれそうだ）`, kind: 'fail', actor: c });
+    }
+    if (stay < RULES.lingerTime) return;
+    const who = key ? (bd.kind === 'store' ? '店員' : bd.kind === 'house' ? '住人' : '作業員') : '通行人';
+    this.emit({ text: `${who}が${c.name}に気づいた！「誰かいるぞ！」`, kind: 'env', pos: { x: c.x, y: c.y, floor: c.floor }, sound: 0, all: true });
+    // 叫び声は全員に聞こえ、敵には居場所が正確に伝わる
+    for (const o of this.chars) {
+      if (o === c || !o.alive) continue;
+      this.recordSound(o, { x: c.x, y: c.y, floor: c.floor }, 'speech', '誰かいるぞ！');
+      if (o.team !== c.team) o.memory.seen[c.id] = { id: c.id, name: c.name, x: c.x, y: c.y, floor: c.floor, t: this.t, facing: c.facing, via: `${who}の声` };
+    }
+    c.status.hideUntil = 0;
+    c.linger = { x: c.x, y: c.y, key, since: this.t, warned: false };
+  }
+
+  // 回復（最大HPまで）
+  heal(c, amount, label) {
+    if (!c.alive) return 0;
+    const before = c.hp;
+    c.hp = Math.min(c.maxHp, c.hp + amount);
+    const got = Math.round(c.hp - before);
+    this.emit({ text: `${c.name} は${label}でHPが${got}回復した（${Math.round(c.hp)}/${c.maxHp}）`, obsText: `${c.name} が${label}で一息ついた`, kind: 'info', actor: c, pos: c });
+    this.fx.push({ kind: 'num', x: c.x, y: c.y - 0.6, text: `+${got}`, t: this.t, color: '#06d6a0', visibleTo: this.visibleSet(c) });
+    return got;
   }
 
   // 少し後に鳴らす音（足音の行列など）。owner の個体が鳴らすので拾われない
@@ -476,14 +515,19 @@ export class Battle {
   canHear(listener, x, y, radius, sz = 1) {
     if (!listener.alive || radius <= 0) return false;
     if (listener.status.deafUntil > this.t) return false;
-    const eff = radius * soundFactor(this.world, x, y, listener.x, listener.y, sz, this.baseZ(listener) + EYE_H);
+    let eff = radius * soundFactor(this.world, x, y, listener.x, listener.y, sz, this.baseZ(listener) + EYE_H);
+    // 動いている発電機のそばの小さな音は、うなりにかき消される（すぐ近くなら聞こえる）
+    if (radius < 12 && this.world.zones.length) {
+      const hum = this.world.zones.find(z => z.kind === 'hum' && (dist(z.x, z.y, x, y) <= z.r || dist(z.x, z.y, listener.x, listener.y) <= z.r));
+      if (hum) eff = Math.min(eff, 2.5);
+    }
     return dist(listener.x, listener.y, x, y) <= eff;
   }
 
   // ログ・音・観察を一括で発行する。visibleTo は「その出来事を知覚できた者」
   emit({ text, obsText = null, kind = 'info', actor = null, pos = null, sound = 0, soundKind = null, all = false, hint = null, affected = null }) {
     // エコー・ビーチの個体に拾われた音は、その場では鳴らない
-    if (pos && sound && this.captureSound(pos, sound, soundKind || kind, obsText || text, this.chars.includes(pos) ? pos : null)) sound = 0;
+    if (pos && sound && this.captureSound(pos, sound, soundKind || kind, obsText || text, this.chars.includes(pos) ? pos : null, actor)) sound = 0;
     const visibleTo = new Set();
     const heardBy = new Set();
     const soundSeen = new Set(); // 音の出どころが見えていて、音も聞こえた人（音の輪を正確な位置に出す）
@@ -744,6 +788,7 @@ export class Battle {
       for (const s of due) s.fn();
     }
     for (const c of this.chars) if (c.burst && c.alive) this.updateBurst(c);
+    for (const c of this.chars) if (c.alive) this.updateLinger(c);
     this.updateSeals();
 
     for (const c of this.chars) {
@@ -908,6 +953,7 @@ export class Battle {
 
     // 潜んでいる人は、歩き出すと解ける
     if (s.hideUntil > this.t && speed > 0.4 && kbSpeed <= 0.2) s.hideUntil = 0;
+    if (s.deepHide && !(s.hideUntil > this.t)) s.deepHide = false;
     // 撒かれた玉：走って踏むと転ぶ（撒いた本人の側は踏まない）
     if (speed > c.def.walk + 0.3 && !(s.proneUntil > this.t)) {
       const cz = this.zoneAt('caltrops', c.x, c.y, c.floor);
@@ -1223,7 +1269,8 @@ export class Battle {
   // ---------- エコー・ビーチ：音を拾って、運んで、置く ----------
 
   // 音が鳴った瞬間、近くの個体（または鳴らした人物に取り付いた個体）が拾えば true（その場では鳴らない）
-  captureSound(pos, radius, kind, text, sourceChar) {
+  // actor：その音を立てた人（七海が自分で立てた音は「弱い音」になり、轟音の材料にならない）
+  captureSound(pos, radius, kind, text, sourceChar, actor = null) {
     if (radius <= 0) return false;
     // 無音の結界の中で鳴った音は、すべて吸い取られる
     if (this.world.zones.length && this.zoneAt('silence', pos.x, pos.y, pos.floor ?? (sourceChar ? sourceChar.floor : 0))) return true;
@@ -1232,28 +1279,33 @@ export class Battle {
       // 大きな音は、近くに配置された空きの個体が先に引っ張られる
       if (radius >= 9) {
         const z0 = this.zOf(pos);
-        const free = owner.units.find(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, pos.x, pos.y) <= 1.0 && Math.abs(u.floor * FLOOR_H - z0) < 2.5);
-        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar); this.unitHeard(owner, sourceChar, free); return true; }
+        const free = owner.units.find(u => u.state === 'deployed' && !u.sound && dist(u.x, u.y, pos.x, pos.y) <= RULES.unitHearRange && Math.abs(u.floor * FLOOR_H - z0) < 2.5);
+        if (free) { free.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner); this.unitHeard(owner, sourceChar, free); return true; }
       }
       // 取り付いた個体：その人物から出る音を拾い続ける（保持は最後の1音）
       if (sourceChar) {
         const att = owner.units.find(u => u.state === 'attached' && u.attachedTo === sourceChar.id);
         if (att) {
-          att.sound = this.makeSound(kind, radius, text, sourceChar);
+          att.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner);
           if (sourceChar !== owner) this.noticeSilence(sourceChar, kind);
           return true;
         }
       }
+      // 手元の個体：七海の体のすぐそばで鳴った大きな音（殴られた音など）は、体にいる個体が受け止めて拾う
+      if (radius >= 9 && (actor || sourceChar) !== owner && owner.floor === (pos.floor ?? owner.floor) && dist(owner.x, owner.y, pos.x, pos.y) <= 1.2) {
+        const home = owner.units.find(u => u.state === 'home' && !u.sound);
+        if (home) { home.sound = this.makeSound(kind, radius, text, sourceChar, false); return true; }
+      }
       // 配置された個体：1m以内で鳴った音。空いている個体が優先、全員が抱えていれば小さい音を大きい音で上書き
       const z = this.zOf(pos);
-      const near = owner.units.filter(u => u.state === 'deployed' && dist(u.x, u.y, pos.x, pos.y) <= 1.0 && Math.abs(u.floor * FLOOR_H - z) < 2.5);
+      const near = owner.units.filter(u => u.state === 'deployed' && dist(u.x, u.y, pos.x, pos.y) <= RULES.unitHearRange && Math.abs(u.floor * FLOOR_H - z) < 2.5);
       if (!near.length) continue;
       let u = near.find(x => !x.sound);
       if (!u) {
         u = near.reduce((a, x) => (x.sound.radius < a.sound.radius ? x : a));
         if (u.sound.radius >= radius) continue;
       }
-      u.sound = this.makeSound(kind, radius, text, sourceChar);
+      u.sound = this.makeSound(kind, radius, text, sourceChar, (actor || sourceChar) === owner);
       this.unitHeard(owner, sourceChar, u);
       return true;
     }
@@ -1267,13 +1319,15 @@ export class Battle {
     for (const c of this.chars) if (c.team === owner.team && c.alive) c.memory.seen[src.id] = { ...rec };
   }
 
-  makeSound(kind, radius, text, who) {
+  makeSound(kind, radius, text, who, weak = false) {
     const label = { speech: '声', footsteps: '足音', footsteps_run: '駆ける足音', impact: '衝撃音', crash: '崩れる音', glass: 'ガラスの割れる音', alarm: '防犯アラーム', fall: '倒れる音', door: '扉の音', ricochet: '金属音' }[kind] || '物音';
-    return { kind, radius, text: kind === 'speech' ? text : null, from: who ? who.name : null, label: `${who ? `${who.name}の` : ''}${label}`, at: this.t };
+    return { weak, kind, radius, text: kind === 'speech' ? text : null, from: who ? who.name : null, label: `${who ? `${who.name}の` : ''}${label}`, at: this.t };
   }
 
+  // 大きな音（轟音の材料）：自分で立てた音（weak）は数えない
   isLoud(sound) {
-    return sound && sound.radius >= 9 && !sound.kind.startsWith('footsteps') && sound.kind !== 'speech';
+    // 敵の駆ける足音（半径9m）も材料になる：敵の通り道に個体を置いて集める
+    return !!sound && !sound.weak && sound.radius >= 9 && sound.kind !== 'speech';
   }
 
   // 自分の声や足音が消えていることに気づく
@@ -1366,14 +1420,22 @@ export class Battle {
 
   roarHit(owner, target, loud) {
     const ab = ABILITIES.echo;
+    // 個体が飛んできた方向から、本体のおおよその居場所がばれる（相手とその味方に伝わる）
+    const err = 3;
+    const guess = { x: clamp(owner.x + (this.rng() - 0.5) * 2 * err, 0.5, this.world.w - 0.5), y: clamp(owner.y + (this.rng() - 0.5) * 2 * err, 0.5, this.world.h - 0.5) };
+    for (const o of this.chars) {
+      if (o.team === owner.team || !o.alive) continue;
+      o.memory.seen[owner.id] = { id: owner.id, name: owner.name, x: guess.x, y: guess.y, floor: owner.floor, t: this.t, facing: owner.facing, via: '轟音の個体が飛んできた方向' };
+    }
+    this.log.push({ t: this.t, text: `轟音の個体が飛んできた方向から、${owner.name}のおおよその居場所（(${guess.x.toFixed(0)}, ${guess.y.toFixed(0)})付近）の見当がついた`, kind: 'info', actor: null, visibleTo: new Set(this.chars.filter(o => o.team !== owner.team).map(o => o.id)), heardBy: new Set() });
     const pos = { x: target.x, y: target.y, z: this.baseZ(target) + 1.6 };
     this.puff('shock', pos, { big: loud >= 3 });
     this.emit({ text: `『${ab.name}』— ${loud}つの轟音が${target.name}の耳元で一斉に鳴り響いた！`, obsText: `耳元で轟音が一斉に炸裂した！`, kind: 'ability', actor: owner, affected: target, pos, hint: ab.observedHint });
-    if (loud >= 3) {
+    if (loud >= RULES.roarLoud) {
       target.status.deafUntil = this.t + 10;
       target.status.proneUntil = Math.max(target.status.proneUntil, this.t + 2.5);
       interruptStep(this, target, '轟音で平衡感覚を失った', true);
-      this.damage(target, 6 + loud * 2, { source: owner, kind: 'roar', label: '轟音' });
+      this.damage(target, 8 + loud * 4, { source: owner, kind: 'roar', label: '轟音' });
     } else {
       target.status.stunUntil = Math.max(target.status.stunUntil, this.t + 0.4);
       this.emit({ text: '……音が足りない。怯ませただけだ', kind: 'fail', actor: owner });

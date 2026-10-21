@@ -3,11 +3,11 @@ import { ACTIONS, ABILITIES, CONDITIONS, DIRECTIONS, RULES } from './data.js';
 import { dist, angleTo, angDiff, clamp, nearestPointOnRect, distToRect, rectCenter, pointInRect } from './vec.js';
 import { nearestWalkable, hasLOS, isWalkablePoint, upperFloorAt, findPath } from './world.js';
 import { applyAbility } from './abilities.js';
-import { itemDef, strengthScale } from './items.js';
+import { itemDef, strengthScale, makeItem } from './items.js';
 
 const DEFAULT_TARGET = {
   move: 'enemy', chase: 'enemy', melee: 'enemy', throw: 'enemy', guard: 'enemy', dodge: 'direction',
-  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', grab: 'enemy', tackle: 'enemy', counter: 'none', feint: 'enemy', hide: 'none', search: 'none', decoy: 'direction', vault: 'object', use_item: 'direction', stand_out: 'none', stand_move: 'enemy', stand_in: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
+  push: 'object', pull: 'object', open: 'object', close: 'object', jump_down: 'none', swat: 'self', pickup: 'none', drop: 'none', grab: 'enemy', tackle: 'enemy', counter: 'none', feint: 'enemy', hide: 'none', search: 'none', decoy: 'direction', vault: 'object', use_item: 'direction', interact: 'object', stand_out: 'none', stand_move: 'enemy', stand_in: 'none', look: 'enemy', wait: 'none', ability: 'enemy',
 };
 
 const DIR_LABEL = {
@@ -71,6 +71,7 @@ export function describeStep(b, s) {
     case 'decoy': return `${cond}${tn}に物音を立てる`;
     case 'vault': return `${cond}${tn}を乗り越える`;
     case 'use_item': return `${cond}手の物を使う${s.target.type !== 'none' && s.target.type !== 'self' ? `（${tn}）` : ''}`;
+    case 'interact': return `${cond}${tn}を操作する`;
     case 'stand_move': return `${cond}スタンドを${tn}へ先行させる`;
     case 'stand_in': return `${cond}スタンドを戻す`;
     case 'wait': return `${cond}待機${s.duration ? `（${s.duration.toFixed(1)}秒）` : ''}`;
@@ -106,10 +107,6 @@ function validateStep(b, c, raw, cursor) {
   const mode = raw.mode === 'run' || raw.mode === 'walk' ? raw.mode : action === 'chase' ? 'run' : 'walk';
   const step = { action, mode, target: { type: ttype }, raw, autoMode: action === 'move' && raw.mode !== 'run' && raw.mode !== 'walk' };
 
-  if (action === 'use_item') {
-    const kind = c.held && c.held.kind;
-    if (kind !== 'extinguisher' && kind !== 'umbrella') return { error: c.held ? `${c.held.name}には特別な使い方がない（消火器と傘だけ）` : '道具を持っていない（消火器か傘を先に拾う）' };
-  }
   // 能力の照合：存在しない能力・他人の能力は許可しない
   if (action === 'ability') {
     const abId = str(raw.ability);
@@ -151,6 +148,7 @@ function validateStep(b, c, raw, cursor) {
       if (!o.openable) return { error: `${o.name}は開かない（割ることはできる）` };
     }
     if (action === 'jump_down' && (!o || o.kind !== 'window' || o.floor !== 1)) return { error: `飛び降りられるのは2階の窓だけ（${targetName(b, t)}は不可）` };
+    if (action === 'interact' && !(o && (['vending', 'fountain', 'generator', 'trashcan'].includes(o.kind) || o.buzzer))) return { error: `${targetName(b, t)}は操作できない（自動販売機・水飲み場・発電機・ゴミ箱・レジカウンター）` };
     if (action === 'vault' && (!o || !o.blocksMove || (o.z1 - o.z0) > 1.6 || o.kind === 'door' || o.kind === 'window')) return { error: `${targetName(b, t)}は乗り越えられない（高さ1.6m以下の物だけ）` };
     if (action === 'ability') {
       if (step.ability === 'perpendicular' && step.effect === 'launch') {
@@ -236,7 +234,8 @@ function estimateCost(b, c, s, cursor) {
     case 'search': cost = 1.5; break;
     case 'decoy': cost = 0.5; break;
     case 'vault': cost = 0.9 + clamp(approxDist() / c.def.run, 0, 3); break;
-    case 'use_item': cost = 0.5; break;
+    case 'use_item': cost = (c.held && itemDef(c.held)?.useTime) || 0.5; break;
+    case 'interact': cost = 2 + clamp(approxDist() / c.def.walk, 0, 4); break;
     case 'push': case 'pull': cost = 0.6 + clamp((approxDist() - 1) / c.def.walk, 0, 3); break;
     case 'open': case 'close': cost = 0.6 + clamp((approxDist() - 1) / speed, 0, 4); break;
     case 'jump_down': cost = 1.2 + (s.target.type === 'object' ? clamp((approxDist() - 1) / speed, 0, 4) : 1); break;
@@ -1125,6 +1124,14 @@ const EXEC = {
   use_item: {
     start(b, c, st) {
       const kind = c.held && c.held.kind;
+      const hd = c.held ? itemDef(c.held) : null;
+      if (hd && hd.heal) {
+        st.data.heal = { amount: hd.heal, name: c.held.name };
+        st.data.until = b.t + hd.useTime;
+        st.locked = true;
+        selfLog(b, c, `${c.held.name}を使い始めた（${hd.useTime}秒）`);
+        return null;
+      }
       if (kind === 'extinguisher') {
         const res = st.def.target.type === 'none' || st.def.target.type === 'self'
           ? { x: c.x + Math.cos(c.facing) * 3, y: c.y + Math.sin(c.facing) * 3, f: c.floor }
@@ -1145,9 +1152,76 @@ const EXEC = {
         st.data.until = b.t + 0.3;
         return null;
       }
-      return '使える道具を持っていない';
+      return c.held ? `${c.held.name}には特別な使い方がない（回復アイテム・消火器・傘だけ）` : '道具を持っていない（回復アイテム・消火器・傘を先に拾う）';
     },
-    update(b, c, st) { return b.t >= st.data.until ? 'done' : 'running'; },
+    update(b, c, st) {
+      if (b.t < st.data.until) return 'running';
+      if (st.data.heal) {
+        if (!c.held) return { fail: '使う前に手放してしまった' };
+        c.held = null;
+        b.heal(c, st.data.heal.amount, st.data.heal.name);
+      }
+      return 'done';
+    },
+  },
+
+  // 操作する：自動販売機・水飲み場・発電機・ゴミ箱・防犯ブザー
+  interact: {
+    start(b, c, st) {
+      const o = b.objectById(st.def.target.id);
+      if (!o || !b.world.objects.includes(o)) return '操作する物が無い';
+      if (o.kind === 'fountain' && c.cd.fountain) return `水飲み場はまだ使えない（あと${(c.cd.fountain - b.t).toFixed(0)}秒）`;
+      if (o.kind === 'vending' && (o.stock ?? 3) <= 0) return `${o.name}は売り切れ`;
+      st.data.obj = o;
+      st.data.phase = 'approach';
+      st.data.deadline = b.t + 6;
+      return null;
+    },
+    update(b, c, st) {
+      const D = st.data;
+      const o = D.obj;
+      const n = nearestPointOnRect(c.x, c.y, o);
+      if (D.phase === 'approach') {
+        if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= c.r + 0.5) {
+          D.phase = 'use';
+          D.until = b.t + ({ vending: 1.5, fountain: 2, generator: 1, trashcan: 0.6 }[o.kind] ?? 0.8);
+          st.locked = o.kind === 'vending' || o.kind === 'fountain';
+          return 'running';
+        }
+        const r = approach(b, c, st, n.x, n.y, c.r + 0.4, st.def.mode === 'run', o.floor);
+        if (r === 'stuck' || b.t > D.deadline) return { fail: `${o.name}に近づけなかった` };
+        return 'running';
+      }
+      faceTo(c, n.x, n.y);
+      if (b.t < D.until) return 'running';
+      const at = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
+      if (o.kind === 'vending') {
+        o.stock = (o.stock ?? 3) - 1;
+        const item = makeItem('drink', c.x, c.y, c.floor);
+        b.emit({ text: `${c.name} が${o.name}で缶ジュースを買った（残り${o.stock}本）`, kind: 'env', actor: c, pos: at, sound: 5, soundKind: 'impact' });
+        if (c.held) b.world.items.push(item); else c.held = { id: item.id, kind: item.kind, name: item.name };
+      } else if (o.kind === 'fountain') {
+        c.cd.fountain = b.t + 25;
+        b.heal(c, 10, '水飲み場の水');
+      } else if (o.kind === 'generator') {
+        const on = b.world.zones.find(z => z.kind === 'hum' && z.obj === o.id);
+        if (on) {
+          on.until = b.t;
+          b.emit({ text: `${c.name} が${o.name}を止めた`, kind: 'env', actor: c, pos: at, sound: 6, soundKind: 'door' });
+        } else {
+          b.addZone({ kind: 'hum', obj: o.id, x: at.x, y: at.y, r: 12, floor: o.floor, until: b.t + 45 });
+          b.emit({ text: `${c.name} が${o.name}を動かした。ゴウンゴウンとうなり始め、周りの小さな音がかき消される`, kind: 'env', actor: c, pos: at, sound: 14, soundKind: 'crash' });
+        }
+      } else if (o.kind === 'trashcan') {
+        c.status.hideUntil = b.t + 8;
+        c.status.deepHide = true;
+        selfLog(b, c, `${o.name}の陰に身を縮めて隠れた（動くと解ける）`);
+      } else if (o.buzzer) {
+        o.alarmUntil = b.t + 6;
+        b.emit({ text: `${c.name} が防犯ブザーを鳴らした！ けたたましい音が響き渡る`, kind: 'env', actor: c, pos: at, sound: 40, soundKind: 'alarm' });
+      }
+      return 'done';
+    },
   },
 
   stand_out: {

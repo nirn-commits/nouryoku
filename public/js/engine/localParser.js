@@ -2,7 +2,7 @@
 // 出力は Gemini と同じ「生の計画」形式。検証は compilePlan が行う
 import { ABILITIES } from './data.js';
 import { ITEM_WORDS } from './items.js';
-import { dist, rectCenter } from './vec.js';
+import { dist, rectCenter, distToRect } from './vec.js';
 
 const IMPOSSIBLE = [
   [/時間を止|時を止|時間停止/, '時間を止める能力は存在しない'],
@@ -255,6 +255,37 @@ function parseClause(b, c, clause, has, ctx = {}) {
   const dir = dirRef(clause);
   const run = /走|駆け|急い|ダッシュ|全力|一気|飛び込/.test(clause);
   const mentionsEnemy = /敵|相手|あいつ|奴|やつ/.test(clause);
+
+  // --- 回復・干渉できる物 ---
+  if (/自販機|自動販売機/.test(clause) && /買|飲み物|ジュース|使/.test(clause)) {
+    const v = b.world.objects.filter(o => o.kind === 'vending').sort((p, q) => distToRect(c.x, c.y, p) - distToRect(c.x, c.y, q))[0];
+    if (v) return [{ action: 'interact', targetType: 'object', targetId: v.id }];
+  }
+  if (/水飲み場|水を飲/.test(clause)) {
+    const f = b.world.objects.find(o => o.kind === 'fountain');
+    if (f) return [{ action: 'interact', targetType: 'object', targetId: f.id }];
+  }
+  if (/発電機/.test(clause)) {
+    const g = b.world.objects.find(o => o.kind === 'generator');
+    if (g) return [{ action: 'interact', targetType: 'object', targetId: g.id }];
+  }
+  if (/ゴミ箱/.test(clause) && /隠れ|潜|陰/.test(clause)) {
+    const t = b.world.objects.filter(o => o.kind === 'trashcan').sort((p, q) => distToRect(c.x, c.y, p) - distToRect(c.x, c.y, q))[0];
+    if (t) return [{ action: 'interact', targetType: 'object', targetId: t.id }];
+  }
+  if (/防犯ブザー|ブザー/.test(clause)) {
+    const r = b.world.objects.find(o => o.buzzer);
+    if (r) return [{ action: 'interact', targetType: 'object', targetId: r.id }];
+  }
+  if (/回復|飲む|飲んで|食べ|手当て|包帯を巻|救急箱を使|傷の手当/.test(clause) && !/水を飲/.test(clause)) {
+    const healKinds = ['drink', 'onigiri', 'bandage', 'first_aid'];
+    if (c.held && healKinds.includes(c.held.kind)) return [{ action: 'use_item', targetType: 'self' }];
+    const named = findItemRef(b, c, clause);
+    const it = named && healKinds.includes(named.kind) ? named
+      : b.world.items.filter(i => healKinds.includes(i.kind) && (i.floor ?? 0) === c.floor).sort((p, q) => dist(c.x, c.y, p.x, p.y) - dist(c.x, c.y, q.x, q.y))[0];
+    if (it) return [{ action: 'pickup', targetType: 'object', targetId: it.id }, { action: 'use_item', targetType: 'self' }];
+    return [];
+  }
 
   // --- 近接の駆け引き・隠密・地形の行動 ---
   if (/掴みかか|掴む|掴ん|組み付|組みつ|捕まえ|羽交い締め/.test(clause) && !/物を掴|を拾/.test(clause)) return [{ action: 'grab', targetType: 'enemy' }];

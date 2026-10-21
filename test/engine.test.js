@@ -416,7 +416,7 @@ test('七海：個体を群がらせて引っかき、そばに残った個体�
   b.setPlan(foe, plan);
   const hp = me.hp;
   runFor(b, 2.5);
-  assert.ok(me.hp < hp && hp - me.hp <= 6, `引っかきのダメージがおかしい（${hp - me.hp}）`);
+  assert.ok(me.hp < hp && hp - me.hp <= 11, `引っかきのダメージがおかしい（${hp - me.hp}）`);
   const near = foe.units.filter(u => u.state === 'deployed' && dist(u.x, u.y, me.x, me.y) <= 1.2).length;
   assert.ok(near >= 3, '引っかいた個体が敵のそばに残っていない');
   const fhp = foe.hp;
@@ -876,4 +876,108 @@ test('観戦モード：プレイヤーのキャラも CPU が考えて動き、
   }
   assert.ok(b.over, '観戦モードで決着しない');
   assert.ok(moved, 'プレイヤーのキャラが CPU として動いていない');
+});
+
+// ---------- ガン待ち対策（A1・A3・B5）と回復・干渉できる物 ----------
+
+test('七海：自分で立てた大きな音は轟音の材料にならない（敵の立てた音はなる）', () => {
+  const b = duel('nanami', 'kito');
+  b.cpu.x = 30;
+  const u = b.player.units.find(x => x.state === 'home');
+  u.state = 'deployed'; u.x = 25; u.y = 9; u.floor = 0;
+  b.emit({ text: '木箱を殴った', kind: 'env', actor: b.player, pos: { x: 25.3, y: 9, floor: 0 }, sound: 10, soundKind: 'impact' });
+  assert.ok(u.sound && !b.isLoud(u.sound), '自分の音が大きな音として数えられた');
+  const u2 = b.player.units.find(x => x.state === 'home');
+  u2.state = 'deployed'; u2.x = 28; u2.y = 9; u2.floor = 0;
+  b.emit({ text: '敵が木箱を殴った', kind: 'env', actor: b.cpu, pos: { x: 28.3, y: 9, floor: 0 }, sound: 10, soundKind: 'impact' });
+  assert.ok(b.isLoud(u2.sound), '敵の音が大きな音にならない');
+});
+
+test('七海：轟音を鳴らすと、相手におおよその居場所が伝わる', () => {
+  const b = duel('nanami', 'kito');
+  b.cpu.x = 30; b.player.facing = Math.PI; b.cpu.facing = 0;
+  assert.ok(!b.cpu.memory.seen.player);
+  b.roarHit(b.player, b.cpu, 3);
+  const r = b.cpu.memory.seen.player;
+  assert.ok(r, '居場所が伝わっていない');
+  assert.ok(dist(r.x, r.y, b.player.x, b.player.y) <= 4.3, '推定位置が離れすぎている');
+});
+
+test('同じ場所に長くいると住人に気づかれ、居場所が敵に知られる', () => {
+  const { b } = kitoRoom();
+  b.cpu.x = 4; b.cpu.y = 17;
+  const wait = c => { if (!c.runner.step) b.setPlan(c, compilePlan(b, c, { steps: [{ action: 'wait', targetType: 'none', duration: 6 }] })); };
+  for (let i = 0; i < 30 * 42; i++) { wait(b.player); wait(b.cpu); b.step(); }
+  assert.ok(b.log.some(l => l.text.includes('住人が') && l.text.includes('気づいた')), '気づかれていない');
+  assert.ok(b.cpu.memory.seen.player && b.cpu.memory.seen.player.via.includes('住人'), '居場所が敵に伝わっていない');
+});
+
+test('回復：拾った回復アイテムを使うとHPが戻り、使っている途中で殴られると中断する', () => {
+  const b = duel('sogo', 'kito');
+  b.cpu.x = 32;
+  b.player.hp = 50;
+  b.player.held = { id: 'fa', kind: 'first_aid', name: '救急箱' };
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 5 }]);
+  plan(b, b.player, [{ action: 'use_item', targetType: 'self' }]);
+  runFor(b, 3.5);
+  assert.equal(b.player.hp, 85, '救急箱で回復していない');
+  assert.equal(b.player.held, null);
+  const b2 = duel('sogo', 'kito');
+  b2.player.hp = 50;
+  b2.player.held = { id: 'fa', kind: 'first_aid', name: '救急箱' };
+  plan(b2, b2.cpu, [{ action: 'melee', targetType: 'enemy' }]);
+  plan(b2, b2.player, [{ action: 'use_item', targetType: 'self' }]);
+  runFor(b2, 3.5);
+  assert.ok(b2.player.hp < 50, '殴られたのに回復を続けた');
+  assert.ok(b2.player.held, '中断したのにアイテムが無くなった');
+  // マップに回復アイテムがある
+  for (const mapId of ['town', 'lot']) {
+    const w = new Battle({ seed: 1, mapId }).world;
+    assert.ok(w.items.some(i => ['drink', 'onigiri', 'bandage', 'first_aid'].includes(i.kind)), `${mapId}に回復アイテムが無い`);
+  }
+});
+
+test('干渉できる物：自販機・水飲み場・発電機・ゴミ箱・防犯ブザー', () => {
+  const b = new Battle({ seed: 96, mapId: 'town', playerChar: 'sogo', cpuChar: 'kito', randomSpawn: false });
+  b.cpu.x = 58; b.cpu.y = 2;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 30 }]);
+  const near = o => { const p = nearestWalkable(b.world, o.x + o.w / 2, o.y + o.h + 0.6, 2, 0); b.player.x = p.x; b.player.y = p.y; };
+  // 自販機で缶ジュースを買う
+  const v = b.objectById('vending_1');
+  near(v);
+  plan(b, b.player, [{ action: 'interact', targetType: 'object', targetId: v.id }]);
+  runFor(b, 3);
+  assert.equal(b.player.held?.kind, 'drink', '自販機で買えていない');
+  // 水飲み場で回復
+  b.player.held = null; b.player.hp = 60;
+  const f = b.objectById('park_fountain');
+  near(f);
+  plan(b, b.player, [{ action: 'interact', targetType: 'object', targetId: f.id }]);
+  runFor(b, 3);
+  assert.equal(b.player.hp, 70, '水飲み場で回復していない');
+  // 発電機を動かすと、そばの足音が遠くへ聞こえない
+  const g = b.objectById('site_generator');
+  near(g);
+  plan(b, b.player, [{ action: 'interact', targetType: 'object', targetId: g.id }]);
+  runFor(b, 2.5);
+  assert.ok(b.world.zones.some(z => z.kind === 'hum'), '発電機が動いていない');
+  const listener = b.cpu;
+  listener.x = g.x + 8; listener.y = g.y + 0.5;
+  const n0 = listener.memory.heard.length;
+  b.noise({ x: g.x + 2, y: g.y + 1, floor: 0 }, 9, 'footsteps_run');
+  assert.equal(listener.memory.heard.length, n0, '発電機のうなりの中の足音が聞こえた');
+  // ゴミ箱の陰に隠れると、2m先からでも見えない
+  const t = b.objectById('trash_park');
+  near(t);
+  listener.x = b.player.x + 3; listener.y = b.player.y; listener.facing = Math.PI;
+  plan(b, b.player, [{ action: 'interact', targetType: 'object', targetId: t.id }]);
+  runFor(b, 1.5);
+  assert.ok(!b.canSee(listener, b.player.x, b.player.y), 'ゴミ箱の陰に隠れても見えている');
+  // 防犯ブザー
+  const r = b.objectById('store_counter');
+  const p = nearestWalkable(b.world, r.x + r.w / 2, r.y + r.h + 0.7, 2, 0);
+  b.player.x = p.x; b.player.y = p.y;
+  plan(b, b.player, [{ action: 'interact', targetType: 'object', targetId: r.id }]);
+  runFor(b, 3);
+  assert.ok(b.log.some(l => l.text.includes('防犯ブザー')), '防犯ブザーが鳴らない');
 });

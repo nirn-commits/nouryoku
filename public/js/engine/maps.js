@@ -53,7 +53,10 @@ function buildLot(seed) {
     ['vase', 5, 8], ['kitchen_knife', 11, 9.5], ['vase', 6, 4.6, 1], ['umbrella', 11, 8, 1],
     ['pan', 30, 15.5], ['bottle', 25, 19.5],
     ['pipe', 16, 20.5], ['brick', 20, 4.5], ['stone', 28.5, 10], ['lumber', 10.5, 13.5], ['stone', 3, 16],
+    // 回復アイテム
+    ['first_aid', 9, 6], ['drink', 29, 18], ['bandage', 27.5, 16.5, 0], ['onigiri', 18, 12],
   ], rng);
+  addObj(world, 'trashcan', { id: 'lot_trash', name: '空き地のゴミ箱', x: 17.5, y: 2.2, w: 0.8, h: 0.8 });
   const crateSpots = [[9, 15], [14, 18], [21, 6], [26, 8], [13, 13], [20.5, 17], [30, 3.5], [5, 19.5]];
   crateSpots.forEach(([cx, cy], i) => {
     addObj(world, 'crate', {
@@ -190,7 +193,7 @@ function buildTown(seed) {
   addObj(world, 'shelf', { id: 'store_shelf_2', name: 'コンビニの商品棚2', x: 6, y: 33.5, w: 5, h: 0.8 });
   addObj(world, 'shelf', { id: 'store_shelf_3', name: 'コンビニの飲料棚', x: 4.5, y: 34.9, w: 0.8, h: 0.8 });
   addObj(world, 'shelf', { id: 'store_shelf_4', name: 'コンビニの雑誌棚', x: 12.5, y: 30.2, w: 0.8, h: 4 });
-  addObj(world, 'table', { id: 'store_counter', name: 'レジカウンター', x: 14.5, y: 29.6, w: 3, h: 0.9, mass: 3 });
+  addObj(world, 'table', { id: 'store_counter', name: 'レジカウンター（防犯ブザー）', x: 14.5, y: 29.6, w: 3, h: 0.9, mass: 3, buzzer: true });
   addObj(world, 'vending', { id: 'vending_1', name: '自動販売機1', x: 18.4, y: 31.5, w: 0.8, h: 1 });
   addObj(world, 'vending', { id: 'vending_2', name: '自動販売機2', x: 18.4, y: 32.7, w: 0.8, h: 1 });
   addObj(world, 'crate', { id: 'crate_c', name: '木箱C（ゴミ置き場）', x: 16, y: 36.8, w: 1.2, h: 1 });
@@ -243,7 +246,16 @@ function buildTown(seed) {
     ['bottle', 8.2, 32.4], ['bottle', 9, 34.9], ['umbrella', 16.5, 34.6], ['extinguisher', 4.8, 29],
     ['pipe', 38, 14.6], ['brick', 41.5, 10.4], ['wrench', 54.5, 5.5], ['lumber', 46, 12.6], ['brick', 36.5, 10],
     ['stone', 51.5, 34.3], ['branch', 55.5, 29.6], ['stone', 50.5, 29], ['bottle', 26, 17.4], ['stone', 33, 26.5],
+    // 回復アイテム：コンビニの棚まわり・各家の救急箱・現場事務所の包帯
+    ['onigiri', 7, 32.3], ['onigiri', 9.5, 32.3], ['drink', 5.2, 34.2], ['drink', 13.4, 33.2],
+    ['first_aid', 6.5, 5.5], ['first_aid', 26, 5.5, 1], ['first_aid', 41, 33.5], ['bandage', 54.5, 4.2], ['bandage', 57.5, 38],
   ], rng);
+  // 干渉できる物
+  addObj(world, 'fountain', { id: 'park_fountain', name: '公園の水飲み場', x: 51, y: 33, w: 0.8, h: 0.8 });
+  addObj(world, 'generator', { id: 'site_generator', name: '工事現場の発電機', x: 49.5, y: 11.5, w: 1.6, h: 1 });
+  addObj(world, 'trashcan', { id: 'trash_store', name: 'コンビニ前のゴミ箱', x: 18.6, y: 26.6, w: 0.8, h: 0.8 });
+  addObj(world, 'trashcan', { id: 'trash_park', name: '公園のゴミ箱', x: 49.2, y: 29.5, w: 0.8, h: 0.8 });
+  addObj(world, 'trashcan', { id: 'trash_street', name: '路地のゴミ箱', x: 33.2, y: 23.6, w: 0.8, h: 0.8 });
   return world;
 }
 

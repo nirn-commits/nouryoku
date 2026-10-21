@@ -47,7 +47,7 @@ test('描画：建物の中でスタンドを出していても、描画が例�
   b.damageObject(wins[0], 99, null);
   if (wins[1]) { b.damageObject(wins[1], 99, null); b.setOpen(wins[1], true, null); }
   // 場の仕掛けと、構え・傘・組み付き・潜伏の表示
-  for (const kind of ['smoke', 'caltrops', 'silence']) b.addZone({ kind, x: me.x + 2, y: me.y, r: 2, until: b.t + 5, team: 0 });
+  for (const kind of ['smoke', 'caltrops', 'silence', 'hum']) b.addZone({ kind, x: me.x + 2, y: me.y, r: 2, until: b.t + 5, team: 0 });
   Object.assign(me.status, { counterUntil: b.t + 1, umbrellaUntil: b.t + 1, hideUntil: b.t + 1 });
   b.cpu.status.grabbedUntil = b.t + 1;
   const r = makeRenderer(b);

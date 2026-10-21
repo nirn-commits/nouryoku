@@ -13,6 +13,11 @@ export const ITEM_KINDS = {
   extinguisher: { name: '消火器', melee: 15, throw: 13, reach: 0.1, kg: 6 },
   stone: { name: '石', melee: 9, throw: 10, reach: 0, kg: 0.8 },
   branch: { name: '木の枝', melee: 8, throw: 6, reach: 0.6, kg: 0.7 },
+  // 回復アイテム：use_item で使う（heal＝回復量、useTime＝使うのにかかる秒数。使っている間に殴られると中断）
+  drink: { name: '缶ジュース', melee: 3, throw: 5, reach: 0, kg: 0.4, heal: 12, useTime: 1.0 },
+  onigiri: { name: 'おにぎり', melee: 1, throw: 2, reach: 0, kg: 0.1, heal: 15, useTime: 1.5 },
+  bandage: { name: '包帯', melee: 1, throw: 1, reach: 0, kg: 0.1, heal: 18, useTime: 2.0 },
+  first_aid: { name: '救急箱', melee: 6, throw: 7, reach: 0, kg: 1.5, heal: 35, useTime: 3.0 },
 };
 
 // 文中の言い方 → 種類
@@ -20,6 +25,7 @@ export const ITEM_WORDS = [
   [/花瓶/, 'vase'], [/瓶|ビン|ボトル/, 'bottle'], [/包丁|ナイフ|刃物/, 'kitchen_knife'], [/フライパン|鍋/, 'pan'],
   [/鉄パイプ|パイプ/, 'pipe'], [/レンガ|煉瓦|ブロック片/, 'brick'], [/スパナ|レンチ|工具/, 'wrench'], [/角材|木材|棒/, 'lumber'],
   [/傘/, 'umbrella'], [/消火器/, 'extinguisher'], [/石|小石/, 'stone'], [/枝/, 'branch'],
+  [/ジュース|飲み物|ドリンク|缶/, 'drink'], [/おにぎり|食べ物|弁当/, 'onigiri'], [/包帯/, 'bandage'], [/救急箱|薬箱|応急/, 'first_aid'],
 ];
 
 let itemSeq = 0;

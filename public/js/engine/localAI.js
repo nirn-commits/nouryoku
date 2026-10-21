@@ -2,7 +2,7 @@
 // 使う情報は本人の知覚（perceivedEnemy・記憶・見えている物）だけで、相手の行動計画は参照しない
 import { ABILITIES, RULES } from './data.js';
 import { ITEM_KINDS, meleeWith } from './items.js';
-import { dist, distToRect, pointInRect } from './vec.js';
+import { dist, distToRect, pointInRect, angleTo } from './vec.js';
 
 function incomingProjectile(b, c) {
   return b.world.projectiles.find(p => p.owner !== c.id && b.canSee(c, p.x, p.y) && dist(c.x, c.y, p.x, p.y) < 6);
@@ -162,7 +162,7 @@ function nanamiPlan(b, c, pe, say) {
   const visible = pe && pe.visible;
   const d = visible ? dist(c.x, c.y, e.x, e.y) : 99;
   if (!onSelf) steps.push({ action: 'ability', ability: 'echo', effect: 'silence_self', targetType: 'self' });
-  if (loud >= 3 && pe && dist(c.x, c.y, pe.x, pe.y) < 45) {
+  if (loud >= RULES.roarLoud && pe && dist(c.x, c.y, pe.x, pe.y) < 45) {
     steps.push({ action: 'ability', ability: 'echo', effect: 'roar', targetType: 'enemy' });
     steps.push({ action: 'wait', targetType: 'none', duration: 1.5 });
     steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
@@ -203,16 +203,18 @@ function nanamiPlan(b, c, pe, say) {
       return { interpretation: `（CPU・ローカル）${it.name}を拾っておく`, speech: null, steps };
     }
   }
-  // 大きな音を集める：個体を自分のそばに配置して、近くの物（木箱・車・ドラム缶など）を叩いて鳴らす
-  const target = b.world.objects
-    .filter(o => o.floor === c.floor && ['crate', 'car', 'drum', 'vending', 'steel', 'shelf'].includes(o.kind) && (o.kind !== 'car' || !(o.alarmUntil > b.t)))
-    .sort((a, z) => distToRect(c.x, c.y, a) - distToRect(c.x, c.y, z))[0];
-  if (target && distToRect(c.x, c.y, target) < 20) {
-    steps.push({ action: 'move', mode: 'walk', targetType: 'object', targetId: target.id });
-    if (deployedFree < 2) steps.push({ action: 'ability', ability: 'echo', effect: 'deploy', targetType: 'self', count: 3 });
-    steps.push({ action: 'melee', targetType: 'object', targetId: target.id });
-    steps.push({ action: 'melee', targetType: 'object', targetId: target.id });
-    return { interpretation: '（CPU・ローカル）大きな音を集める', speech: null, steps };
+  // 大きな音を集める：自分で立てた音は材料にならない。敵がこちらへ駆けてくる通り道に個体を並べ、駆ける足音や戦いの音を拾う
+  const freeUnits = alive.filter(u => u.state === 'home' || (u.state === 'deployed' && !u.sound)).length;
+  // 自分の周り（半径2.5m）に個体を輪に並べる：駆け寄ってくる敵の足音や、そばで起きた戦いの音を拾う
+  const ringed = alive.filter(u => u.state === 'deployed' && Math.abs(dist(u.x, u.y, c.x, c.y) - 2.5) < 1.2).length;
+  if (pe && freeUnits >= 6 && ringed < 6) {
+    const a0 = angleTo(c.x, c.y, pe.x, pe.y);
+    for (let i = 0; i < 3; i++) {
+      const a = a0 + (i - 1) * 0.9;
+      steps.push({ action: 'ability', ability: 'echo', effect: 'deploy', targetType: 'point', x: c.x + Math.cos(a) * 2.5, y: c.y + Math.sin(a) * 2.5, count: 3 });
+    }
+    steps.push({ action: 'look', targetType: 'enemy' });
+    return { interpretation: '（CPU・ローカル）周りに個体を輪に並べ、駆け寄る足音を拾う', speech: say(0.2), steps };
   }
   return steps.length ? { interpretation: '（CPU・ローカル）静かに機をうかがう', speech: null, steps } : null;
 }
@@ -289,7 +291,24 @@ function hurry(b, c, plan) {
 }
 
 // スタンドの出し入れ：殴り合いの前に出して間合いを伸ばし、エネルギーが減ったら戻す
+// 傷ついていて敵が近くにいなければ、回復アイテムを使う（無ければ近くの物を拾う・自販機で買う）
+function healPlan(b, c) {
+  if (c.hp > c.maxHp * 0.55) return null;
+  const pe = b.perceivedEnemy(c);
+  if (pe && pe.visible && dist(c.x, c.y, pe.x, pe.y) < 8) return null;
+  const healKinds = ['drink', 'onigiri', 'bandage', 'first_aid'];
+  if (c.held && healKinds.includes(c.held.kind)) return { interpretation: '（CPU・ローカル）回復する', speech: null, steps: [{ action: 'use_item', targetType: 'self' }] };
+  const it = b.world.items.filter(i => healKinds.includes(i.kind) && (i.floor ?? 0) === c.floor && dist(c.x, c.y, i.x, i.y) < 15)
+    .sort((p, q) => dist(c.x, c.y, p.x, p.y) - dist(c.x, c.y, q.x, q.y))[0];
+  if (it) return { interpretation: `（CPU・ローカル）${it.name}で回復する`, speech: null, steps: [{ action: 'pickup', targetType: 'object', targetId: it.id, mode: 'run' }, { action: 'use_item', targetType: 'self' }] };
+  const v = b.world.objects.filter(o => o.kind === 'vending' && (o.stock ?? 3) > 0 && distToRect(c.x, c.y, o) < 15).sort((p, q) => distToRect(c.x, c.y, p) - distToRect(c.x, c.y, q))[0];
+  if (v && !c.held) return { interpretation: '（CPU・ローカル）自販機で飲み物を買って回復する', speech: null, steps: [{ action: 'interact', targetType: 'object', targetId: v.id, mode: 'run' }, { action: 'use_item', targetType: 'self' }] };
+  return null;
+}
+
 export function localCpuPlan(b, c) {
+  const healing = healPlan(b, c);
+  if (healing && b.t < RULES.timeLimit - 20) return healing;
   const plan = hurry(b, c, basePlan(b, c));
   if (!c.def.standRange || !plan.steps) return plan;
   const steps = plan.steps;

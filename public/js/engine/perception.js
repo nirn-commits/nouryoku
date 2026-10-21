@@ -67,6 +67,12 @@ export function landmarks(b, c = null) {
     if (o.kind === 'wall' && o.style === 'block') item.height = o.height;
     if (!o.indestructible) item.hp = Math.max(0, Math.round(o.hp));
     if (o.movable) { item.movable = true; if (o.kg) item.kg = o.kg; }
+    // interact で使える物
+    if (o.kind === 'vending') item.interact = `缶ジュースを買える（残り${o.stock ?? 3}本）`;
+    if (o.kind === 'fountain') item.interact = '水を飲んで10回復';
+    if (o.kind === 'generator') item.interact = b.world.zones.some(z => z.kind === 'hum' && z.obj === o.id) ? '動いている（止められる）' : '動かすと半径12mの小さな音をかき消す';
+    if (o.kind === 'trashcan') item.interact = '陰に深く隠れられる';
+    if (o.buzzer) item.interact = '防犯ブザーを鳴らせる';
     out.push(item);
   }
   return out;
@@ -106,6 +112,9 @@ export function rulesSummary() {
       items: '戦場に落ちている物（items_seen）は pickup で拾って持てる（1つまで）。持った物の方が強ければ melee はそれで殴る。throw は持った物を投げる（初めは誰も何も持っていない）',
       point_floor: 'point を2階の地点にしたい時は floor=1 を付ける',
       close_combat: '近接の読み合い：殴り(melee)は掴み(grab)の構えを潰す／掴みはガード・受け流しを崩す／受け流し(counter)は正面からの殴りを打ち返す。フェイント(feint)で相手の構えや回避を空振りさせられる。体当たり(tackle)は突き飛ばして転倒させる',
+      recovery: '回復：缶ジュース・おにぎり・包帯・救急箱を拾って use_item（使っている間に殴られると中断）。自動販売機・水飲み場は interact で使える',
+      interactables: 'interact で使える物：自動販売機（缶ジュース）・水飲み場（10回復）・発電機（周りの小さな音をかき消す）・ゴミ箱（深く隠れる）・レジカウンター（防犯ブザー）',
+      linger: `同じ建物・同じ場所（半径5m）に${RULES.lingerTime}秒とどまると、住人や通行人に気づかれて騒がれ、居場所が敵に知られる`,
       stealth: '潜む(hide)と6mより遠くから見つからない（動くと解ける）。物音を立てる(decoy)で離れた所に音を出して誘える。煙幕（消火器の use_item）は視線を遮る',
     },
   };
@@ -207,7 +216,7 @@ export function buildObservation(b, c) {
     items_seen: b.world.items
       .filter(i => dist(c.x, c.y, i.x, i.y) < 25 && b.canSee(c, i.x, i.y, (i.floor ?? 0) * 3 + 0.3))
       .slice(0, 10)
-      .map(i => ({ id: i.id, name: i.name, at: [r1(i.x), r1(i.y)], ...(i.floor ? { floor: i.floor + 1 } : {}), melee_for_me: meleeWith(c, i.kind), my_fist: c.def.power, throw: ITEM_KINDS[i.kind].throw })),
+      .map(i => ({ id: i.id, name: i.name, at: [r1(i.x), r1(i.y)], ...(i.floor ? { floor: i.floor + 1 } : {}), melee_for_me: meleeWith(c, i.kind), my_fist: c.def.power, throw: ITEM_KINDS[i.kind].throw, ...(ITEM_KINDS[i.kind].heal ? { heal: ITEM_KINDS[i.kind].heal, use_seconds: ITEM_KINDS[i.kind].useTime } : {}) })),
     observed_enemy_abilities: c.memory.observed.slice(),
     recent_events: recent,
     map: { size: [b.world.w, b.world.h], landmarks: landmarks(b, c), note: '細かい物体は近く（約25m以内）のものだけ載っている' },
