@@ -159,10 +159,12 @@ export class Renderer {
 
   resize(battle) {
     const wrap = this.canvas.parentElement;
-    const w = Math.min(wrap.clientWidth, 1100);
-    const fit = w / battle.world.w;
+    // 枠の幅と高さの両方に収まる大きさ（上端の建物の屋根が切れないよう、上に余白をとる）
+    const availW = Math.max(200, wrap.clientWidth);
+    const availH = wrap.clientHeight > 80 ? wrap.clientHeight : Infinity;
+    const fit = Math.min(availW / battle.world.w, availH / (battle.world.h + 3.6 * K));
+    const w = Math.floor(fit * battle.world.w);
     this.viewW = w;
-    // 上端の建物の屋根が切れないよう、上に余白をとる
     this.topPad = 3.6 * K * fit;
     this.viewH = Math.round(fit * battle.world.h + this.topPad);
     this.px = this.zoom === 'near' ? Math.max(fit * 2.2, 30) : fit;
@@ -283,6 +285,7 @@ export class Renderer {
       if ((r.floor ?? 0) !== 0) continue;
       this.drawRubble(r, 0);
     }
+    for (const pl of b.world.piles || []) if (pl.floor === 0) this.drawPile(pl, 0);
     for (const o of b.world.objects) {
       if (o.kind === 'stairs') this.drawStairs(o, 0);
       if (o.kind === 'hole') this.box(o.x, o.y, o.w, o.h, 0, 0.02, '#17110c', '#17110c');
@@ -364,6 +367,15 @@ export class Renderer {
         ctx.setLineDash([2, 4]);
         ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
         ctx.setLineDash([]);
+      } else if (z.kind === 'powder_trap' && (debug || z.team === me.team)) {
+        // 内側を粉にした床：仕込んだ側にだけ見える
+        ctx.strokeStyle = 'rgba(242,138,178,0.75)';
+        ctx.setLineDash([3, 3]);
+        ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = 'rgba(242,138,178,0.12)';
+        ctx.fill();
       } else if (z.kind === 'hum') {
         // 動いている発電機：うなりの届く範囲
         const ph = (b.t * 1.2) % 1;
@@ -681,6 +693,7 @@ export class Renderer {
       ctx.fillRect(bd.x * P, this.sy(bd.y, FLOOR_H), bd.w * P, bd.h * P);
       if (bd.stairs) this.drawStairs(bd.stairs, FLOOR_H);
       for (const r of b.world.rubble) if ((r.floor ?? 0) === 1 && pointInRect(r.x + r.w / 2, r.y + r.h / 2, bd)) this.drawRubble(r, FLOOR_H);
+      for (const pl of b.world.piles || []) if (pl.floor === 1 && pointInRect(pl.x + pl.w / 2, pl.y + pl.h / 2, bd)) this.drawPile(pl, FLOOR_H);
       for (const it of b.world.items) if ((it.floor ?? 0) === 1 && pointInRect(it.x, it.y, bd)) this.drawItem(it, FLOOR_H);
     }
     draw(current, f * FLOOR_H + 1.1);
@@ -831,6 +844,20 @@ export class Renderer {
     for (const a of b.world.areas) {
       if (a.floor || /road|crossing|gate/.test(a.id)) continue;
       ctx.fillText(a.name, (a.x + 0.6) * P, (a.y + a.h - 0.6) * P);
+    }
+  }
+
+  // 粉の山（プリティ・ヴェイカント）：素材の色。散った山は薄く広がる
+  drawPile(p, z) {
+    const ctx = this.ctx, P = this.px;
+    const col = { 'ガラス粉': '205,232,240', '鉄粉': '90,92,98', '鉄粉と木粉': '120,105,90', '木粉': '196,160,110', '樹脂の粉': '230,140,80' }[p.material] || '214,208,196';
+    const cx = p.x + p.w / 2, cy = p.y + p.h / 2;
+    const k = p.scattered ? 1.3 : 0.75;
+    ctx.fillStyle = `rgba(${col},${p.scattered ? 0.25 : 0.7})`;
+    ctx.beginPath(); ctx.ellipse(cx * P, this.sy(cy, z), (p.w / 2) * k * P, (p.h / 2) * k * P * 0.8, 0, 0, Math.PI * 2); ctx.fill();
+    if (!p.scattered) {
+      ctx.fillStyle = `rgba(${col},0.95)`;
+      ctx.beginPath(); ctx.ellipse(cx * P, this.sy(cy, z) - P * 0.05, (p.w / 2) * 0.35 * P, (p.h / 2) * 0.3 * P, 0, 0, Math.PI * 2); ctx.fill();
     }
   }
 

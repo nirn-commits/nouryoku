@@ -758,6 +758,119 @@ export class Battle {
     markNavDirty(w);
   }
 
+  // ---------- プリティ・ヴェイカント：粉にする・元に戻す ----------
+
+  // 物の素材（粉の名前）
+  powderMaterial(o) {
+    if (o.kind === 'window') return 'ガラス粉';
+    if (o.kind === 'wall') return o.style === 'panel' ? '鉄粉' : '石粉';
+    if (['vending', 'drum', 'trashcan', 'steel'].includes(o.kind)) return '鉄粉';
+    if (o.kind === 'cone') return '樹脂の粉';
+    if (o.kind === 'shelf') return '鉄粉と木粉';
+    return '木粉';
+  }
+
+  canPowder(o) {
+    if (!o || !this.world.objects.includes(o)) return false;
+    if (o.kind === 'window') return !o.broken;
+    if (o.kind === 'wall') return !String(o.id).startsWith('outer_');
+    return !o.indestructible && !['stairs', 'bush', 'hole'].includes(o.kind);
+  }
+
+  addPile(rect, floor, material, obj, by) {
+    const w = this.world;
+    if (!w.piles) w.piles = [];
+    const pile = { id: `pile_${w.piles.length + 1}`, x: rect.x, y: rect.y, w: rect.w, h: rect.h, floor, material, obj, by: by ? by.id : null, t: this.t, scattered: false };
+    w.piles.push(pile);
+    return pile;
+  }
+
+  // 物を粉にする。壁は触れた所（near）に約1mの穴を開ける。粉の山を返す
+  powderObject(o, by, near) {
+    const w = this.world;
+    const center = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
+    const material = this.powderMaterial(o);
+    let pile;
+    if (o.kind === 'window') {
+      o.broken = true;
+      o.blocksMove = false;
+      o.indestructible = true;
+      pile = this.addPile({ x: o.x - 0.3, y: o.y - 0.3, w: o.w + 0.6, h: o.h + 0.6 }, o.floor, material, { glassOf: o.id }, by);
+      this.emit({ text: `${o.name} のガラスが、さらさらとガラス粉になって崩れ落ちた`, kind: 'env', pos: center, sound: 4, soundKind: 'powder', actor: by });
+    } else if (o.kind === 'wall' && Math.max(o.w, o.h) > 1.6) {
+      // 長い壁は一部だけ：触れた所を中心に約1.1m
+      const horiz = o.w >= o.h;
+      const len = horiz ? o.w : o.h, start = horiz ? o.x : o.y;
+      const at = near ? (horiz ? near.x : near.y) : start + len / 2;
+      const a = clamp(at - 0.55, start, start + len - 1.1), b2 = a + 1.1;
+      const slice = horiz ? { x: a, y: o.y, w: 1.1, h: o.h } : { x: o.x, y: a, w: o.w, h: 1.1 };
+      w.objects = w.objects.filter(x => x !== o);
+      const parts = [[start, a], [b2, start + len]].filter(([p0, p1]) => p1 - p0 > 0.15);
+      parts.forEach(([p0, p1], i) => {
+        w.objects.push({ ...o, id: `${o.id}_${i ? 'b' : 'a'}`, ...(horiz ? { x: p0, w: p1 - p0 } : { y: p0, h: p1 - p0 }) });
+      });
+      const snap = { ...o, id: `${o.id}_patch`, ...slice };
+      pile = this.addPile({ x: slice.x - 0.4, y: slice.y - 0.4, w: slice.w + 0.8, h: slice.h + 0.8 }, o.floor, material, snap, by);
+      this.emit({ text: `${o.name} の一部がさらさらと${material}になって崩れ、約1mの穴が開いた`, kind: 'env', pos: { x: slice.x + slice.w / 2, y: slice.y + slice.h / 2, floor: o.floor }, sound: 5, soundKind: 'powder', actor: by });
+    } else {
+      w.objects = w.objects.filter(x => x !== o);
+      pile = this.addPile({ x: o.x - 0.2, y: o.y - 0.2, w: o.w + 0.4, h: o.h + 0.4 }, o.floor, material, { ...o }, by);
+      this.emit({ text: `${o.name} が、さらさらと${material}の山になって崩れた`, kind: 'env', pos: center, sound: 5, soundKind: 'powder', actor: by });
+    }
+    this.puff('dust', { x: pile.x + pile.w / 2, y: pile.y + pile.h / 2, floor: pile.floor });
+    markNavDirty(w);
+    return pile;
+  }
+
+  // 粉の山を集めて元の形に戻す（中は空洞でもろい）
+  restorePile(pile, by) {
+    const w = this.world;
+    const snap = pile.obj;
+    if (!snap) return '形のない粉（床など）は戻せない';
+    if (pile.scattered) return '粉が散っていて、8割も集められない';
+    if (snap.glassOf) {
+      const o = w.objects.find(x => x.id === snap.glassOf);
+      if (!o) return '窓枠ごと無くなっている';
+      o.broken = false;
+      o.blocksMove = !o.open;
+      o.indestructible = false;
+      o.hp = 2;
+      o.restored = true;
+    } else {
+      if (this.chars.some(c => c.alive && c.floor === snap.floor && circleRectPush(c.x, c.y, c.r, snap))) return '戻す場所に人が立っている';
+      w.objects.push({ ...snap, hp: Math.max(3, Math.round((snap.hp ?? 10) * 0.3)), restored: true, vx: 0, vy: 0 });
+    }
+    w.piles = w.piles.filter(x => x !== pile);
+    markNavDirty(w);
+    const name = snap.glassOf ? (w.objects.find(x => x.id === snap.glassOf) || {}).name : snap.name;
+    this.emit({ text: `${by ? by.name : '誰か'} が${pile.material}を集め、${name}を元の形に戻した`, obsText: `散らばっていた粉が寄り集まり、${name}が元どおりの形になった`, kind: 'env', actor: by, pos: { x: pile.x + pile.w / 2, y: pile.y + pile.h / 2, floor: pile.floor }, sound: 4, soundKind: 'powder' });
+    return null;
+  }
+
+  // 粉の山を走って踏むと散る／仕込まれた床を踏むと抜ける
+  updatePowderStep(c, running) {
+    const w = this.world;
+    if (w.piles) {
+      for (const p of w.piles) {
+        if (!p.scattered && running && p.floor === c.floor && pointInRect(c.x, c.y, p)) {
+          p.scattered = true;
+          this.emit({ text: `${c.name} が${p.material}の山を踏み散らした`, kind: 'env', actor: c, pos: c });
+        }
+      }
+    }
+    const tz = this.world.zones.find(z => z.kind === 'powder_trap' && z.team !== c.team && (z.floor ?? 0) === c.floor && dist(z.x, z.y, c.x, c.y) <= z.r);
+    if (tz && !(c.status.proneUntil > this.t) && !this.isAirborne(c)) {
+      w.zones = w.zones.filter(z => z !== tz);
+      const owner = this.chars.find(x => x.id === tz.owner) || null;
+      c.status.proneUntil = this.t + 1.6;
+      c.vx *= 0.2; c.vy *= 0.2;
+      this.puff('dust', { x: c.x, y: c.y, floor: c.floor });
+      this.emit({ text: `${c.name} の足元の床がさらさらと抜け、足を取られて倒れた！`, kind: 'combat', affected: c, pos: c, sound: 6, soundKind: 'fall', hint: ABILITIES.vacant.observedHint });
+      interruptStep(this, c, '足元の床が粉になって抜けた', true);
+      this.damage(c, 5, { source: owner, kind: 'ability', label: '崩れた床' });
+    }
+  }
+
   // 飛来物は高さも持つ：手の高さから狙った高さへまっすぐ飛ぶ（2階から下へ投げ下ろすこともできる）
   // 手に持った物を投げる（item は投げた物。落ちた所に残る／割れ物は割れる）
   spawnThrown(owner, item, x, y, tx, ty, { speed = RULES.throwSpeed, damage = itemDef(item).throw, maxRange = RULES.throwRange, tz = null } = {}) {
@@ -964,6 +1077,8 @@ export class Battle {
         interruptStep(this, c, '足を取られて転んだ', true);
       }
     }
+
+    if ((this.world.piles && this.world.piles.length) || this.world.zones.length) this.updatePowderStep(c, speed > c.def.walk + 0.3);
 
     // 足音
     const moved = dist(ox, oy, c.x, c.y);

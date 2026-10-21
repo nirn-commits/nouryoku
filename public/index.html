@@ -69,7 +69,10 @@
           <div id="screen-flash" class="screen-flash"></div>
           <div id="tooltip" class="tooltip hidden"></div>
         </div>
-        <div id="phase-label" class="phase"></div>
+        <div class="status-row">
+          <div id="phase-label" class="phase"></div>
+          <span id="time-label" class="time"></span>
+        </div>
         <div class="command">
           <textarea id="cmd" rows="2" placeholder="例：左の家に駆け込み、窓から敵の位置を確認する「どこに隠れた？」"></textarea>
           <div class="cmd-side">
@@ -78,9 +81,9 @@
           </div>
         </div>
         <div class="controls">
-          <button id="pause-btn">一時停止</button>
-          <button id="zoom-btn" title="Z キーでも切り替え">拡大表示</button>
-          <label>再生速度
+          <button id="pause-btn" class="small">一時停止</button>
+          <button id="zoom-btn" class="small" title="Z キーでも切り替え">拡大表示</button>
+          <label>速度
             <select id="speed">
               <option value="0.25">0.25×</option>
               <option value="0.5">0.5×</option>
@@ -89,32 +92,36 @@
               <option value="4">4×</option>
             </select>
           </label>
-          <span id="time-label" class="time"></span>
           <button id="sfx-btn" class="small">効果音：ON</button>
           <button id="cine-btn" class="small">寄り・スロー：ON</button>
           <button id="quit-btn" class="small">タイトルへ</button>
         </div>
       </div>
       <aside class="side">
-        <div id="self-card" class="card"></div>
-        <details id="stand-tips" class="card stand-tips" open>
-          <summary>スタンドでできること</summary>
-          <div id="stand-tips-body"></div>
-        </details>
-        <div id="ally-card" class="card ally hidden"></div>
-        <div id="enemy-card" class="card enemy"></div>
-        <div class="card">
-          <h3>現在の行動計画 <span id="plan-source" class="tag"></span></h3>
-          <div id="plan-view" class="plan-view"></div>
+        <div class="side-status">
+          <div id="self-card" class="card"></div>
+          <div id="ally-card" class="card ally hidden"></div>
+          <div id="enemy-card" class="card enemy"></div>
         </div>
-        <div class="card log-card">
-          <h3>戦闘ログ</h3>
-          <div id="log" class="log"></div>
+        <div class="tabs" role="tablist">
+          <button class="tab on" data-tab="log">戦闘ログ</button>
+          <button class="tab" data-tab="plan">行動計画 <span id="plan-source" class="tag"></span></button>
+          <button class="tab" data-tab="tips">できること</button>
         </div>
-        <details class="card abilities-ref">
-          <summary>自分の能力・行動の一覧</summary>
-          <div id="ability-ref"></div>
-        </details>
+        <div class="tab-body">
+          <div class="pane on" data-pane="log"><div id="log" class="log"></div></div>
+          <div class="pane" data-pane="plan"><div id="plan-view" class="plan-view"></div></div>
+          <div class="pane" data-pane="tips">
+            <div id="stand-tips" class="stand-tips">
+              <div class="pane-title" id="stand-tips-title"></div>
+              <div id="stand-tips-body"></div>
+            </div>
+            <details class="abilities-ref">
+              <summary>自分の能力・行動の一覧（詳細）</summary>
+              <div id="ability-ref"></div>
+            </details>
+          </div>
+        </div>
       </aside>
     </div>
   </section>

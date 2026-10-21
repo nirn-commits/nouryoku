@@ -414,6 +414,110 @@ IMPL.hotel = (b, c, effect, res, ab) => {
   return { ok: true };
 };
 
+// プリティ・ヴェイカント：スタンドの手のひらで触れた物を粉に変える／粉を集めて元に戻す
+IMPL.vacant = (b, c, effect, res, ab, step) => {
+  const R = ab.range;
+  // スタンドを触れる場所まで伸ばす（壁はすり抜ける）
+  const reach = (x, y, floor = c.floor) => {
+    const s = b.standOut(c);
+    const d = dist(c.x, c.y, x, y);
+    const k = d > R ? R / d : 1;
+    s.x = c.x + (x - c.x) * k; s.y = c.y + (y - c.y) * k; s.floor = floor === c.floor ? floor : c.floor;
+    s.goal = { x: s.x, y: s.y };
+    s.facing = angleTo(c.x, c.y, x, y);
+  };
+  const talking = e => !!(c.speech && c.speech.heardBy && c.speech.heardBy.has(e.id));
+
+  if (effect === 'powder_floor' || effect === 'powder_weapon') {
+    const t = enemyTarget(b, c, res, R);
+    if (t.err) return fail(t.err);
+    const e = res.char || t.e;
+    if (b.isAirborne(e)) return fail('相手が宙にいて、足場も得物も触れない');
+    reach(e.x, e.y, e.floor);
+    if (effect === 'powder_weapon') {
+      if (e.held) {
+        const name = e.held.name;
+        e.held = null;
+        b.puff('dust', e);
+        b.emit({ text: `『${ab.name}』— ${e.name}の${name}が、手の中でさらさらと粉になって崩れた！`, obsText: `${e.name} の手の${name}が、触れてもいないのに粉になって崩れた！`, kind: 'ability', actor: c, affected: e, pos: e, sound: ab.soundRadius, soundKind: 'powder', hint: ab.observedHint });
+        return { ok: true };
+      }
+      if ((e.balls ?? 0) > 0) {
+        const n = Math.min(8, e.balls);
+        e.balls -= n;
+        b.emit({ text: `『${ab.name}』— ${e.name}のポケットのパチンコ玉${n}個を鉄粉にした（残り${e.balls}個）`, obsText: `${e.name} のポケットから、さらさらと鉄粉がこぼれた`, kind: 'ability', actor: c, affected: e, pos: e, sound: 3, soundKind: 'powder', hint: ab.observedHint });
+        return { ok: true };
+      }
+      return fail(`${e.name}は何も持っていない`);
+    }
+    // 足場を崩す：2階なら床が抜けて落ちる
+    const distracted = talking(e);
+    interruptStep(b, e, '足元の床が粉になって崩れた', true);
+    e.status.guardUntil = 0;
+    e.status.counterUntil = 0;
+    b.addPile({ x: e.x - 0.6, y: e.y - 0.6, w: 1.2, h: 1.2 }, e.floor, e.floor === 1 ? '床材の粉' : (buildingAt(b.world, e.x, e.y) ? '床材の粉' : '石粉'), null, c);
+    b.puff('dust', e);
+    const fell = e.floor === 1;
+    b.emit({
+      text: `『${ab.name}』— ${e.name}の足元の床を粉にした！${fell ? ' 床が抜けて1階へ落ちる！' : ''}${distracted ? '（話に気を取られていた）' : ''}`,
+      obsText: `${e.name} の足元の床が、さらさらと粉になって崩れた！`,
+      kind: 'ability', actor: c, affected: e, pos: e, sound: ab.soundRadius, soundKind: 'powder', hint: ab.observedHint,
+    });
+    b.damage(e, 4, { source: c, kind: 'ability', label: '崩れた足場' });
+    if (e.alive) {
+      e.vx = e.vy = 0; e.kbx = e.kby = 0;
+      if (fell) b.startDrop(e);
+      e.status.proneUntil = Math.max(e.status.proneUntil, b.t + 1.4 + (distracted ? 0.6 : 0));
+    }
+    return { ok: true };
+  }
+
+  if (effect === 'powder_trap') {
+    if (res.error) return fail(res.error);
+    const x = res.self ? c.x : res.x, y = res.self ? c.y : res.y;
+    const floor = res.f ?? c.floor;
+    if (dist(c.x, c.y, x, y) > R + 0.01) return fail(`仕込む場所が射程外（${dist(c.x, c.y, x, y).toFixed(1)}m > ${R}m）`);
+    reach(x, y, floor);
+    const mine = b.world.zones.filter(z => z.kind === 'powder_trap' && z.owner === c.id);
+    if (mine.length >= 2) b.world.zones = b.world.zones.filter(z => z !== mine[0]);
+    b.addZone({ kind: 'powder_trap', x, y, r: 1.2, floor, until: b.t + 30, owner: c.id, team: c.team });
+    b.emit({ text: `『${ab.name}』— (${x.toFixed(1)}, ${y.toFixed(1)})の床の内側だけを粉にして、表面を残しておいた（踏めば抜ける・30秒）`, obsText: `${c.name} のスタンドが床に手のひらを当てた`, kind: 'ability', actor: c, pos: { x, y, floor }, sound: 2, soundKind: 'powder', hint: ab.observedHint });
+    return { ok: true };
+  }
+
+  if (effect === 'powder_object') {
+    if (res.error) return fail(res.error);
+    const o = res.obj;
+    if (!o) return fail('粉にできる物体を指定する必要がある');
+    if (!b.canPowder(o)) return fail(`${o.name}は粉にできない（外壁・車・木・柱や、既に割れた窓は不可）`);
+    if (o.floor !== c.floor && !(o.floor === 1 && c.floor === 0 && buildingAt(b.world, c.x, c.y))) return fail(`${o.name}は別の階にある`);
+    const d = distToRect(c.x, c.y, o);
+    if (d > R) return fail(`${o.name}に手が届かない（${d.toFixed(1)}m > ${R}m）`);
+    const n = nearestPointOnRect(c.x, c.y, o);
+    reach(n.x, n.y, o.floor);
+    b.powderObject(o, c, n);
+    b.emit({ text: `『${ab.name}』— ${o.name}に手のひらを当てた`, obsText: `${c.name} のスタンドが${o.name}に手のひらを当てた`, kind: 'ability', actor: c, pos: n, sound: 0, hint: ab.observedHint });
+    return { ok: true };
+  }
+
+  if (effect === 'restore') {
+    const piles = (b.world.piles || []).filter(p => p.obj && !p.scattered);
+    const at = res.error || res.self ? c : (res.center || res);
+    const near = res.pile ? { p: res.pile } : piles
+      .map(p => ({ p, d: distToRect(at.x, at.y, p), dc: distToRect(c.x, c.y, p) }))
+      .filter(q => q.dc <= R)
+      .sort((p, q) => p.d - q.d)[0];
+    if (!near) return fail('5m以内に、戻せる粉の山がない');
+    if (distToRect(c.x, c.y, near.p) > R) return fail(`粉の山に手が届かない（${distToRect(c.x, c.y, near.p).toFixed(1)}m > ${R}m）`);
+    const cc = rectCenter(near.p);
+    reach(cc.x, cc.y, near.p.floor);
+    const err = b.restorePile(near.p, c);
+    if (err) return fail(err);
+    return { ok: true };
+  }
+  return fail('不明な効果');
+};
+
 export function applyAbility(b, c, step, res) {
   const ab = ABILITIES[step.ability];
   return IMPL[step.ability](b, c, step.effect, res, ab, step);

@@ -36,6 +36,8 @@ function targetName(b, t) {
     if (door) return door.name;
     const area = b.world.areas.find(a => a.id === t.id);
     if (area) return area.name;
+    const pile = pileById(b, t.id);
+    if (pile) return `${pile.material}の山`;
     const item = b.world.items.find(i => i.id === t.id);
     return item ? item.name : t.id;
   }
@@ -95,7 +97,14 @@ function resolveObjectId(b, id) {
   if (b.world.buildings.some(x => x.doors.some(d => d.id === id))) return id;
   if (b.world.areas.some(a => a.id === id)) return id;
   if (b.world.items.some(i => i.id === id)) return id;
+  const pile = pileById(b, id);
+  if (pile) return pile.id;
   return null;
+}
+
+// 粉の山（プリティ・ヴェイカント）：山の id か、粉になった元の物の id で指せる
+export function pileById(b, id) {
+  return (b.world.piles || []).find(p => p.id === id || (p.obj && (p.obj.id === id || p.obj.glassOf === id || String(p.obj.id).replace(/_patch$/, '') === id))) || null;
 }
 
 function validateStep(b, c, raw, cursor) {
@@ -148,7 +157,7 @@ function validateStep(b, c, raw, cursor) {
       if (!o.openable) return { error: `${o.name}は開かない（割ることはできる）` };
     }
     if (action === 'jump_down' && (!o || o.kind !== 'window' || o.floor !== 1)) return { error: `飛び降りられるのは2階の窓だけ（${targetName(b, t)}は不可）` };
-    if (action === 'interact' && !(o && (['vending', 'fountain', 'generator', 'trashcan'].includes(o.kind) || o.buzzer))) return { error: `${targetName(b, t)}は操作できない（自動販売機・水飲み場・発電機・ゴミ箱・レジカウンター）` };
+    if (action === 'interact' && !o && pileById(b, id)) { /* 粉の山を手で集めて戻す */ } else if (action === 'interact' && !(o && (['vending', 'fountain', 'generator', 'trashcan'].includes(o.kind) || o.buzzer))) return { error: `${targetName(b, t)}は操作できない（自動販売機・水飲み場・発電機・ゴミ箱・レジカウンター）` };
     if (action === 'vault' && (!o || !o.blocksMove || (o.z1 - o.z0) > 1.6 || o.kind === 'door' || o.kind === 'window')) return { error: `${targetName(b, t)}は乗り越えられない（高さ1.6m以下の物だけ）` };
     if (action === 'ability') {
       if (step.ability === 'perpendicular' && step.effect === 'launch') {
@@ -397,6 +406,11 @@ export function resolveTarget(b, c, t, step = {}) {
       }
       const item = b.world.items.find(i => i.id === t.id);
       if (item) return { x: item.x, y: item.y, f: item.floor ?? 0, item };
+      const pile = pileById(b, t.id);
+      if (pile) {
+        const n = nearestPointOnRect(c.x, c.y, pile);
+        return { x: n.x, y: n.y, f: pile.floor, pile, center: rectCenter(pile) };
+      }
       const area = b.world.areas.find(a => a.id === t.id);
       if (area) {
         // 区域：中心付近の歩ける場所（自分が既に中にいれば今の場所）。「〇〇の2階」は2階
@@ -1168,6 +1182,15 @@ const EXEC = {
   // 操作する：自動販売機・水飲み場・発電機・ゴミ箱・防犯ブザー
   interact: {
     start(b, c, st) {
+      const pile = !b.objectById(st.def.target.id) && pileById(b, st.def.target.id);
+      if (pile) {
+        // 粉の山：誰でも手で集めて元に戻せる（3秒）
+        if (pile.scattered || !pile.obj) return '粉が散っていて戻せない';
+        st.data.obj = { ...pile, kind: 'pile', name: `${pile.material}の山`, pile };
+        st.data.phase = 'approach';
+        st.data.deadline = b.t + 6;
+        return null;
+      }
       const o = b.objectById(st.def.target.id);
       if (!o || !b.world.objects.includes(o)) return '操作する物が無い';
       if (o.kind === 'fountain' && c.cd.fountain) return `水飲み場はまだ使えない（あと${(c.cd.fountain - b.t).toFixed(0)}秒）`;
@@ -1184,8 +1207,8 @@ const EXEC = {
       if (D.phase === 'approach') {
         if (c.floor === o.floor && dist(c.x, c.y, n.x, n.y) <= c.r + 0.5) {
           D.phase = 'use';
-          D.until = b.t + ({ vending: 1.5, fountain: 2, generator: 1, trashcan: 0.6 }[o.kind] ?? 0.8);
-          st.locked = o.kind === 'vending' || o.kind === 'fountain';
+          D.until = b.t + ({ vending: 1.5, fountain: 2, generator: 1, trashcan: 0.6, pile: 3 }[o.kind] ?? 0.8);
+          st.locked = o.kind === 'vending' || o.kind === 'fountain' || o.kind === 'pile';
           return 'running';
         }
         const r = approach(b, c, st, n.x, n.y, c.r + 0.4, st.def.mode === 'run', o.floor);
@@ -1195,6 +1218,10 @@ const EXEC = {
       faceTo(c, n.x, n.y);
       if (b.t < D.until) return 'running';
       const at = { x: o.x + o.w / 2, y: o.y + o.h / 2, floor: o.floor };
+      if (o.kind === 'pile') {
+        const err = b.restorePile(o.pile, c);
+        return err ? { fail: err } : 'done';
+      }
       if (o.kind === 'vending') {
         o.stock = (o.stock ?? 3) - 1;
         const item = makeItem('drink', c.x, c.y, c.floor);

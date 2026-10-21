@@ -29,7 +29,7 @@ export const ATLAS = {
 };
 
 // キャラごとのオーラの色
-export const AURA_OF = { sogo: 'yellow', kito: 'red', nanami: 'green', saginuma: 'purple' };
+export const AURA_OF = { sogo: 'yellow', kito: 'red', nanami: 'green', saginuma: 'purple', saragiin: 'white' };
 
 // ---------- 保存（IndexedDB） ----------
 

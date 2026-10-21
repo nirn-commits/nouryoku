@@ -981,3 +981,50 @@ test('干渉できる物：自販機・水飲み場・発電機・ゴミ箱・�
   runFor(b, 3);
   assert.ok(b.log.some(l => l.text.includes('防犯ブザー')), '防犯ブザーが鳴らない');
 });
+
+test('プリティ・ヴェイカント：足場を崩す・得物を崩す・壁に穴を開けて元に戻す・床を仕込む', () => {
+  const run = (b, s) => { for (let i = 0; i < s * 30; i++) b.step(); };
+  // 足場を崩す
+  let b = duel('saragiin', 'kito');
+  b.cpu.x = 26;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'vacant', effect: 'powder_floor', targetType: 'enemy' }]);
+  const hp = b.cpu.hp;
+  run(b, 1);
+  assert.ok(b.cpu.hp < hp, '足場を崩してもダメージがない');
+  assert.ok(b.cpu.status.proneUntil > b.t, '足場を崩しても倒れない');
+  assert.ok(b.world.piles.length >= 1);
+  // 得物を崩す
+  b = duel('saragiin', 'kito');
+  b.cpu.held = { id: 'x', kind: 'pipe', name: '鉄パイプ' };
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'vacant', effect: 'powder_weapon', targetType: 'enemy' }]);
+  run(b, 1);
+  assert.equal(b.cpu.held, null, '得物が崩れない');
+  // 壁に穴：一部だけ消え、元に戻せる
+  b = duel('saragiin', 'kito');
+  const wall = b.world.objects.find(o => o.kind === 'wall' && !o.id.startsWith('outer_') && Math.max(o.w, o.h) > 2);
+  b.player.x = wall.x + wall.w / 2 + (wall.w > wall.h ? 0 : 1.5); b.player.y = wall.y + wall.h / 2 + (wall.w > wall.h ? 1.5 : 0); b.player.floor = wall.floor;
+  b.cpu.x = 5; b.cpu.y = 5;
+  const n0 = b.world.objects.length;
+  plan(b, b.player, [{ action: 'ability', ability: 'vacant', effect: 'powder_object', targetType: 'object', targetId: wall.id }]);
+  run(b, 1);
+  assert.ok(!b.world.objects.includes(wall), '壁が崩れない');
+  assert.ok(b.world.objects.filter(o => o.id.startsWith(wall.id)).length >= 1, '壁の残りの部分が無い');
+  const pile = b.world.piles.at(-1);
+  run(b, 2.5);
+  plan(b, b.player, [{ action: 'ability', ability: 'vacant', effect: 'restore', targetType: 'self' }]);
+  run(b, 1);
+  assert.ok(b.world.objects.some(o => o.id === `${wall.id}_patch` && o.restored), '穴が元に戻らない');
+  assert.ok(!b.world.piles.includes(pile));
+  assert.ok(b.world.objects.length >= n0);
+  // 床を仕込む：相手が踏むと抜ける
+  b = duel('saragiin', 'kito');
+  b.cpu.x = 30;
+  plan(b, b.player, [{ action: 'ability', ability: 'vacant', effect: 'powder_trap', targetType: 'point', x: 25, y: 9 }]);
+  run(b, 1);
+  assert.ok(b.world.zones.some(z => z.kind === 'powder_trap'));
+  plan(b, b.cpu, [{ action: 'move', targetType: 'point', x: 20, y: 9, mode: 'walk' }]);
+  run(b, 3);
+  assert.ok(!b.world.zones.some(z => z.kind === 'powder_trap'), '仕込んだ床を踏んでも抜けない');
+});

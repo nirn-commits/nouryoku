@@ -259,6 +259,42 @@ function saginumaPlan(b, c, pe, say) {
   return null;
 }
 
+// 蛇穴院 麗音：喋って気を引きながら、5m前後の距離でスタンドに足場・得物を崩させ、倒れた所を殴る
+function saragiinPlan(b, c, pe, say) {
+  if (!pe) return null;
+  const steps = [];
+  const e = pe.char || b.enemyOf(c);
+  const d = dist(c.x, c.y, pe.x, pe.y);
+  const traps = b.world.zones.filter(z => z.kind === 'powder_trap' && z.owner === c.id).length;
+  // 殴り合いの間合いに詰められた：足元に床を仕込んで下がる（追って踏めば抜ける）
+  if (pe.visible && d < 2.2 && e.def.power >= 12 && traps < 2 && b.rng() < 0.6) {
+    steps.push({ action: 'ability', ability: 'vacant', effect: 'powder_trap', targetType: 'self' });
+    steps.push({ action: 'move', mode: 'run', targetType: 'direction', direction: 'away_from_enemy', distance: 4 });
+    steps.push({ action: 'ability', ability: 'vacant', effect: 'powder_floor', targetType: 'enemy' });
+    return { interpretation: '（CPU・ローカル）足元に床を仕込んで下がる', speech: say(0.5), steps };
+  }
+  if (pe.visible && d <= 9) {
+    if (d > 4.5) steps.push({ action: 'chase', targetType: 'enemy', mode: d > 7 ? 'run' : 'walk' });
+    const armed = e.held && meleeWith(e, e.held.kind) > e.def.power;
+    if ((armed && b.rng() < 0.7) || ((e.balls ?? 0) >= 10 && b.rng() < 0.35)) {
+      steps.push({ action: 'ability', ability: 'vacant', effect: 'powder_weapon', targetType: 'enemy' });
+    }
+    steps.push({ action: 'ability', ability: 'vacant', effect: 'powder_floor', targetType: 'enemy' });
+    steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
+    steps.push({ action: 'melee', targetType: 'enemy' });
+    steps.push({ action: 'melee', targetType: 'enemy' });
+    // 話しかけて気を引いている間に崩す
+    return { interpretation: '（CPU・ローカル）話しかけて気を引き、足場を崩して殴る', speech: say(0.8), steps };
+  }
+  // 見失っている：通り道に床を仕込んでおき、物陰で待つ
+  if (!pe.visible && traps < 2 && b.rng() < 0.3) {
+    steps.push({ action: 'ability', ability: 'vacant', effect: 'powder_trap', targetType: 'direction', direction: 'toward_enemy', distance: 4 });
+    steps.push({ action: 'move', mode: 'walk', targetType: 'direction', direction: 'cover' });
+    return { interpretation: '（CPU・ローカル）通り道の床を仕込んで待つ', speech: null, steps };
+  }
+  return null;
+}
+
 // 2対2：知っている敵の中から狙いを決める（近さと弱り具合。味方が狙っている敵にやや寄せる）
 function chooseFocus(b, c) {
   const foes = b.enemiesOf(c).filter(e => e.alive);
@@ -360,6 +396,10 @@ function basePlan(b, c) {
   if (c.def.abilities.includes('seventh')) {
     const sp = saginumaPlan(b, c, pe, line);
     if (sp) return sp;
+  }
+  if (c.def.abilities.includes('vacant')) {
+    const vp = saragiinPlan(b, c, pe, line);
+    if (vp) return vp;
   }
   if (c.def.abilities.includes('hotel')) {
     const kp = kitoPlan(b, c, pe, line);

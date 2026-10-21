@@ -40,6 +40,7 @@ function nearestBy(list, x, y) {
 function splitClauses(text) {
   return text
     .replace(/(してから|それから|そのあと|その後|その隙に|そして|次に|ながら|つつ)/g, '、')
+    .replace(/(て|で)から/g, '$1、')
     // 「〜まで走って投げる」のように移動の後に別の行動が続く場合は分ける
     .replace(/((?:消し|奪っ|走っ|ダッシュし|歩い|駆け寄っ|近づい|追いかけ|追っ|追尾し|尾行し|追跡し|迫っ|移動し|向かっ|行っ|戻っ|下がっ|離れ|回り込ん|詰め|入っ|出)(?:て|で))(?![き来いお])(?=.)/g, '$1、')
     .split(/[、。,.\n!！?？]+/)
@@ -305,6 +306,25 @@ function parseClause(b, c, clause, has, ctx = {}) {
   if (/煙幕/.test(clause)) return [{ action: 'use_item', targetType: mentionsEnemy ? 'enemy' : 'none' }];
   if (/傘/.test(clause) && /開|広げ|盾|防/.test(clause)) return [{ action: 'use_item', targetType: 'none' }];
 
+  // --- プリティ・ヴェイカント：粉にする・元に戻す ---
+  if (has.vacant) {
+    if (/元に戻|元通り|復元|穴を塞|塞ぎ直|粉を集め/.test(clause)) {
+      const pile = obj ? null : (b.world.piles || []).filter(p => p.obj && !p.scattered).sort((p, q) => distToRect(c.x, c.y, p) - distToRect(c.x, c.y, q))[0];
+      if (obj) return [{ action: 'ability', ability: 'vacant', effect: 'restore', targetType: 'object', targetId: obj.id }];
+      if (pile) return [{ action: 'ability', ability: 'vacant', effect: 'restore', targetType: 'object', targetId: pile.id }];
+      return [{ action: 'ability', ability: 'vacant', effect: 'restore', targetType: 'self' }];
+    }
+    if (/(武器|得物|鉄パイプ|包丁|ナイフ|バット|瓶|持って(いる|る)物|持ち物|パチンコ玉|玉).{0,10}(粉|崩)/.test(clause)) return [{ action: 'ability', ability: 'vacant', effect: 'powder_weapon', targetType: 'enemy' }];
+    if (/仕込|罠|踏んだら|踏めば|落とし穴/.test(clause)) {
+      const oc = obj && Number.isFinite(centerOf(obj).x) ? centerOf(obj) : null;
+      const where = pt ? toTarget(pt) : oc ? { targetType: 'point', x: oc.x, y: oc.y } : dir && dir !== 'cover' ? { targetType: 'direction', direction: dir, distance: 3 } : { targetType: 'self' };
+      return [{ action: 'ability', ability: 'vacant', effect: 'powder_trap', ...where }];
+    }
+    if (/(足元|足場|床).{0,10}(粉|崩|抜)|床を抜/.test(clause)) return [{ action: 'ability', ability: 'vacant', effect: 'powder_floor', targetType: 'enemy' }];
+    if (obj && /粉に|粉々|粉にし|穴を(開|あ)け|穴を作|崩す|崩し|崩れさせ/.test(clause)) return [{ action: 'ability', ability: 'vacant', effect: 'powder_object', targetType: 'object', targetId: obj.id }];
+    if (/粉に|粉々|プリティ・ヴェイカント|ヴェイカント/.test(clause) && mentionsEnemy) return [{ action: 'ability', ability: 'vacant', effect: 'powder_floor', targetType: 'enemy' }];
+  }
+
   // --- スタンドの出し入れ・先行 ---
   if (/スタンド/.test(clause) && !/スタンド(で|の拳)(殴|攻撃|叩)/.test(clause)) {
     if (/スタンドを?(戻|引っ込|しま|消)/.test(clause)) return [{ action: 'stand_in', targetType: 'none' }];
@@ -540,7 +560,8 @@ export function localParse(b, c, text) {
     perpendicular: /パーペンディキュラー|直角に弾|(10|１０)\s*(m|ｍ|メートル)(弾|飛)|弾き出/,
     hotel: /ホテル・カリフォルニア|密室|炎で囲/,
     echo: /エコー・ビーチ|足音を置|声を置|轟音を(集|置)|個体を/,
-    seventh: /セブンス・サン|跳弾|パチンコ玉/,
+    seventh: /セブンス・サン|跳弾|パチンコ玉を弾/,
+    vacant: /プリティ・ヴェイカント|粉にする|粉にして|粉々にし|粉を集め/,
   };
   const foreignRes = [];
   for (const [k, re] of Object.entries(foreign)) {
@@ -550,6 +571,8 @@ export function localParse(b, c, text) {
     }
   }
 
+  // 「〜」と話しかけながら：台詞は speech に入っているので、話しかける動作そのものは行動にしない
+  body = body.replace(/と?\s*(話しかけ|声をかけ|喋り|しゃべり|言い)(ながら|て|つつ)/g, '、');
   // 「4体、右に置く」のように体数の後の読点で文が分かれないようにする
   body = body.replace(/(\d+)\s*体\s*[、,，]/g, '$1体');
   // 座標の区切りで文が分かれないようにする

@@ -70,7 +70,7 @@ export function newWorld(w, h, seed) {
   resetObjSeq();
   const world = {
     w, h, seed,
-    objects: [], buildings: [], areas: [], ground: [], zones: [], rubble: [], projectiles: [], items: [], effects: [],
+    objects: [], buildings: [], areas: [], ground: [], zones: [], rubble: [], piles: [], projectiles: [], items: [], effects: [],
     spawns: { player: { x: 2.5, y: h - 3 }, cpu: { x: w - 2.5, y: 3 } },
     navDirty: true, nav: null,
   };

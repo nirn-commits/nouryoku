@@ -91,6 +91,14 @@ const EXAMPLES = {
     '敵から距離を取りつつ、球を撃ち返す',
     'ブロックを拾って投げつける',
   ],
+  saragiin: [
+    '「前世から知ってる気がするんだよね」と話しかけながら、敵の足元の床を粉にする',
+    '敵の持っている鉄パイプを粉にして崩す',
+    '目の前の壁に穴を開けて通り抜ける',
+    '通り道の床を仕込んでから物陰で待つ',
+    '開けた穴を元に戻して塞ぐ',
+    '2階の敵の床を崩して1階へ落とし、倒れた所を殴る',
+  ],
 };
 
 // 戦闘画面に出す「スタンドでできること」（書き方の例つき）
@@ -118,6 +126,13 @@ const STAND_TIPS = {
     ['壁で跳ね返らせて撃つ（跳ねるほど強く、5回以上で貫通）', '3回跳ね返る軌道で物陰の敵を撃つ'],
     ['3発を角度を変えてばらまく', '3発ばらまいて逃げ道をふさぐ'],
   ],
+  saragiin: [
+    ['足場を崩す：5m以内の敵の足元を粉にして転ばせる（2階なら床が抜けて落ちる。話しかけている最中なら長く崩れる）', '話しかけながら敵の足元を崩す'],
+    ['得物を崩す：敵の持っている物（鉄パイプ・包丁など、鷺沼の玉）を粉にする', '敵の鉄パイプを粉にする'],
+    ['粉にする：5m以内の壁・扉・窓・木箱などを粉に（壁は約1mの穴。スタンドは壁をすり抜けて触れる）', '目の前の壁に穴を開ける'],
+    ['床を仕込む：踏むと抜ける床を2か所まで（自分の側にだけ見える）', '足元の床を仕込んで下がる'],
+    ['元に戻す：散っていない粉の山を元の形に（穴を塞ぐ・痕跡を消す。戻した物はもろい）', '開けた穴を元に戻す'],
+  ],
   kito: [
     ['建物の中で、相手も中にいる時に最後の出口を閉めると密室（炎で囲み、誰も出られない）', '家に追い込んで扉を閉める'],
     ['開けられた扉・窓を閉め直す（自分が閉めた出口は戻る）', '開いた窓を閉め直す'],
@@ -134,6 +149,11 @@ const GENERIC_TIPS = [
   ['乗り越える・道具（消火器の煙幕、傘の盾）', '消火器を拾って煙幕を張る'],
 ];
 const STAND_COMMON = [['スタンドを出す・先行させる・戻す（射程の分だけ先へ行かせて、壁もすり抜けて覗く／殴る間合いが伸びる／飛び道具を受け止める。出している間はエネルギーが減る）', 'スタンドを右へ先行させる']];
+
+function showTab(name) {
+  for (const t of document.querySelectorAll('.tabs .tab')) t.classList.toggle('on', t.dataset.tab === name);
+  for (const p of document.querySelectorAll('.tab-body .pane')) p.classList.toggle('on', p.dataset.pane === name);
+}
 
 function standTipsHtml(c) {
   const tips = [...(STAND_TIPS[c.charId] || []), ...(c.def.standRange ? STAND_COMMON : [])];
@@ -339,7 +359,8 @@ function startBattle() {
   state.spectate = state.control === 'watch';
   const b = new Battle({ seed: Date.now() & 0xffffff, playerChar: state.chosen, ...lineup, mapId: state.mapId, spectate: state.spectate });
   document.querySelector('.command').classList.toggle('hidden', state.spectate);
-  $('#stand-tips').classList.toggle('hidden', state.spectate);
+  document.querySelector('.tab[data-tab="tips"]').classList.toggle('hidden', state.spectate);
+  showTab('log');
   state.battle = b;
   state.ended = false;
   state.logSeen = new WeakSet();
@@ -365,7 +386,7 @@ function startBattle() {
   $('#cmd').value = '';
   const ex = $('#examples');
   ex.innerHTML = '<option value="">例文…</option>' + EXAMPLES[state.chosen].map(t => `<option>${t}</option>`).join('');
-  $('#stand-tips').querySelector('summary').textContent = `できること（『${b.player.stand}』と共通の行動）`;
+  $('#stand-tips-title').textContent = `『${b.player.stand}』と共通の行動（例文をクリックで入力欄へ）`;
   $('#stand-tips-body').innerHTML = standTipsHtml(b.player);
   $('#ability-ref').innerHTML = b.player.def.abilities.map(abilityHtml).join('') +
     `<h4>基本行動</h4><ul>${Object.values(ACTIONS).filter(a => a !== ACTIONS.ability).map(a => `<li><b>${a.name}</b>：${a.desc}</li>`).join('')}</ul>
@@ -498,7 +519,7 @@ function renderSide() {
   }).join('') + `<div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>`;
 
   const plan = me.runner.plan;
-  $('#plan-source').textContent = plan ? (plan.source === 'gemini' ? 'Gemini' : 'ローカル解析') : '';
+  $('#plan-source').textContent = plan ? (plan.source === 'gemini' ? 'Gemini' : 'ローカル') : '';
   if (!plan || (!me.runner.step && me.runner.idx >= plan.steps.length && !me.pendingPlan)) {
     $('#plan-view').innerHTML = '<div class="meta">（待機中：新しい指示を入力してください）</div>';
   } else {
@@ -611,9 +632,9 @@ function viewerOf(b) {
 // 音の種類 → 効果音ファイル
 const SE_OF = {
   impact: 'break', crash: 'crash', glass: 'glass', door: 'door', fall: 'fall', swing: 'swing', throw: 'swing',
-  ricochet: 'ricochet', flick: 'flick', alarm: 'alarm', siren: 'siren',
+  ricochet: 'ricochet', flick: 'flick', alarm: 'alarm', siren: 'siren', powder: 'powder',
 };
-const ABILITY_SE = { perpendicular: 'launch', hotel: 'flame', echo: 'stand' };
+const ABILITY_SE = { perpendicular: 'launch', hotel: 'flame', echo: 'stand', vacant: 'powder' };
 
 // 効果音を鳴らす。距離で小さくし、スロー中は低く再生する。素材が無ければ合成音で代用
 function playSe(name, vol = 1, fallback = null) {
@@ -859,6 +880,11 @@ window.addEventListener('DOMContentLoaded', async () => {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); submitCommand(); }
     if (e.key === 'Escape') $('#cmd').blur();
   });
+  // 右の欄のタブ（戦闘ログ／行動計画／できること）
+  document.querySelector('.tabs').addEventListener('click', e => {
+    const t = e.target.closest('.tab');
+    if (t) showTab(t.dataset.tab);
+  });
   // 「スタンドでできること」の例文をクリックすると入力欄に入る
   $('#stand-tips-body').addEventListener('click', e => {
     const ex = e.target.closest('[data-ex]');
@@ -912,5 +938,13 @@ window.addEventListener('DOMContentLoaded', async () => {
     snd.stopAmbience();
   });
   window.addEventListener('resize', () => { if (state.battle) state.renderer.resize(state.battle); });
+  // 枠の大きさが変わったら（画面の回転・右の欄の幅など）フィールドを描き直す大きさに合わせる
+  if (window.ResizeObserver) {
+    let last = '';
+    new ResizeObserver(([e]) => {
+      const k = `${Math.round(e.contentRect.width)}x${Math.round(e.contentRect.height)}`;
+      if (k !== last && state.battle) { last = k; state.renderer.resize(state.battle); }
+    }).observe(document.querySelector('.field-wrap'));
+  }
   requestAnimationFrame(t => { state.last = t; loop(t); });
 });

@@ -73,6 +73,7 @@ export function landmarks(b, c = null) {
     if (o.kind === 'generator') item.interact = b.world.zones.some(z => z.kind === 'hum' && z.obj === o.id) ? '動いている（止められる）' : '動かすと半径12mの小さな音をかき消す';
     if (o.kind === 'trashcan') item.interact = '陰に深く隠れられる';
     if (o.buzzer) item.interact = '防犯ブザーを鳴らせる';
+    if (o.restored && c.def.abilities.includes('vacant')) item.restored = '粉から戻した物（中が空洞でもろい）';
     out.push(item);
   }
   return out;
@@ -210,8 +211,13 @@ export function buildObservation(b, c) {
     visible_projectiles: projectiles,
     // 場の仕掛け：見えている煙幕・撒かれた玉、味方の無音の結界
     zones: b.world.zones
-      .filter(z => (z.team !== undefined && z.team === c.team) || (z.kind !== 'silence' && b.canSee(c, z.x, z.y, (z.floor ?? 0) * 3 + 0.3)) || dist(c.x, c.y, z.x, z.y) < z.r + 1)
-      .map(z => ({ kind: { smoke: '煙幕（視線を遮る）', caltrops: '床に撒かれた玉（走ると転ぶ）', silence: '無音の結界（中の音が消える）' }[z.kind] || z.kind, at: [r1(z.x), r1(z.y)], radius: z.r, seconds_left: r1(z.until - b.t), ...(z.team !== undefined ? { mine: z.team === c.team } : {}) })),
+      .filter(z => (z.team !== undefined && z.team === c.team) || (z.kind !== 'silence' && z.kind !== 'powder_trap' && b.canSee(c, z.x, z.y, (z.floor ?? 0) * 3 + 0.3)) || dist(c.x, c.y, z.x, z.y) < z.r + 1)
+      .map(z => ({ kind: { smoke: '煙幕（視線を遮る）', caltrops: '床に撒かれた玉（走ると転ぶ）', silence: '無音の結界（中の音が消える）', powder_trap: '内側を粉にした床（相手が踏むと抜けて倒れる）' }[z.kind] || z.kind, at: [r1(z.x), r1(z.y)], radius: z.r, seconds_left: r1(z.until - b.t), ...(z.team !== undefined ? { mine: z.team === c.team } : {}) })),
+    // 粉の山（プリティ・ヴェイカント）。散っていなければ元に戻せる（restore、または interact で手で集める）
+    powder_piles: (b.world.piles || [])
+      .filter(p => p.floor === c.floor && dist(c.x, c.y, p.x + p.w / 2, p.y + p.h / 2) < 20 && b.canSee(c, p.x + p.w / 2, p.y + p.h / 2, p.floor * 3 + 0.2))
+      .slice(0, 8)
+      .map(p => ({ id: p.id, material: p.material, at: [r1(p.x + p.w / 2), r1(p.y + p.h / 2)], was: p.obj ? (p.obj.glassOf ? `${p.obj.glassOf}のガラス` : p.obj.name) : '床', restorable: !!p.obj && !p.scattered })),
     // 拾える物（見えている物だけ）。pickup の targetId に id を使う
     items_seen: b.world.items
       .filter(i => dist(c.x, c.y, i.x, i.y) < 25 && b.canSee(c, i.x, i.y, (i.floor ?? 0) * 3 + 0.3))

@@ -72,26 +72,58 @@ kbd { background: #000; border: 1px solid #555; border-radius: 3px; padding: 0 4
 
 /* 戦闘 */
 .battle-grid { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 12px; }
-@media (max-width: 1000px) { .battle-grid { grid-template-columns: 1fr; } }
-.field-wrap { position: relative; width: 100%; }
+/* 戦闘画面は1画面に収める：フィールドは残りの高さいっぱい、右の欄は中だけスクロール */
+#battle.screen { max-width: none; height: 100vh; height: 100dvh; padding: 8px 10px; overflow: hidden; }
+#battle .battle-grid { height: 100%; }
+.field-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
+.field-wrap { position: relative; width: 100%; flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
 #field { display: block; border: 2px solid #000; box-shadow: 0 0 0 2px var(--gold); cursor: crosshair; max-width: 100%; }
+.status-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.status-row .phase { margin-top: 0; flex: 1; padding: 3px 10px; font-size: .9rem; }
+.status-row .time { color: var(--muted); font-size: .78rem; text-align: right; }
+.side { min-height: 0; }
+.side-status { display: flex; flex-direction: column; gap: 6px; max-height: 46%; overflow-y: auto; flex: none; }
+.side-status .card { padding: 6px 8px; font-size: .8rem; }
+.side-status .card h3 { font-size: .86rem; margin-bottom: 3px; }
+.side-status .bar { height: 13px; margin: 2px 0; }
+.side-status .card.enemy .foe { margin-bottom: 4px; }
+.tabs { display: flex; gap: 4px; flex: none; }
+.tabs .tab { flex: 1; padding: 4px 6px; font-size: .82rem; border-width: 1px; border-color: #5a4a6a; border-radius: 6px 6px 0 0; background: var(--panel); color: var(--muted); }
+.tabs .tab.on { border-color: var(--gold); color: var(--gold); background: var(--panel2); }
+.tab-body { flex: 1 1 0; min-height: 0; background: var(--panel); border-radius: 0 0 6px 6px; padding: 6px; display: flex; flex-direction: column; }
+.tab-body .pane { display: none; flex: 1 1 0; min-height: 0; overflow-y: auto; font-size: .84rem; }
+.tab-body .pane.on { display: block; }
+.tab-body .pane[data-pane="log"].on { display: flex; flex-direction: column; }
+.pane-title { color: var(--gold); font-weight: bold; font-size: .82rem; }
+.abilities-ref { margin-top: 8px; font-size: .8rem; }
+.abilities-ref summary { cursor: pointer; color: var(--gold); }
+@media (max-width: 1000px) {
+  .battle-grid { grid-template-columns: 1fr; }
+  #battle.screen { padding: 6px; }
+  #battle .battle-grid { grid-template-rows: auto minmax(0, 1fr); gap: 6px; }
+  .field-wrap { flex: none; height: 38vh; height: 38dvh; }
+  .side-status { max-height: 34%; }
+  .side-status .card { flex: none; }
+  .command textarea { font-size: 16px; }
+}
 .pause-badge {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
   background: #000c; border: 2px solid var(--gold); padding: 4px 16px; font-weight: bold;
 }
 .tooltip { position: absolute; pointer-events: none; background: #000d; padding: 2px 6px; font-size: .78rem; border-radius: 3px; white-space: nowrap; }
-.command { display: flex; gap: 8px; margin-top: 10px; }
+.command { display: flex; gap: 8px; margin-top: 6px; }
 .command textarea {
   flex: 1; background: #0f0c14; color: var(--ink); border: 2px solid #5a4a6a; border-radius: 6px;
-  padding: 8px; resize: vertical; font-size: 1rem;
+  padding: 6px 8px; resize: none; font-size: .95rem; min-height: 0;
 }
 .command textarea:focus { outline: none; border-color: var(--gold); }
-.cmd-side { display: flex; flex-direction: column; gap: 6px; width: 150px; }
-.controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 8px; font-size: .88rem; }
+.cmd-side { display: flex; flex-direction: column; gap: 4px; width: 130px; }
+.cmd-side .big { padding: 4px 10px; }
+.controls { display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 8px; align-items: center; margin-top: 6px; font-size: .82rem; white-space: nowrap; flex: none; padding-bottom: 2px; }
 .controls .time { color: var(--muted); }
 .controls #quit-btn { margin-left: auto; }
 
-.side { display: flex; flex-direction: column; gap: 10px; }
+.side { display: flex; flex-direction: column; gap: 6px; }
 .card { background: var(--panel); border-left: 4px solid var(--c, #666); border-radius: 6px; padding: 10px; font-size: .86rem; }
 .card h3 { margin: 0 0 6px; font-size: .95rem; }
 .card h3 small { color: var(--gold); font-weight: normal; }
@@ -109,7 +141,7 @@ kbd { background: #000; border: 1px solid #555; border-radius: 3px; padding: 0 4
 .plan-view .step.done { color: #666; text-decoration: line-through; }
 .plan-view .step.now { color: var(--gold); font-weight: bold; }
 .log-card { flex: 1; }
-.log { height: 280px; overflow-y: auto; font-size: .8rem; line-height: 1.5; background: #0d0a12; border-radius: 4px; padding: 4px 8px; }
+.log { flex: 1 1 0; min-height: 0; overflow-y: auto; font-size: .8rem; line-height: 1.5; background: #0d0a12; border-radius: 4px; padding: 4px 8px; }
 .log p { margin: 0 0 2px; }
 .log .t { color: #6d6380; font-size: .72rem; }
 .log .k-command { color: var(--gold); }
@@ -178,3 +210,14 @@ button:disabled { opacity: .5; cursor: default; }
 
 .time.siren { color: #ff4d6d; font-weight: bold; animation: siren 1s steps(2) infinite; }
 @keyframes siren { 50% { color: #6cf; } }
+.side-status .portrait.mini { height: 40px; width: 40px; }
+.tag:empty { display: none; }
+.status-row .phase { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-row .time { flex: 0 1 auto; max-width: 60%; }
+@media (max-width: 1000px) {
+  .field-wrap { height: min(38dvh, 74vw); }
+  .status-row { flex-wrap: wrap; gap: 2px 8px; }
+  .status-row .phase { flex: 1 1 100%; }
+  .status-row .time { max-width: none; text-align: left; font-size: .72rem; }
+}
+.tabs .tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

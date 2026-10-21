@@ -3,7 +3,7 @@
 
 const FILES = [
   'hit_heavy', 'hit_light', 'guard', 'swing', 'crash', 'break', 'glass', 'door', 'fall', 'ko',
-  'launch', 'flick', 'ricochet', 'scratch', 'roar', 'flame', 'stand', 'ability', 'siren', 'alarm',
+  'launch', 'flick', 'ricochet', 'scratch', 'roar', 'flame', 'stand', 'ability', 'siren', 'alarm', 'powder',
 ];
 
 export class Sound {
