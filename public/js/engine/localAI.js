@@ -3,6 +3,7 @@
 import { ABILITIES, RULES } from './data.js';
 import { ITEM_KINDS, meleeWith } from './items.js';
 import { dist, distToRect, pointInRect, angleTo } from './vec.js';
+import { nearestWalkable } from './world.js';
 
 function incomingProjectile(b, c) {
   return b.world.projectiles.find(p => p.owner !== c.id && b.canSee(c, p.x, p.y) && dist(c.x, c.y, p.x, p.y) < 6);
@@ -391,7 +392,24 @@ function healPlan(b, c) {
   return null;
 }
 
+// 安全地帯の外にいる（もうすぐ外になる）：内側へ走って戻る
+function zonePlan(b, c) {
+  const z = b.safeZone;
+  if (!z) return null;
+  const d = dist(c.x, c.y, z.x, z.y);
+  const soon = b.zoneRadius(b.t + 10);
+  if (d <= soon - 1) return null;
+  const k = Math.max(0, soon - 3) / Math.max(d, 0.1);
+  const p = nearestWalkable(b.world, z.x + (c.x - z.x) * k, z.y + (c.y - z.y) * k, 4) || z;
+  return {
+    interpretation: `（CPU・ローカル）安全地帯の${b.outsideZone(c) ? '外にいる' : '縁にいる'}ので内側へ戻る`, speech: null,
+    steps: [{ action: 'move', mode: 'run', targetType: 'point', x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }],
+  };
+}
+
 export function localCpuPlan(b, c) {
+  const zp = zonePlan(b, c);
+  if (zp) return zp;
   const healing = healPlan(b, c);
   if (healing && b.t < RULES.timeLimit - 20) return healing;
   const plan = hurry(b, c, basePlan(b, c));

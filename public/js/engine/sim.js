@@ -49,7 +49,7 @@ export class Battle {
   // 1対1：playerChar 対 cpuChar。2対2：allyChar（味方CPU）と cpu2Char を加える
   // randomSpawn：開始位置を毎回ランダムにする（false なら地図ごとの決まった位置）
   // spectate：観戦モード。プレイヤーのキャラも CPU が操作する
-  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true, spectate = false } = {}) {
+  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true, spectate = false, shrinkZone = true } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
     this.mapId = mapId;
@@ -73,6 +73,8 @@ export class Battle {
       if (c.units) for (const u of c.units) { u.x = c.x; u.y = c.y; }
     }
     this.teamSize = Math.max(...[0, 1].map(t => this.chars.filter(c => c.team === t).length));
+    this.safeZone = null;
+    if (shrinkZone) this.initSafeZone();
     this.emit({ text: `―― 戦闘開始${this.teamSize > 1 ? '（2対2）' : ''} ――`, kind: 'system', all: true });
   }
 
@@ -673,6 +675,73 @@ export class Battle {
     this.emit({ text: `警察が到着！ 全員がその場から散った。判定：${name(0)} ${d0} 対 ${name(1)} ${d1}（与えたダメージ）→ ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
   }
 
+  // ---------- 安全地帯（徐々に狭まる） ----------
+
+  // 中心は地図の中ほどの歩ける屋外。最初の半径は地図全体を覆う大きさ
+  initSafeZone() {
+    const w = this.world;
+    let c = null;
+    for (let i = 0; i < 40 && !c; i++) {
+      const x = w.w * (0.3 + this.rng() * 0.4), y = w.h * (0.3 + this.rng() * 0.4);
+      if (isWalkablePoint(w, x, y, 0) && !buildingAt(w, x, y)) c = { x, y };
+    }
+    c = c || { x: w.w / 2, y: w.h / 2 };
+    const r0 = Math.max(...[[0, 0], [w.w, 0], [0, w.h], [w.w, w.h]].map(([x, y]) => dist(c.x, c.y, x, y))) + 1;
+    this.safeZone = { x: c.x, y: c.y, r0, phase: -1, nextTick: {} };
+  }
+
+  // 時刻 t の半径
+  zoneRadius(t = this.t) {
+    const z = this.safeZone;
+    if (!z) return Infinity;
+    let frac = 1;
+    for (const [t0, t1, to] of RULES.zonePhases) {
+      const target = Math.max(RULES.zoneMinR / z.r0, to);
+      if (t <= t0) break;
+      frac = t >= t1 ? target : frac + (target - frac) * ((t - t0) / (t1 - t0));
+      if (t < t1) break;
+    }
+    return Math.max(RULES.zoneMinR, z.r0 * frac);
+  }
+
+  zonePhaseAt(t = this.t) {
+    let n = 0;
+    for (const [t0] of RULES.zonePhases) if (t >= t0) n++;
+    return n;
+  }
+
+  outsideZone(p, t = this.t) {
+    if (!this.safeZone) return false;
+    return dist(p.x, p.y, this.safeZone.x, this.safeZone.y) > this.zoneRadius(t);
+  }
+
+  updateSafeZone() {
+    const z = this.safeZone;
+    if (!z) return;
+    const phase = this.zonePhaseAt();
+    if (phase !== z.phase) {
+      z.phase = phase;
+      const ph = RULES.zonePhases[phase - 1];
+      if (ph) {
+        const r1 = Math.round(Math.max(RULES.zoneMinR, z.r0 * Math.max(RULES.zoneMinR / z.r0, ph[2])));
+        this.emit({ text: `安全地帯が狭まり始めた（${ph[1] - ph[0]}秒かけて半径${r1}mまで。中心 (${z.x.toFixed(0)}, ${z.y.toFixed(0)})）。外にいると毎秒ダメージ`, kind: 'system', all: true });
+      } else if (phase === 0) {
+        this.emit({ text: `安全地帯：中心 (${z.x.toFixed(0)}, ${z.y.toFixed(0)})。${RULES.zonePhases[0][0]}秒後から段階的に狭まる`, kind: 'system', all: true });
+      }
+    }
+    if (phase === 0) return;
+    for (const c of this.chars) {
+      if (!c.alive || !this.outsideZone(c)) { if (c.alive) c.zoneWarned = false; continue; }
+      if (!c.zoneWarned) {
+        c.zoneWarned = true;
+        this.emit({ text: `（${c.name} は安全地帯の外にいる！ 中心 (${z.x.toFixed(0)}, ${z.y.toFixed(0)}) の方へ戻らないと削られ続ける）`, kind: 'fail', actor: c });
+      }
+      if (this.t < (z.nextTick[c.id] ?? 0)) continue;
+      z.nextTick[c.id] = this.t + 1;
+      this.damage(c, RULES.zoneDamage + phase - 1, { kind: 'zone', label: '安全地帯の外' });
+    }
+  }
+
   teamAlive(team) {
     return this.chars.some(c => c.team === team && c.alive);
   }
@@ -957,6 +1026,7 @@ export class Battle {
     this.updateProjectiles(dt);
     this.fx = this.fx.filter(f => this.t - f.t < (f.kind === 'ko' ? 2.5 : 1.2));
 
+    this.updateSafeZone(dt);
     this.updatePolice();
     if (this.over) return;
     const t0 = this.teamAlive(0), t1 = this.teamAlive(1);

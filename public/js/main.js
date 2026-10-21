@@ -548,7 +548,11 @@ function renderSide() {
   // 時間制限（警察到着）と、判定に使う与ダメージ
   const left = Math.max(0, RULES.timeLimit - b.t);
   const tl = $('#time-label');
-  tl.textContent = `経過 ${b.t.toFixed(1)}秒／警察到着まで ${left.toFixed(0)}秒／与ダメージ ${state.spectate ? 'チームA' : '自分側'} ${b.teamDealt(me.team)}：${state.spectate ? 'チームB' : '相手側'} ${b.teamDealt(1 - me.team)}`;
+  const zr = b.safeZone ? b.zoneRadius() : 0;
+  const shrinking = RULES.zonePhases.some(([t0, t1]) => b.t >= t0 && b.t < t1);
+  const next = RULES.zonePhases.find(([t0]) => b.t < t0);
+  const out = me.alive && b.outsideZone(me);
+  tl.innerHTML = `経過 ${b.t.toFixed(1)}秒／${b.safeZone ? '' : '<!--'}<span class="${out ? 'zone-out' : 'zone'}">安全地帯 半径${zr.toFixed(0)}m${shrinking ? '（縮小中）' : next ? `（${(next[0] - b.t).toFixed(0)}秒後に縮小）` : ''}${out ? '・外にいる！' : ''}</span>／${b.safeZone ? '' : '-->'}警察まで ${left.toFixed(0)}秒／与ダメージ ${state.spectate ? 'A' : '自分側'} ${b.teamDealt(me.team)}：${state.spectate ? 'B' : '相手側'} ${b.teamDealt(1 - me.team)}`;
   tl.classList.toggle('siren', b.t >= RULES.policeWarn);
 }
 
@@ -681,6 +685,7 @@ function handleImpacts(now) {
     if (!f.seq || f.seq <= state.lastFx) continue;
     state.lastFx = Math.max(state.lastFx, f.seq);
     if (!omni() && f.visibleTo && !f.visibleTo.has(me.id)) continue;
+    if (f.kind === 'hit' && f.hitKind === 'zone') continue; // 安全地帯の外の削りは演出なし
     if (f.kind === 'hit') {
       const power = Math.min(1, f.dmg / 30);
       state.freezeUntil = Math.max(state.freezeUntil, now + 40 + power * 190);

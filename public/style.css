@@ -221,3 +221,4 @@ button:disabled { opacity: .5; cursor: default; }
   .status-row .time { max-width: none; text-align: left; font-size: .72rem; }
 }
 .tabs .tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.time .zone { color: #d6aaff; } .time .zone-out { color: #ff6bd6; font-weight: bold; }

@@ -557,7 +557,7 @@ test('スタンド：七海は群体なので出し入れの行動を使えず�
 });
 
 test('時間制限：警察が来た時点で与ダメージの多い側の判定勝ち、両者待つだけなら引き分け', () => {
-  const b = new Battle({ seed: 61, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  const b = new Battle({ seed: 61, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo', shrinkZone: false });
   b.player.x = 4; b.player.y = 17; b.cpu.x = 33; b.cpu.y = 3;
   const wait = c => b.setPlan(c, compilePlan(b, c, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
   b.damage(b.cpu, 5, { source: b.player, kind: 'melee' });
@@ -571,7 +571,7 @@ test('時間制限：警察が来た時点で与ダメージの多い側の判�
   assert.equal(b.endReason, 'police');
   assert.ok(Math.abs(b.t - 180) < 0.1);
   assert.equal(b.winnerTeam, 0, 'ダメージを与えた側が判定勝ちになっていない');
-  const b2 = new Battle({ seed: 62, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo' });
+  const b2 = new Battle({ seed: 62, mapId: 'lot', playerChar: 'kito', cpuChar: 'sogo', shrinkZone: false });
   b2.player.x = 4; b2.player.y = 17; b2.cpu.x = 33; b2.cpu.y = 3;
   while (!b2.over) {
     for (const c of b2.chars) if (!c.runner.step) b2.setPlan(c, compilePlan(b2, c, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
@@ -1058,4 +1058,23 @@ test('リトル・レッド・コルベット：車両を走らせて口を残�
   // 敵は体の口を払い落とせる
   for (let i = 0; i < 20 && b.player.mouths.some(m => m.on === b.cpu.id); i++) b.swatUnits(b.cpu);
   assert.ok(!b.player.mouths.some(m => m.on === b.cpu.id), '払っても落ちない');
+});
+
+test('安全地帯：時間とともに狭まり、外にいると削られる。CPU は内側へ戻る', () => {
+  const b = duel('sogo', 'kito');
+  const z = b.safeZone;
+  assert.ok(b.zoneRadius(0) >= Math.hypot(b.world.w, b.world.h) / 2 && b.zoneRadius(200) <= 5.01, '半径の変化がおかしい');
+  assert.ok(b.zoneRadius(60) < b.zoneRadius(20));
+  // 中心から遠い所に置いて縮小後まで待つ
+  b.t = 110;
+  const far = [[1.5, 1.5], [b.world.w - 1.5, 1.5], [1.5, b.world.h - 1.5], [b.world.w - 1.5, b.world.h - 1.5]].sort((p, q) => dist(q[0], q[1], z.x, z.y) - dist(p[0], p[1], z.x, z.y))[0];
+  b.player.x = far[0]; b.player.y = far[1];
+  plan(b, b.player, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  const hp = b.player.hp;
+  for (let i = 0; i < 30 * 2.5; i++) b.step();
+  assert.ok(b.player.hp < hp, '外にいても削られない');
+  const p = localCpuPlan(b, b.player);
+  assert.equal(p.steps[0].action, 'move');
+  assert.ok(dist(p.steps[0].x, p.steps[0].y, z.x, z.y) < b.zoneRadius(b.t + 10), '内側へ戻る計画になっていない');
 });

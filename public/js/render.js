@@ -481,6 +481,8 @@ export class Renderer {
       ctx.stroke();
     }
 
+    this.drawSafeZone(b);
+
     // 物音：聞こえた音（姿の見えない所の音は推定位置）に、広がる輪と種類を出す
     for (const h of me.memory.heard) {
       const age = b.t - h.t;
@@ -992,6 +994,36 @@ export class Renderer {
       ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, -size / 2, -size / 2, size, size);
     } else {
       ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, Math.round(x - size / 2), Math.round(footY - size), size, size);
+    }
+    ctx.restore();
+  }
+
+  // 安全地帯：円の外を暗い紫で覆い、今の縁（実線）と次に縮む先（点線）を描く
+  drawSafeZone(b) {
+    const z = b.safeZone;
+    if (!z) return;
+    const ctx = this.ctx, P = this.px;
+    const r = b.zoneRadius();
+    const next = RULES.zonePhases.find(([, t1]) => b.t < t1);
+    const target = next ? b.zoneRadius(next[1]) : r;
+    const cx = z.x * P, cy = this.sy(z.y, 0);
+    const W = b.world.w * P, top = this.sy(-6, 0), bottom = this.sy(b.world.h + 2, 0);
+    ctx.save();
+    ctx.fillStyle = 'rgba(90,20,120,0.28)';
+    ctx.beginPath();
+    ctx.rect(-P * 4, top, W + P * 8, bottom - top);
+    ctx.moveTo(cx + r * P, cy);
+    ctx.arc(cx, cy, r * P, 0, Math.PI * 2, true);
+    ctx.fill('evenodd');
+    ctx.strokeStyle = 'rgba(214,170,255,0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, r * P, 0, Math.PI * 2); ctx.stroke();
+    if (target < r - 0.5) {
+      ctx.setLineDash([6, 6]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.arc(cx, cy, target * P, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
     }
     ctx.restore();
   }
