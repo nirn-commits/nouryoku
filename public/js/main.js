@@ -10,7 +10,7 @@ import { pointInRect, dist } from './engine/vec.js';
 import { MAPS } from './engine/maps.js';
 import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
 import { Sound } from './audio.js';
-import { Director, Commentator, predictStats, recordPrediction } from './spectate.js';
+import { Director } from './spectate.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -413,34 +413,15 @@ function startBattle() {
   if (!state.spectate) $('#cmd').focus();
 }
 
-// ---------- 観戦：自動カメラ・実況・体力の綱引き・勝敗予想 ----------
+// ---------- 観戦：自動カメラ・体力の綱引き ----------
 
-const pick2 = list => list[Math.floor(Math.random() * list.length)];
 const teamNames = (b, t) => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
 
 function setupSpectate(b) {
   const on = state.spectate;
   state.director = on ? new Director() : null;
-  state.talk = on ? new Commentator(b) : null;
-  state.prediction = null;
-  for (const id of ['#tug', '#cam-btn', '#talk-btn']) $(id).classList.toggle('hidden', !on);
-  $('#commentary').classList.add('hidden');
+  for (const id of ['#tug', '#cam-btn']) $(id).classList.toggle('hidden', !on);
   $('#cam-btn').textContent = 'カメラ：自動';
-  if (!on) return;
-  // 始まる前に勝敗を予想する（選ぶまで止めておく）
-  state.paused = true;
-  const st = predictStats();
-  $('#predict-body').textContent = `${teamNames(b, 0)} 対 ${teamNames(b, 1)}${st.total ? `（これまでの的中 ${st.hit}/${st.total}）` : ''}`;
-  $('#predict-btns').innerHTML = [0, 1].map(t => `<button class="big" data-team="${t}">${b.teamSize > 1 ? `チーム${'AB'[t]}：` : ''}${teamNames(b, t)}</button>`).join('');
-  $('#predict').classList.remove('hidden');
-}
-
-function closePredict(team) {
-  state.prediction = team;
-  $('#predict').classList.add('hidden');
-  state.paused = false;
-  updatePause();
-  if (state.talk && team !== null) state.talk.say('実況', `あなたの予想は${teamNames(state.battle, team)}！ さあ、どうなるか！`, 3);
 }
 
 function updateSpectate(now) {
@@ -453,26 +434,6 @@ function updateSpectate(now) {
   $('#tug .tug-fill').style.width = `${(a + z > 0 ? a / (a + z) : 0.5) * 100}%`;
   $('#tug .tug-a').textContent = `${teamNames(b, 0)} ${Math.round(a * 100)}%`;
   $('#tug .tug-b').textContent = `${Math.round(z * 100)}% ${teamNames(b, 1)}`;
-  // 実況の字幕
-  if (!state.talkOn) return;
-  // 作戦を考えている間（ターンの切れ目）は、その旨を出しておく
-  if (state.turn.phase !== 'execute' && !b.over && state.thinkingTurn !== state.turn.turn) {
-    state.thinkingTurn = state.turn.turn;
-    if (state.turn.turn > 1) state.talk.say('解説', pick2(['両者、次の一手を読み合っている……', 'ここで作戦タイム。相手の出方を何通りも読んでいる。', '静かな読み合い。次はどう動くか。']), 1);
-  }
-  state.talk.update();
-  const line = state.talk.next(now);
-  const box = $('#commentary');
-  if (line && line.clear) box.classList.add('hidden');
-  else if (line) {
-    box.querySelector('b').textContent = line.who;
-    box.querySelector('span').textContent = line.text;
-    box.classList.toggle('kaisetsu', line.who === '解説');
-    box.classList.toggle('big', line.pri >= 3);
-    box.classList.remove('hidden');
-    // 字幕の出だしの動きをやり直す
-    box.style.animation = 'none'; void box.offsetWidth; box.style.animation = '';
-  }
 }
 
 function playerLog(text, kind = 'plan') {
@@ -660,14 +621,7 @@ function showResult() {
   if (state.spectate) {
     const names = t => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
     $('#result-title').textContent = b.winnerTeam === null ? '引き分け' : `${b.teamSize > 1 ? (b.winnerTeam === 0 ? 'チームA' : 'チームB') : names(b.winnerTeam)}の勝ち`;
-    let guess = '';
-    if (state.prediction !== null && state.prediction !== undefined) {
-      const hit = b.winnerTeam === state.prediction;
-      const st = recordPrediction(hit);
-      guess = `\n${hit ? '🎯 予想的中！' : '予想はずれ……'}（これまでの的中 ${st.hit}/${st.total}）`;
-      state.prediction = null;
-    }
-    $('#result-body').textContent = `${names(0)} 対 ${names(1)}／与えたダメージ ${b.teamDealt(0)} 対 ${b.teamDealt(1)}（${b.t.toFixed(1)}秒${b.endReason === 'police' ? '・警察到着で判定' : ''}）${guess}`;
+    $('#result-body').textContent = `${names(0)} 対 ${names(1)}／与えたダメージ ${b.teamDealt(0)} 対 ${b.teamDealt(1)}（${b.t.toFixed(1)}秒${b.endReason === 'police' ? '・警察到着で判定' : ''}）`;
     setTimeout(() => $('#result').classList.remove('hidden'), 1800);
     return;
   }
@@ -978,15 +932,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#zoom-btn').textContent = z === 'near' ? '全体表示' : '拡大表示';
   };
   $('#zoom-btn').addEventListener('click', toggleZoom);
-  $('#predict-btns').addEventListener('click', e => { const t = e.target.closest('[data-team]'); if (t) closePredict(Number(t.dataset.team)); });
-  $('#predict-skip').addEventListener('click', () => closePredict(null));
   $('#cam-btn').addEventListener('click', () => { if (state.battle && state.director) $('#cam-btn').textContent = `カメラ：${state.director.cycle(state.battle)}`; });
-  state.talkOn = true;
-  $('#talk-btn').addEventListener('click', () => {
-    state.talkOn = !state.talkOn;
-    $('#talk-btn').textContent = `実況：${state.talkOn ? 'ON' : 'OFF'}`;
-    if (!state.talkOn) $('#commentary').classList.add('hidden');
-  });
+
   // 表示：2D → 3D → TPS → 2D の順に切り替える
   $('#view-btn').addEventListener('click', () => setView({ '2d': '3d', '3d': 'tps', tps: '2d' }[state.view || '2d']));
   try { const v = localStorage.getItem('nouryoku.view'); if (v === '3d' || v === 'tps') setView(v); } catch { /* 保存できない環境では2D */ }

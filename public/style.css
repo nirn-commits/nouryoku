@@ -225,19 +225,10 @@ button:disabled { opacity: .5; cursor: default; }
 .time .zone { color: #d6aaff; } .time .zone-out { color: #ff6bd6; font-weight: bold; }
 #field3d { touch-action: none; }
 
-/* 観戦：実況の字幕・体力の綱引き・勝敗予想 */
-.commentary { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); max-width: 86%; background: rgba(10,8,14,0.82); border: 2px solid var(--gold); border-radius: 8px; padding: 6px 14px; font-size: 1rem; line-height: 1.45; pointer-events: none; text-align: center; animation: talkin .25s ease-out; }
-.commentary b { color: var(--gold); margin-right: 8px; font-size: .8rem; }
-.commentary.kaisetsu { border-color: #9be7ff; }
-.commentary.kaisetsu b { color: #9be7ff; }
-.commentary.big { font-size: 1.15rem; font-weight: bold; }
-@keyframes talkin { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+/* 観戦：体力の綱引き */
 .tug { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); width: min(560px, 90%); display: flex; align-items: center; gap: 8px; font-size: .78rem; font-weight: bold; pointer-events: none; text-shadow: 1px 1px 0 #000; }
 .tug-bar { flex: 1; height: 12px; background: #e85d5d; border: 2px solid #000; border-radius: 6px; overflow: hidden; }
 .tug-fill { display: block; height: 100%; background: #4cc9f0; transition: width .3s; }
 .tug-a { color: #4cc9f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; }
 .tug-b { color: #ff8a8a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 32%; text-align: right; }
-.predict-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin: 10px 0; }
-.predict-btns button { min-width: 140px; }
-@media (max-width: 1000px) { .commentary { font-size: .85rem; bottom: 6px; } .commentary.big { font-size: .95rem; } }
-#result-body { white-space: pre-line; }
+@media (max-width: 1000px) { #result-body { white-space: pre-line; }
