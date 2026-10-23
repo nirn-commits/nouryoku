@@ -805,7 +805,7 @@ function describePoint(b, x, y) {
 
 // 2D表示と3D表示の切り替え（3D の描画部品は使う時に初めて読み込む）
 async function setView(mode) {
-  if (mode === '3d' && !state.r3d) {
+  if (mode !== '2d' && !state.r3d) {
     try {
       const { Renderer3D } = await import('./render3d.js');
       state.r3d = new Renderer3D($('#field3d'));
@@ -817,11 +817,13 @@ async function setView(mode) {
     }
   }
   state.view = mode;
-  const r = mode === '3d' ? state.r3d : state.r2d;
+  const r = mode === '2d' ? state.r2d : state.r3d;
+  if (mode !== '2d') { r.tps = mode === 'tps'; r.tpsOffset = 0; }
   state.renderer = r;
-  $('#field').classList.toggle('hidden', mode === '3d');
-  $('#field3d').classList.toggle('hidden', mode !== '3d');
-  $('#view-btn').textContent = mode === '3d' ? '2D表示' : '3D表示';
+  $('#field').classList.toggle('hidden', mode !== '2d');
+  $('#field3d').classList.toggle('hidden', mode === '2d');
+  $('#view-btn').textContent = { '2d': '表示：2D', '3d': '表示：3D', tps: '表示：TPS' }[mode];
+  $('#zoom-btn').classList.toggle('hidden', mode === 'tps');
   $('#zoom-btn').textContent = r.zoom === 'near' ? '全体表示' : '拡大表示';
   try { localStorage.setItem('nouryoku.view', mode); } catch { /* 無視 */ }
   if (state.battle) r.resize(state.battle);
@@ -903,8 +905,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#zoom-btn').textContent = z === 'near' ? '全体表示' : '拡大表示';
   };
   $('#zoom-btn').addEventListener('click', toggleZoom);
-  $('#view-btn').addEventListener('click', () => setView(state.view === '3d' ? '2d' : '3d'));
-  try { if (localStorage.getItem('nouryoku.view') === '3d') setView('3d'); } catch { /* 保存できない環境では2D */ }
+  // 表示：2D → 3D → TPS → 2D の順に切り替える
+  $('#view-btn').addEventListener('click', () => setView({ '2d': '3d', '3d': 'tps', tps: '2d' }[state.view || '2d']));
+  try { const v = localStorage.getItem('nouryoku.view'); if (v === '3d' || v === 'tps') setView(v); } catch { /* 保存できない環境では2D */ }
   const fileIn = document.createElement('input');
   fileIn.type = 'file';
   fileIn.accept = 'image/*';
@@ -944,7 +947,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyZ' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) toggleZoom();
     // 3D表示：Q / E でカメラを回す
-    if ((e.code === 'KeyQ' || e.code === 'KeyE') && state.view === '3d' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) state.r3d.rotate(e.code === 'KeyQ' ? -Math.PI / 8 : Math.PI / 8);
+    if ((e.code === 'KeyQ' || e.code === 'KeyE') && (state.view === '3d' || state.view === 'tps') && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) state.r3d.rotate(e.code === 'KeyQ' ? -Math.PI / 8 : Math.PI / 8);
     if (e.code === 'Space' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) {
       e.preventDefault();
       state.paused = !state.paused;

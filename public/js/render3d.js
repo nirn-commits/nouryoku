@@ -61,6 +61,8 @@ export class Renderer3D {
     this.zoom = 'near';
     this.yaw = 0; // カメラの向き（0＝南から北を見る。2D版と同じ向き）
     this.dist = 13;
+    this.tps = false; // TPS視点：自分の肩越しに、向いている方向を見る
+    this.tpsOffset = 0; // TPS視点でドラッグして見回した分
     this.shakeAmp = 0; this.shakeAt = 0;
     this.target = null;
     this.mats = new Map();
@@ -79,7 +81,7 @@ export class Renderer3D {
       if (down === null) return;
       const dx = e.clientX - down;
       if (Math.abs(dx) > 6) dragged = true;
-      if (dragged) { this.yaw -= dx * 0.008; down = e.clientX; }
+      if (dragged) { if (this.tps) this.tpsOffset -= dx * 0.008; else this.yaw -= dx * 0.008; down = e.clientX; }
     });
     const up = () => { down = null; };
     canvas.addEventListener('pointerup', up);
@@ -105,7 +107,8 @@ export class Renderer3D {
   }
 
   rotate(d) {
-    this.yaw += d;
+    if (this.tps) this.tpsOffset += d;
+    else this.yaw += d;
   }
 
   kick(amp) {
@@ -244,7 +247,7 @@ export class Renderer3D {
       if (o.kind !== 'tree') m.position.copy(V(o.x + o.w / 2, o.y + o.h / 2, o.z0 + h / 2));
       // 開いた扉・割れた窓は見せない。2階の物は自分が1階にいる時は透ける。自分のいる建物の壁も透かす
       m.visible = !((o.kind === 'door' && o.open) || (o.kind === 'window' && o.broken));
-      const ghost = (o.floor > me.floor) || this.occluders.has(o.id) || (myBuilding && o.building === myBuilding.id && o.floor === me.floor && (o.kind === 'wall' || o.kind === 'door' || o.kind === 'window') && this.zoom === 'near');
+      const ghost = (o.floor > me.floor) || this.occluders.has(o.id) || (myBuilding && o.building === myBuilding.id && o.floor === me.floor && (o.kind === 'wall' || o.kind === 'door' || o.kind === 'window') && (this.zoom === 'near' || this.tps));
       if (m.isMesh && m.userData.ghost !== ghost) {
         m.material = this.mat(colorsOf(o, b)[0], ghost);
         m.userData.ghost = ghost;
@@ -346,6 +349,7 @@ export class Renderer3D {
       mat.opacity = (c.floor === 0 && b.bushAt(c.x, c.y)) || st.hideUntil > b.t ? 0.5 : 1;
       mat.color.set(!c.alive ? '#777' : c.windup ? '#ffb0b0' : st.invulnUntil > b.t ? '#ffffcc' : '#ffffff');
       s.name.position.y = 2.35;
+      s.name.visible = !(this.tps && c === me); // TPS視点では自分の名前は出さない（画面を覆うので）
       // 体の外に出したスタンド
       const sb = c.standBody;
       const showStand = c.alive && sb && (c.team === me.team || debug || see(sb.x, sb.y, sb.floor * FLOOR_H + 1));
@@ -533,6 +537,11 @@ export class Renderer3D {
     this.drawChars(b, me, see, debug);
     this.drawDynamic(b, me, see, debug, hover);
 
+    if (this.tps && me.alive) {
+      this.drawTps(b, me, debug);
+      return;
+    }
+    if (this.camera.fov !== 45) { this.camera.fov = 45; this.camera.updateProjectionMatrix(); }
     // カメラ：近くでは自分を後ろ斜め上から追い、全体では真上寄りから全体を見る
     const w = b.world;
     let tx, ty, tz, dist, pitch;
@@ -564,6 +573,29 @@ export class Renderer3D {
     const shake = this.shakeAmp * this.decay();
     if (shake > 0.01) cam.position.add(new THREE.Vector3((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake));
     cam.lookAt(this.target);
+    this.findOccluders(b, me, debug);
+    this.gl.render(this.scene, cam);
+  }
+
+  // TPS視点：自分の後ろ・少し右上から、向いている方向を見る。向きが変わるとカメラもゆっくり回り込む
+  drawTps(b, me, debug) {
+    const cam = this.camera;
+    if (cam.fov !== 62) { cam.fov = 62; cam.updateProjectionMatrix(); }
+    const wantYaw = me.facing + Math.PI / 2 + this.tpsOffset;
+    let dy = ((wantYaw - this.yaw + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI;
+    this.yaw += dy * 0.15;
+    const fx = Math.sin(this.yaw), fy = -Math.cos(this.yaw); // 前（盤面の座標）
+    const rx = Math.cos(this.yaw), ry = Math.sin(this.yaw); // 右
+    const z = b.baseZ(me);
+    const want = V(me.x - fx * 4.2 + rx * 0.7, me.y - fy * 4.2 + ry * 0.7, z + 2.3);
+    const look = V(me.x + fx * 6, me.y + fy * 6, z + 1.2);
+    this.tpsPos = this.tpsPos ? this.tpsPos.lerp(want, 0.3) : want.clone();
+    this.tpsLook = this.tpsLook ? this.tpsLook.lerp(look, 0.3) : look.clone();
+    cam.position.copy(this.tpsPos);
+    const shake = this.shakeAmp * this.decay();
+    if (shake > 0.01) cam.position.add(new THREE.Vector3((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake));
+    cam.lookAt(this.tpsLook);
+    this.target = this.tpsLook.clone();
     this.findOccluders(b, me, debug);
     this.gl.render(this.scene, cam);
   }
