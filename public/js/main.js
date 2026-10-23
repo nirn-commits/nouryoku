@@ -415,6 +415,7 @@ function startBattle() {
 
 // ---------- 観戦：自動カメラ・実況・体力の綱引き・勝敗予想 ----------
 
+const pick2 = list => list[Math.floor(Math.random() * list.length)];
 const teamNames = (b, t) => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
 
 function setupSpectate(b) {
@@ -454,6 +455,11 @@ function updateSpectate(now) {
   $('#tug .tug-b').textContent = `${Math.round(z * 100)}% ${teamNames(b, 1)}`;
   // 実況の字幕
   if (!state.talkOn) return;
+  // 作戦を考えている間（ターンの切れ目）は、その旨を出しておく
+  if (state.turn.phase !== 'execute' && !b.over && state.thinkingTurn !== state.turn.turn) {
+    state.thinkingTurn = state.turn.turn;
+    if (state.turn.turn > 1) state.talk.say('解説', pick2(['両者、次の一手を読み合っている……', 'ここで作戦タイム。相手の出方を何通りも読んでいる。', '静かな読み合い。次はどう動くか。']), 1);
+  }
   state.talk.update();
   const line = state.talk.next(now);
   const box = $('#commentary');
