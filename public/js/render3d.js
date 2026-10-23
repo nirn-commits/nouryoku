@@ -291,11 +291,20 @@ export class Renderer3D {
     stex.colorSpace = THREE.SRGBColorSpace;
     const stand = new THREE.Sprite(new THREE.SpriteMaterial({ map: stex, transparent: true, alphaTest: 0.2, opacity: 0.9 }));
     stand.center.set(0.5, 0.05);
+    // 頭の上の体力ゲージ（観戦中だけ出す）
+    const hcv = document.createElement('canvas');
+    hcv.width = 64; hcv.height = 8;
+    const htex = new THREE.CanvasTexture(hcv);
+    htex.colorSpace = THREE.SRGBColorSpace;
+    const hpBar = new THREE.Sprite(new THREE.SpriteMaterial({ map: htex, transparent: true, depthTest: false }));
+    hpBar.scale.set(1.1, 0.14, 1);
+    hpBar.center.set(0.5, 0);
+    hpBar.renderOrder = 11;
     const group = new THREE.Group();
-    group.add(shadow, ring, sprite, name);
+    group.add(shadow, ring, sprite, name, hpBar);
     this.scene.add(group);
     this.scene.add(stand);
-    s = { group, sprite, ring, shadow, name, cv, tex, stand, scv, stex, lastFrame: '' };
+    s = { group, sprite, ring, shadow, name, cv, tex, stand, scv, stex, hpBar, hcv, htex, lastHp: null, lastFrame: '' };
     this.chars.set(c.id, s);
     return s;
   }
@@ -337,6 +346,11 @@ export class Renderer3D {
       s.group.position.copy(V(c.x, c.y, z));
       s.shadow.position.y = c.floor * FLOOR_H - z + 0.03;
       s.ring.position.y = c.floor * FLOOR_H - z + 0.04;
+      // 体の外に出したスタンド
+      const sb = c.standBody;
+      // 体に重なっている（先行させていない）スタンドは描かない：本体の板に隠れて端だけがはみ出して見えるため
+      const apart = sb && (c.def.standBlind || Math.hypot(sb.x - c.x, sb.y - c.y) > 1.0);
+      s.ring.scale.setScalar(sb && c.alive && !apart ? 1.35 : 1); // スタンドを出している間は足元の輪を大きく
       s.ring.material.color.set(c === me && !this.spectate ? '#06d6a0' : c.team === me.team ? '#4cc9f0' : '#ff6b6b');
       const st = c.status;
       const moving = Math.hypot(c.vx, c.vy) > 0.4;
@@ -348,11 +362,22 @@ export class Renderer3D {
       mat.rotation = !c.alive || st.proneUntil > b.t ? Math.PI / 2 : 0;
       mat.opacity = (c.floor === 0 && b.bushAt(c.x, c.y)) || st.hideUntil > b.t ? 0.5 : 1;
       mat.color.set(!c.alive ? '#777' : c.windup ? '#ffb0b0' : st.invulnUntil > b.t ? '#ffffcc' : '#ffffff');
-      s.name.position.y = 2.35;
+      s.name.position.y = this.spectate ? 2.45 : 2.35;
       s.name.visible = !(this.tps && c === me); // TPS視点では自分の名前は出さない（画面を覆うので）
-      // 体の外に出したスタンド
-      const sb = c.standBody;
-      const showStand = c.alive && sb && (c.team === me.team || debug || see(sb.x, sb.y, sb.floor * FLOOR_H + 1));
+      s.hpBar.visible = !!this.spectate && c.alive;
+      if (s.hpBar.visible) {
+        s.hpBar.position.y = 2.25;
+        const k = Math.max(0, c.hp / c.maxHp);
+        if (s.lastHp !== k) {
+          s.lastHp = k;
+          const ctx = s.hcv.getContext('2d');
+          ctx.fillStyle = '#000'; ctx.fillRect(0, 0, 64, 8);
+          ctx.fillStyle = k > 0.5 ? '#06d6a0' : k > 0.25 ? '#ffd166' : '#ff5d73';
+          ctx.fillRect(1, 1, Math.round(62 * k), 6);
+          s.htex.needsUpdate = true;
+        }
+      }
+      const showStand = c.alive && sb && apart && (c.team === me.team || debug || see(sb.x, sb.y, sb.floor * FLOOR_H + 1));
       s.stand.visible = !!showStand;
       if (showStand) {
         const car = c.def.standBlind;
