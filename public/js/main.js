@@ -803,6 +803,30 @@ function describePoint(b, x, y) {
   return `(${x.toFixed(1)}, ${y.toFixed(1)})${f === 1 ? '（2階）' : ''}`;
 }
 
+// 2D表示と3D表示の切り替え（3D の描画部品は使う時に初めて読み込む）
+async function setView(mode) {
+  if (mode === '3d' && !state.r3d) {
+    try {
+      const { Renderer3D } = await import('./render3d.js');
+      state.r3d = new Renderer3D($('#field3d'));
+      state.r3d.chips = state.r2d.chips;
+      state.r3d.sheet = state.r2d.sheet;
+    } catch (e) {
+      alert(`3D表示を始められませんでした（${e.message}）。2D表示のまま続けます`);
+      return;
+    }
+  }
+  state.view = mode;
+  const r = mode === '3d' ? state.r3d : state.r2d;
+  state.renderer = r;
+  $('#field').classList.toggle('hidden', mode === '3d');
+  $('#field3d').classList.toggle('hidden', mode !== '3d');
+  $('#view-btn').textContent = mode === '3d' ? '2D表示' : '3D表示';
+  $('#zoom-btn').textContent = r.zoom === 'near' ? '全体表示' : '拡大表示';
+  try { localStorage.setItem('nouryoku.view', mode); } catch { /* 無視 */ }
+  if (state.battle) r.resize(state.battle);
+}
+
 function insertText(t) {
   const el = $('#cmd');
   const s = el.selectionStart ?? el.value.length;
@@ -812,11 +836,11 @@ function insertText(t) {
 }
 
 window.addEventListener('DOMContentLoaded', async () => {
-  state.renderer = new Renderer($('#field'));
+  state.renderer = state.r2d = new Renderer($('#field'));
   renderCharCards();
   renderMapCards();
   preloadPortraits();
-  loadChips(Object.keys(CHARACTERS).flatMap(k => [k, `${k}_stand`])).then(chips => { state.renderer.chips = chips; state.chips = chips; renderCharCards(); });
+  loadChips(Object.keys(CHARACTERS).flatMap(k => [k, `${k}_stand`])).then(chips => { state.r2d.chips = chips; if (state.r3d) state.r3d.chips = chips; state.chips = chips; renderCharCards(); });
   // エフェクト素材（public/fx/effects.png またはブラウザに保存した画像）
   const fxStatus = sheet => {
     $('#fx-status').textContent = sheet
@@ -824,7 +848,7 @@ window.addEventListener('DOMContentLoaded', async () => {
       : '素材なし（プログラムで描いたエフェクトを使います）';
     $('#fx-clear').classList.toggle('hidden', !sheet || !sheet.source.startsWith('ブラウザ'));
   };
-  const reloadFx = () => loadFxSheet().then(sheet => { state.renderer.sheet = sheet; fxStatus(sheet); }).catch(() => fxStatus(null));
+  const reloadFx = () => loadFxSheet().then(sheet => { state.r2d.sheet = sheet; if (state.r3d) state.r3d.sheet = sheet; fxStatus(sheet); }).catch(() => fxStatus(null));
   reloadFx();
   const fxIn = document.createElement('input');
   fxIn.type = 'file';
@@ -879,6 +903,8 @@ window.addEventListener('DOMContentLoaded', async () => {
     $('#zoom-btn').textContent = z === 'near' ? '全体表示' : '拡大表示';
   };
   $('#zoom-btn').addEventListener('click', toggleZoom);
+  $('#view-btn').addEventListener('click', () => setView(state.view === '3d' ? '2d' : '3d'));
+  try { if (localStorage.getItem('nouryoku.view') === '3d') setView('3d'); } catch { /* 保存できない環境では2D */ }
   const fileIn = document.createElement('input');
   fileIn.type = 'file';
   fileIn.accept = 'image/*';
@@ -917,13 +943,15 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#speed').addEventListener('change', e => { state.speed = Number(e.target.value); });
   window.addEventListener('keydown', e => {
     if (e.code === 'KeyZ' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) toggleZoom();
+    // 3D表示：Q / E でカメラを回す
+    if ((e.code === 'KeyQ' || e.code === 'KeyE') && state.view === '3d' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) state.r3d.rotate(e.code === 'KeyQ' ? -Math.PI / 8 : Math.PI / 8);
     if (e.code === 'Space' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) {
       e.preventDefault();
       state.paused = !state.paused;
       updatePause();
     }
   });
-  const field = $('#field');
+  for (const field of [$('#field'), $('#field3d')]) {
   field.addEventListener('click', e => {
     const b = state.battle;
     if (!b) return;
@@ -942,6 +970,7 @@ window.addEventListener('DOMContentLoaded', async () => {
     tip.classList.remove('hidden');
   });
   field.addEventListener('mouseleave', () => { state.hover = null; $('#tooltip').classList.add('hidden'); });
+  }
   $('#quit-btn').addEventListener('click', () => {
     if (!confirm('戦闘を中断してタイトルに戻りますか？')) return;
     state.battle = null;

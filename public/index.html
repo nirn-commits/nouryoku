@@ -66,6 +66,7 @@
       <div class="field-col">
         <div class="field-wrap">
           <canvas id="field"></canvas>
+          <canvas id="field3d" class="hidden"></canvas>
           <div id="pause-badge" class="pause-badge hidden">一時停止中</div>
           <div id="screen-flash" class="screen-flash"></div>
           <div id="tooltip" class="tooltip hidden"></div>
@@ -83,6 +84,7 @@
         </div>
         <div class="controls">
           <button id="pause-btn" class="small">一時停止</button>
+          <button id="view-btn" class="small" title="2D表示と3D表示を切り替え（3Dでは Q / E キーでカメラを回せる）">3D表示</button>
           <button id="zoom-btn" class="small" title="Z キーでも切り替え">拡大表示</button>
           <label>速度
             <select id="speed">

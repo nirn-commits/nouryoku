@@ -18,7 +18,7 @@ const SOUND_LABEL = {
 const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
 
 // 物体の色：[上面, 手前の面]
-function colorsOf(o, b) {
+export function colorsOf(o, b) {
   switch (o.kind) {
     case 'wall':
       if (o.indestructible) return ['#1c1c22', '#121216'];

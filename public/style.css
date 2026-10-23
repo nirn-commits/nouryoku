@@ -77,7 +77,8 @@ kbd { background: #000; border: 1px solid #555; border-radius: 3px; padding: 0 4
 #battle .battle-grid { height: 100%; }
 .field-col { display: flex; flex-direction: column; min-height: 0; min-width: 0; }
 .field-wrap { position: relative; width: 100%; flex: 1 1 0; min-height: 0; overflow: hidden; display: flex; align-items: center; justify-content: center; }
-#field { display: block; border: 2px solid #000; box-shadow: 0 0 0 2px var(--gold); cursor: crosshair; max-width: 100%; }
+#field, #field3d { display: block; border: 2px solid #000; box-shadow: 0 0 0 2px var(--gold); cursor: crosshair; max-width: 100%; }
+#field3d.hidden, #field.hidden { display: none; }
 .status-row { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
 .status-row .phase { margin-top: 0; flex: 1; padding: 3px 10px; font-size: .9rem; }
 .status-row .time { color: var(--muted); font-size: .78rem; text-align: right; }
@@ -222,3 +223,4 @@ button:disabled { opacity: .5; cursor: default; }
 }
 .tabs .tab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .time .zone { color: #d6aaff; } .time .zone-out { color: #ff6bd6; font-weight: bold; }
+#field3d { touch-action: none; }
