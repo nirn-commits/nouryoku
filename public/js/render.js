@@ -232,7 +232,8 @@ export class Renderer {
     return modes;
   }
 
-  draw(b, { debug = false, hover = null, viewer = null, spectate = false } = {}) {
+  draw(b, { debug = false, hover = null, viewer = null, spectate = false, preview = null } = {}) {
+    this.preview = preview;
     this.spectate = spectate;
     const ctx = this.ctx;
     // 前のフレームが途中で失敗していても、描画の状態を初期化してから描く
@@ -482,6 +483,7 @@ export class Renderer {
     }
 
     this.drawSafeZone(b);
+    this.drawPreview(b, me);
 
     // 物音：聞こえた音（姿の見えない所の音は推定位置）に、広がる輪と種類を出す
     for (const h of me.memory.heard) {
@@ -994,6 +996,33 @@ export class Renderer {
       ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, -size / 2, -size / 2, size, size);
     } else {
       ctx.drawImage(chip.img, sx, sy, CHIP_CELL, CHIP_CELL, Math.round(x - size / 2), Math.round(footY - size), size, size);
+    }
+    ctx.restore();
+  }
+
+  // 組み立て中の計画：移動の経路（線）と、手順の番号つきの印
+  drawPreview(b, me) {
+    const pts = this.preview;
+    if (!pts || !pts.length) return;
+    const ctx = this.ctx, P = this.px;
+    const z = me.floor * FLOOR_H;
+    ctx.save();
+    ctx.strokeStyle = 'rgba(242,193,78,0.9)';
+    ctx.setLineDash([6, 4]);
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(me.x * P, this.sy(me.y, z));
+    for (const p of pts) if (p.move) ctx.lineTo(p.x * P, this.sy(p.y, z));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    for (const p of pts) {
+      const x = p.x * P, y = this.sy(p.y, z);
+      ctx.fillStyle = p.move ? 'rgba(242,193,78,0.95)' : 'rgba(155,231,255,0.95)';
+      ctx.beginPath(); ctx.arc(x, y, Math.max(7, P * 0.32), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#111';
+      ctx.font = `bold ${Math.max(10, P * 0.38)}px sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(p.n), x, y + 0.5);
     }
     ctx.restore();
   }

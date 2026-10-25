@@ -553,7 +553,7 @@ export class Renderer3D {
 
   // ---------- 描く ----------
 
-  draw(b, { debug = false, hover = null, viewer = null, spectate = false } = {}) {
+  draw(b, { debug = false, hover = null, viewer = null, spectate = false, preview = null } = {}) {
     if (this.battleRef !== b) this.buildStatic(b);
     this.spectate = spectate;
     const me = viewer || b.player;
@@ -561,6 +561,21 @@ export class Renderer3D {
     this.syncObjects(b, me);
     this.drawChars(b, me, see, debug);
     this.drawDynamic(b, me, see, debug, hover);
+    // 組み立て中の計画：移動の経路と、手順の番号つきの印
+    if (preview && preview.length) {
+      const z = me.floor * FLOOR_H + 0.06;
+      const line = [V(me.x, me.y, z), ...preview.filter(p => p.move).map(p => V(p.x, p.y, z))];
+      if (line.length > 1) this.dyn.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(line), new THREE.LineBasicMaterial({ color: '#f2c14e' })));
+      for (const p of preview) {
+        this.addDisc(p.x, p.y, me.floor * FLOOR_H, 0.35, p.move ? '#f2c14e' : '#9be7ff', 0.9);
+        const { tex, aspect } = this.text(String(p.n), '#f2c14e');
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+        s.scale.set(0.5 * aspect, 0.5, 1);
+        s.position.copy(V(p.x, p.y, me.floor * FLOOR_H + 0.9));
+        s.renderOrder = 20;
+        this.dyn.add(s);
+      }
+    }
 
     if (this.tps && me.alive) {
       this.drawTps(b, me, debug);

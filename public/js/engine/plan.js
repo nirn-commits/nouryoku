@@ -275,15 +275,17 @@ export function compilePlan(b, c, raw, source = 'local') {
     rejected: (Array.isArray(raw.rejected) ? raw.rejected : []).map(x => String(x).slice(0, 120)).slice(0, 5),
     truncated: [],
     budget: 0,
+    // 組み立て画面用：どの手順がなぜ外れたか
+    dropped: new Map(),
   };
   const steps = Array.isArray(raw.steps) ? raw.steps.slice(0, 12) : [];
   let cursor = { x: c.x, y: c.y };
   for (const s of steps) {
     const r = validateStep(b, c, s || {}, cursor);
-    if (r.error) { plan.rejected.push(r.error); continue; }
+    if (r.error) { plan.rejected.push(r.error); plan.dropped.set(s, `実行できない：${r.error}`); continue; }
     const step = r.step;
     const remaining = RULES.budgetSeconds - plan.budget;
-    if (plan.steps.length >= RULES.maxSteps || remaining < 0.3) { plan.truncated.push(step.label); continue; }
+    if (plan.steps.length >= RULES.maxSteps || remaining < 0.3) { plan.truncated.push(step.label); plan.dropped.set(s, '行動ゲージが足りない'); continue; }
     // 歩き方の指定が無い移動は、歩いて5秒を超える遠さか予算に収まらなければ走る
     if ((step.est > remaining || step.est > 5) && step.autoMode && step.mode === 'walk') {
       step.mode = 'run';
@@ -299,6 +301,7 @@ export function compilePlan(b, c, raw, source = 'local') {
         step.label += '（予算内で打ち切り）';
       } else {
         plan.truncated.push(step.label);
+        plan.dropped.set(s, `行動ゲージが足りない（あと${Math.max(0, remaining).toFixed(1)}秒、必要${step.est.toFixed(1)}秒）`);
         continue;
       }
     }

@@ -11,6 +11,7 @@ import { MAPS } from './engine/maps.js';
 import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
 import { Sound } from './audio.js';
 import { Director } from './spectate.js';
+import { PlanBuilder } from './planner-ui.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -234,8 +235,8 @@ async function checkStatus() {
     // サーバーは設定を変えて最大3回試すので、その分だけ待つ
     if (data.timeoutMs) state.clientTimeoutMs = data.timeoutMs * 3 + 5000;
     el.textContent = state.gemini
-      ? `AI：Gemini（${data.model}）であなたの指示を解析します（CPUの作戦は内蔵の思考、セリフだけ Gemini）`
-      : 'AI：GEMINI_API_KEY が未設定のため、簡易ローカル解析で動作します';
+      ? `AI：CPU のセリフだけ Gemini（${data.model}）で考えます（行動はコマンド、CPU の作戦は内蔵の思考）`
+      : 'AI：GEMINI_API_KEY が未設定です（CPU のセリフは内蔵の物を使います。遊ぶのに支障はありません）';
     el.className = `ai-status ${state.gemini ? 'ok' : 'warn'}`;
   } catch {
     state.gemini = false;
@@ -429,8 +430,9 @@ function startBattle() {
      <p class="meta">1回の指示は最大${RULES.maxSteps}手順・見積もり${RULES.budgetSeconds}秒まで。</p>`;
   state.renderer.resize(b);
   setupSpectate(b);
+  state.builder.reset();
+  setTextMode(false);
   updatePause();
-  if (!state.spectate) $('#cmd').focus();
 }
 
 // ---------- 観戦：自動カメラ・体力の綱引き ----------
@@ -464,29 +466,20 @@ async function submitCommand() {
   const b = state.battle;
   const turn = state.turn;
   if (!b || b.over || turn.phase !== 'input' || state.thinking) return;
-  const text = $('#cmd').value.trim();
-  $('#cmd').value = '';
-  const seq = ++state.cmdSeq;
-  playerLog(text ? `▶ 指示：${text}` : '▶ 指示：（何もしない）', 'command');
-  state.thinking++;
-  state.thinkingSince = performance.now();
-  updateThinking();
-  let raw = null;
-  let source = 'local';
-  if (state.gemini && text) {
-    try {
-      raw = await apiPlan({ role: 'player', text, observation: buildObservation(b, b.player) });
-      source = 'gemini';
-    } catch (e) {
-      playerLog(`（Gemini 解析に失敗：${e.message}。ローカル解析に切り替えます）`, 'fail');
-    }
+  // 文章で入力している時はローカルの簡易解析、そうでなければ組み立てたコマンドをそのまま使う
+  let raw;
+  if (state.textMode) {
+    const text = $('#cmd').value.trim();
+    $('#cmd').value = '';
+    playerLog(text ? `▶ 指示：${text}` : '▶ 指示：（何もしない）', 'command');
+    raw = text ? localParse(b, b.player, text) : { interpretation: 'その場で様子を見る', steps: [] };
+  } else {
+    raw = state.builder.raw();
+    playerLog(raw.steps.length ? '▶ 指示（コマンド）' : '▶ 指示：（何もしない）', 'command');
+    if (!raw.steps.length) raw.interpretation = 'その場で様子を見る';
   }
-  state.thinking--;
-  updateThinking();
-  if (b !== state.battle || b.over) return;
-  if (seq !== state.cmdSeq) return;
-  if (!raw) raw = text ? localParse(b, b.player, text) : { interpretation: 'その場で様子を見る', steps: [] };
-  const plan = compilePlan(b, b.player, raw, source);
+  const plan = compilePlan(b, b.player, raw, state.textMode ? 'local' : 'manual');
+  state.builder.clear();
   if (plan.interpretation) playerLog(`解釈：${plan.interpretation}`);
   if (plan.steps.length) playerLog(`計画：${plan.steps.map(s => s.label).join(' → ')}（見積もり${plan.budget.toFixed(1)}秒）`);
   for (const r of plan.rejected) playerLog(`✕ 実行不可：${r}`, 'fail');
@@ -505,6 +498,7 @@ function updatePhase() {
   const phase = turn.phase;
   const input = phase === 'input' && !state.thinking;
   $('#cmd').disabled = !input;
+  $('#builder').classList.toggle('disabled', !input);
   $('#send-btn').disabled = !input;
   $('#send-btn').textContent = state.thinking ? `解析中… ${Math.floor((performance.now() - state.thinkingSince) / 1000)}秒` : phase === 'resolving' ? '相手の思考待ち…' : phase === 'execute' ? '実行中…' : '決定';
   const label = {
@@ -516,7 +510,8 @@ function updatePhase() {
   $('#phase-label').textContent = label;
   $('#phase-label').className = `phase phase-${phase}`;
   if (phase !== state.lastPhase) {
-    if (phase === 'input' && !state.spectate) $('#cmd').focus();
+    if (phase === 'input' && !state.spectate && state.textMode) $('#cmd').focus();
+    if (phase === 'input') state.builder.render();
     state.lastPhase = phase;
   }
 }
@@ -832,7 +827,8 @@ function loop(now) {
     guard('画面の更新', () => updatePhase());
     // 自分がやられたら、生きている味方の視点で観戦する
     const viewer = viewerOf(b);
-    guard('戦場の描画', () => state.renderer.draw(b, { debug: omni(), hover: state.hover, viewer, spectate: state.spectate }));
+    const preview = !state.spectate && state.turn.phase === 'input' && state.builder ? state.builder.preview() : null;
+    guard('戦場の描画', () => state.renderer.draw(b, { debug: omni(), hover: state.hover, viewer, spectate: state.spectate, preview }));
     guard('情報欄の表示', () => renderSide());
     guard('ログの表示', () => renderLog());
     guard('観戦の演出', () => updateSpectate(now));
@@ -874,6 +870,15 @@ async function setView(mode) {
   $('#zoom-btn').textContent = r.zoom === 'near' ? '全体表示' : '拡大表示';
   try { localStorage.setItem('nouryoku.view', mode); } catch { /* 無視 */ }
   if (state.battle) r.resize(state.battle);
+}
+
+// 文章で入力するか、コマンドで組み立てるか
+function setTextMode(on) {
+  state.textMode = on;
+  $('#text-cmd').classList.toggle('hidden', !on);
+  document.querySelector('.command').classList.toggle('text-mode', on);
+  $('#text-toggle').textContent = on ? 'コマンドで' : '文章で';
+  if (on) $('#cmd').focus();
 }
 
 function insertText(t) {
@@ -986,14 +991,19 @@ window.addEventListener('DOMContentLoaded', async () => {
   // 「スタンドでできること」の例文をクリックすると入力欄に入る
   $('#stand-tips-body').addEventListener('click', e => {
     const ex = e.target.closest('[data-ex]');
-    if (ex) { $('#cmd').value = ex.dataset.ex; $('#cmd').focus(); }
+    if (ex) { setTextMode(true); $('#cmd').value = ex.dataset.ex; $('#cmd').focus(); }
   });
+  state.builder = new PlanBuilder($('#builder'), { getBattle: () => state.battle });
+  $('#pb-clear').addEventListener('click', () => state.builder.clear());
+  $('#text-toggle').addEventListener('click', () => setTextMode(!state.textMode));
+  $('#pb-speech').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submitCommand(); } });
   $('#examples').addEventListener('change', e => {
     if (e.target.value) { $('#cmd').value = e.target.value; e.target.value = ''; $('#cmd').focus(); }
   });
   $('#pause-btn').addEventListener('click', () => { state.paused = !state.paused; updatePause(); });
   $('#speed').addEventListener('change', e => { state.speed = Number(e.target.value); });
   window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && state.builder && state.builder.pending) { state.builder.pending = null; state.builder.render(); }
     if (e.code === 'KeyZ' && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) toggleZoom();
     // 3D表示：Q / E でカメラを回す
     if ((e.code === 'KeyQ' || e.code === 'KeyE') && (state.view === '3d' || state.view === 'tps') && document.activeElement !== $('#cmd') && !$('#battle').classList.contains('hidden')) state.r3d.rotate(e.code === 'KeyQ' ? -Math.PI / 8 : Math.PI / 8);
@@ -1008,7 +1018,9 @@ window.addEventListener('DOMContentLoaded', async () => {
     const b = state.battle;
     if (!b) return;
     const p = state.renderer.toWorld(e.clientX, e.clientY, b.player.floor * 3);
-    insertText(describePoint(b, p.x, p.y));
+    // コマンドで地点・物を選んでいる途中ならそれに使い、文章入力中なら名前や座標を入力欄へ
+    if (!state.textMode && state.builder.wantsMap()) state.builder.mapClick(p.x, p.y);
+    else if (state.textMode) insertText(describePoint(b, p.x, p.y));
   });
   field.addEventListener('mousemove', e => {
     const b = state.battle;

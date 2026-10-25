@@ -78,10 +78,17 @@
           <span id="time-label" class="time"></span>
         </div>
         <div class="command">
-          <textarea id="cmd" rows="2" placeholder="例：左の家に駆け込み、窓から敵の位置を確認する「どこに隠れた？」"></textarea>
-          <div class="cmd-side">
-            <button id="send-btn" class="big">決定</button>
+          <!-- 行動の組み立て（コマンド） -->
+          <div id="builder" class="builder"></div>
+          <!-- 文章で入力（ローカルの簡易解析） -->
+          <div id="text-cmd" class="text-cmd hidden">
+            <textarea id="cmd" rows="2" placeholder="例：左の家に駆け込み、窓から敵の位置を確認する「どこに隠れた？」"></textarea>
             <select id="examples"><option value="">例文…</option></select>
+          </div>
+          <div class="cmd-side">
+            <input id="pb-speech" type="text" maxlength="40" placeholder="セリフ（任意）">
+            <button id="send-btn" class="big">決定</button>
+            <div class="cmd-sub"><button id="pb-clear" class="small">やり直す</button><button id="text-toggle" class="small" title="文章で指示を書く（ローカルの簡易解析）">文章で</button></div>
           </div>
         </div>
         <div class="controls">
