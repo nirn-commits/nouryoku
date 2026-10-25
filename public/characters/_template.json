@@ -1,0 +1,35 @@
+{
+  "id": "my_hero",
+  "name": "新しいキャラの名前",
+  "reading": "よみがな",
+  "power": { "label": "能力の呼び方（スタンド・魔法・忍術 など）", "name": "能力の名前" },
+  "color": "#88ccff",
+  "role": "melee",
+  "hp": 100, "sp": 100, "spRegen": 6,
+  "walk": 3.2, "run": 5.8,
+  "punch": 9, "defense": 1.0, "kg": 60,
+  "stats": { "power": "B", "speed": "B", "range": "C", "stamina": "B", "precision": "B", "growth": "B" },
+  "profile": "見た目・経歴など",
+  "personality": "性格・戦い方",
+  "lines": ["いつものセリフ1", "いつものセリフ2"],
+  "persona": { "aggression": 1.0, "caution": 1.2, "gamble": 0.5, "chatter": 0.4 },
+  "situationLines": { "spot": ["敵を見つけた時"], "hit": ["一撃を入れた時"], "hurt": ["強く殴られた時"] },
+  "examples": ["組み立ての例や、文章入力の例文"],
+  "abilities": [
+    {
+      "id": "main",
+      "name": "能力の名前",
+      "desc": "能力の説明",
+      "range": 6, "castTime": 0.3, "cooldown": 1.5, "cost": 10,
+      "weakness": "弱点",
+      "effects": {
+        "strike": {
+          "name": "技の名前",
+          "desc": "技の説明",
+          "targets": ["enemy"],
+          "do": [{ "type": "damage", "amount": 10 }, { "type": "knockback", "distance": 2 }]
+        }
+      }
+    }
+  ]
+}

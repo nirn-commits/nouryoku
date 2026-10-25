@@ -86,7 +86,15 @@ const LINES = {
 const pick = (rng, list) => list[Math.floor(rng() * list.length)];
 
 export function personaOf(c) {
-  return PERSONA[c.charId] || DEFAULT;
+  return PERSONA[c.charId] || (c.def.persona && { ...DEFAULT, ...c.def.persona }) || DEFAULT;
+}
+
+// 場面ごとのセリフ：組み込みのキャラは上の表、データで追加したキャラはその JSON の situationLines（無い場面はいつものセリフ）
+function linesOf(c) {
+  if (LINES[c.charId]) return LINES[c.charId];
+  const own = c.def.situationLines || {};
+  const base = c.def.lines || [];
+  return Object.fromEntries(['spot', 'hit', 'hurt', 'low', 'winning', 'losing', 'hunting', 'ability', 'downed'].map(k => [k, own[k] && own[k].length ? own[k] : base]));
 }
 
 // 今の気分：体力の差・直前の被弾・敵が見えているか
@@ -137,7 +145,7 @@ function events(b, c) {
 // 計画に合わせた一言を選ぶ（言わない方がいい時は null）
 export function chooseLine(b, c, plan) {
   const ev = events(b, c);
-  const bank = LINES[c.charId];
+  const bank = linesOf(c);
   if (!bank || !plan || !plan.steps) return null;
   const steps = plan.steps;
   // 潜む・隠れる計画の時は黙る（声で居場所がばれる）。食いしばっている間は喋れない
@@ -169,8 +177,8 @@ export function chooseLine(b, c, plan) {
 // ターンの途中の思わず出る一言（強く殴られた・強く殴った時）。CPU だけ、喋りすぎないよう間を空ける
 export function blurt(b, c, key) {
   if (b.isSim || !c.isCPU || !c.alive || c.clench || c.status.hideUntil > b.t) return null;
-  const bank = LINES[c.charId];
-  if (!bank || !bank[key]) return null;
+  const bank = linesOf(c);
+  if (!bank || !bank[key] || !bank[key].length) return null;
   const m = c.aiMem || (c.aiMem = { dealt: c.dealt || 0, hp: c.hp, visible: false, lastLine: -99, recent: [] });
   if (b.t - m.lastLine < 5 || b.rng() > personaOf(c).chatter + 0.15) return null;
   const options = bank[key].filter(l => !m.recent.includes(l) && !l.includes('{'));

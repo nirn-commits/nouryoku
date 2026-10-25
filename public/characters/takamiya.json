@@ -1,0 +1,159 @@
+{
+  "id": "takamiya",
+  "name": "鷹宮 迅",
+  "reading": "たかみや じん",
+  "power": {
+    "label": "剣術",
+    "name": "鷹宮流抜刀術"
+  },
+  "color": "#7fb3ff",
+  "role": "melee",
+  "hp": 90,
+  "sp": 100,
+  "spRegen": 6,
+  "walk": 3.4,
+  "run": 5.8,
+  "punch": 8,
+  "defense": 0.95,
+  "kg": 68,
+  "stats": {
+    "power": "A",
+    "speed": "A",
+    "range": "D（約4m）",
+    "stamina": "B",
+    "precision": "A",
+    "growth": "C"
+  },
+  "profile": "剣術道場の跡取り、20歳。木刀ではなく本物の刀を腰に差して歩く。無駄口は叩かない。",
+  "personality": "寡黙で間合いに厳しい。一気に踏み込んで斬り、斬ったら離れず畳みかける。",
+  "lines": [
+    "……参る",
+    "間合いだ",
+    "遅い"
+  ],
+  "persona": {
+    "aggression": 1.3,
+    "caution": 1,
+    "gamble": 0.5,
+    "chatter": 0.25
+  },
+  "situationLines": {
+    "spot": [
+      "……見えた",
+      "参る"
+    ],
+    "hit": [
+      "浅いか",
+      "次で決める"
+    ],
+    "hurt": [
+      "……やる",
+      "いい腕だ"
+    ],
+    "low": [
+      "まだ、刀は折れていない"
+    ],
+    "winning": [
+      "終わりだ"
+    ],
+    "losing": [
+      "……面白い"
+    ],
+    "hunting": [
+      "気配はある"
+    ],
+    "ability": [
+      "鷹宮流——",
+      "抜く"
+    ],
+    "downed": [
+      "立て"
+    ]
+  },
+  "examples": [
+    "敵に居合で踏み込む",
+    "敵が殴りかかってきたら見切る"
+  ],
+  "abilities": [
+    {
+      "id": "iai",
+      "name": "鷹宮流抜刀術",
+      "desc": "刀による一瞬の踏み込みと斬撃。",
+      "range": 5,
+      "castTime": 0.3,
+      "cooldown": 3.4,
+      "cost": 20,
+      "weakness": "刀の届く範囲（約4m）の外には何もできない。飛び道具に弱い。",
+      "observedHint": "敵の能力？：一瞬で間合いを詰めて斬りつけてくる。距離を取れば怖くない？",
+      "effects": {
+        "iai": {
+          "name": "居合",
+          "desc": "敵へ一気に踏み込み（最大4m）、通り道の敵を斬る（11ダメージ）。構えの間に横へ動かれると外れる。",
+          "targets": [
+            "enemy"
+          ],
+          "range": 4.5,
+          "do": [
+            {
+              "type": "dash",
+              "toward": "target",
+              "distance": 4,
+              "invuln": 0.2
+            },
+            {
+              "type": "damage",
+              "amount": 11,
+              "melee": true
+            }
+          ],
+          "hit": {
+            "shape": "line",
+            "length": 4.5,
+            "width": 1
+          }
+        },
+        "sweep": {
+          "name": "薙ぎ払い",
+          "desc": "前方を大きく斬り払う（扇形・半径3m）。当たった敵を2m吹き飛ばす。",
+          "targets": [
+            "enemy",
+            "direction"
+          ],
+          "range": 3,
+          "hit": {
+            "shape": "cone",
+            "radius": 3,
+            "angle": 100
+          },
+          "do": [
+            {
+              "type": "damage",
+              "amount": 8,
+              "melee": true
+            },
+            {
+              "type": "knockback",
+              "distance": 2
+            }
+          ]
+        },
+        "mikiri": {
+          "name": "見切り",
+          "desc": "0.8秒の間、相手の攻撃を見切ってかわす（無敵）。",
+          "targets": [
+            "self"
+          ],
+          "castTime": 0.1,
+          "cooldown": 3,
+          "do": [
+            {
+              "type": "status",
+              "status": "invuln",
+              "seconds": 0.8
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

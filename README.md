@@ -204,6 +204,9 @@ npm start                 # → http://127.0.0.1:8787/
 
 ## キャラクター
 
+ジョジョのスタンド使い以外のキャラクター（魔法使い・剣士・忍者など）も、JSON ファイルを書くだけで追加できます。書き方は [docs/character-format.md](docs/character-format.md)、ひな形は `public/characters/_template.json`、例は `public/characters/homura.json`（炎の魔法使い）と `takamiya.json`（剣士）。
+
+
 | 本体 | スタンド | 能力 |
 | --- | --- | --- |
 | 十河 矩比呂 | パーペンディキュラー | 接触面から垂直にきっかり10m弾き出す（自分を弾く・触れた物を弾く・持った物を飛ばす）。障害物で止まり衝突威力は一定、100kgまで、再発動約1.5秒。屋内で真上に跳ぶと天井にぶつかる |

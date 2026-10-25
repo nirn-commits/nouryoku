@@ -229,7 +229,7 @@ export function buildObservation(b, c) {
     // 場の仕掛け：見えている煙幕・撒かれた玉、味方の無音の結界
     zones: b.world.zones
       .filter(z => (z.team !== undefined && z.team === c.team) || (z.kind !== 'silence' && z.kind !== 'powder_trap' && b.canSee(c, z.x, z.y, (z.floor ?? 0) * 3 + 0.3)) || dist(c.x, c.y, z.x, z.y) < z.r + 1)
-      .map(z => ({ kind: { smoke: '煙幕（視線を遮る）', caltrops: '床に撒かれた玉（走ると転ぶ）', silence: '無音の結界（中の音が消える）', powder_trap: '内側を粉にした床（相手が踏むと抜けて倒れる）' }[z.kind] || z.kind, at: [r1(z.x), r1(z.y)], radius: z.r, seconds_left: r1(z.until - b.t), ...(z.team !== undefined ? { mine: z.team === c.team } : {}) })),
+      .map(z => ({ kind: { smoke: '煙幕（視線を遮る）', caltrops: '床に撒かれた玉（走ると転ぶ）', silence: '無音の結界（中の音が消える）', powder_trap: '内側を粉にした床（相手が踏むと抜けて倒れる）', hazard: `危険な場（中にいる敵は毎秒${z.dps ?? 3}ダメージ）${z.label ? `：${z.label}` : ''}`, slow: `鈍化の場（中にいる敵は足が遅くなる）${z.label ? `：${z.label}` : ''}` }[z.kind] || z.kind, at: [r1(z.x), r1(z.y)], radius: z.r, seconds_left: r1(z.until - b.t), ...(z.team !== undefined ? { mine: z.team === c.team } : {}) })),
     // 粉の山（プリティ・ヴェイカント）。散っていなければ元に戻せる（restore、または interact で手で集める）
     powder_piles: (b.world.piles || [])
       .filter(p => p.floor === c.floor && dist(c.x, c.y, p.x + p.w / 2, p.y + p.h / 2) < 20 && b.canSee(c, p.x + p.w / 2, p.y + p.h / 2, p.floor * 3 + 0.2))

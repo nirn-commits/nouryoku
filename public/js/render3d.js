@@ -432,6 +432,8 @@ export class Renderer3D {
       } else if (z.kind === 'caltrops' && (mine(z) || see(z.x, z.y, zz + 0.1))) this.addDisc(z.x, z.y, zz, z.r, '#e8e8f0', 0.35);
       else if (z.kind === 'silence' && mine(z)) this.addRing(z.x, z.y, zz, z.r, '#7ad1c5');
       else if (z.kind === 'powder_trap' && mine(z)) this.addRing(z.x, z.y, zz, z.r, '#f28ab2', 0.7, 0.08);
+      else if (z.kind === 'hazard') this.addDisc(z.x, z.y, zz, z.r, '#ff783c', 0.35 + Math.sin(b.t * 6) * 0.06);
+      else if (z.kind === 'slow') this.addDisc(z.x, z.y, zz, z.r, '#5aa0ff', 0.3);
       else if (z.kind === 'hum') this.addRing(z.x, z.y, zz, z.r * (0.3 + ((b.t * 1.2) % 1) * 0.7), '#e8c547', 0.5);
     }
     // 粉の山・瓦礫
@@ -461,7 +463,7 @@ export class Renderer3D {
     // 飛来物
     for (const p of b.world.projectiles) {
       if (!debug && !see(p.x, p.y, p.z)) continue;
-      const m = new THREE.Mesh(new THREE.SphereGeometry(p.kind === 'ball' ? 0.09 : 0.18, 10, 8), new THREE.MeshBasicMaterial({ color: p.kind === 'ball' ? '#e8e8ff' : '#ffcf6b' }));
+      const m = new THREE.Mesh(new THREE.SphereGeometry(p.kind === 'ball' ? 0.09 : p.bolt ? 0.22 : 0.18, 10, 8), new THREE.MeshBasicMaterial({ color: p.bolt ? (p.color || '#ffb347') : p.kind === 'ball' ? '#e8e8ff' : '#ffcf6b' }));
       m.position.copy(V(p.x, p.y, p.z));
       this.dyn.add(m);
     }

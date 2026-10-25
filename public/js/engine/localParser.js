@@ -306,6 +306,23 @@ function parseClause(b, c, clause, has, ctx = {}) {
   if (/煙幕/.test(clause)) return [{ action: 'use_item', targetType: mentionsEnemy ? 'enemy' : 'none' }];
   if (/傘/.test(clause) && /開|広げ|盾|防/.test(clause)) return [{ action: 'use_item', targetType: 'none' }];
 
+  // --- データで追加した能力：技の名前（「火球」「居合」など）が文中にあれば、その技を使う ---
+  for (const id of c.def.abilities) {
+    const ab = ABILITIES[id];
+    if (!ab.generic) continue;
+    const hit = Object.entries(ab.effects).sort((p, q) => q[1].name.length - p[1].name.length).find(([, ed]) => clause.includes(ed.name));
+    if (!hit) continue;
+    const [eff, ed] = hit;
+    const t = ed.targets;
+    const where = mentionsEnemy && t.includes('enemy') ? { targetType: 'enemy' }
+      : pt && t.includes('point') ? toTarget(pt)
+      : obj && t.includes('object') ? { targetType: 'object', targetId: obj.id }
+      : dir && dir !== 'cover' && t.includes('direction') ? { targetType: 'direction', direction: dir }
+      : /自分|身を|まとう|かける/.test(clause) && t.includes('self') ? { targetType: 'self' }
+      : t.includes('enemy') ? { targetType: 'enemy' } : { targetType: t[0] === 'none' ? 'none' : t[0] };
+    return [{ action: 'ability', ability: id, effect: eff, ...where }];
+  }
+
   // --- リトル・レッド・コルベット：車両を走らせ、口を残す・噛む・口から喋る ---
   if (has.corvette) {
     const sec = clause.match(/(\d+(?:\.\d+)?)\s*秒/);

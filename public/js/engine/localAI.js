@@ -396,6 +396,49 @@ function reactTail(b, c, plan) {
   return plan;
 }
 
+// データで追加したキャラ（汎用の能力）：技の中身（ダメージ・回復・強化・場）を見て使い分ける
+function effectValue(ed) {
+  let dmg = 0;
+  for (const p of ed.do || []) {
+    if (p.type === 'damage') dmg += p.amount;
+    if (p.type === 'projectile') dmg += (p.damage || 0) * (p.count || 1);
+    if (p.type === 'zone' && p.kind === 'hazard') dmg += (p.dps || 3) * Math.min(4, p.seconds || 4);
+    if (p.type === 'status' && (p.status === 'stun' || p.status === 'prone')) dmg += 4;
+    if (p.type === 'knockback') dmg += 2;
+  }
+  return dmg;
+}
+
+function genericPlan(b, c, pe, say) {
+  const ready = id => !c.cd[id] && c.sp >= ABILITIES[id].cost;
+  const effects = c.def.abilities.filter(ready).flatMap(id => Object.entries(ABILITIES[id].effects).map(([eff, ed]) => ({ id, eff, ed, ab: ABILITIES[id] })));
+  const steps = [];
+  // 体力が少ない：回復や守りの技があれば先に使う
+  if (c.hp < c.maxHp * 0.45) {
+    const guard = effects.find(x => x.ed.targets.includes('self') && (x.ed.do || []).some(p => p.type === 'heal' || (p.type === 'buff' && p.stat === 'defense') || (p.type === 'status' && p.status === 'invuln')));
+    if (guard) steps.push({ action: 'ability', ability: guard.id, effect: guard.eff, targetType: 'self' });
+  }
+  if (!pe) return steps.length ? { interpretation: '（CPU・ローカル）身を守る', speech: null, steps } : null;
+  const d = dist(c.x, c.y, pe.x, pe.y);
+  // 敵に向けて使える技のうち、一番効きそうなもの（射程内か、飛び道具なら見えていなくても撃てる）
+  const attacks = effects
+    .filter(x => x.ed.targets.includes('enemy') || x.ed.targets.includes('point'))
+    .map(x => ({ ...x, value: effectValue(x.ed), shoots: (x.ed.do || []).some(p => p.type === 'projectile'), range: x.ed.range ?? x.ab.range }))
+    .filter(x => x.value > 0)
+    .sort((p, q) => q.value - p.value);
+  const usable = attacks.find(x => (pe.visible || x.shoots) && d <= x.range + (c.def.role === 'ranged' ? 0 : 1.5));
+  if (usable) {
+    const tgt = usable.ed.targets.includes('enemy') ? { targetType: 'enemy' } : { targetType: 'point', x: Math.round(pe.x * 10) / 10, y: Math.round(pe.y * 10) / 10 };
+    if (c.def.role !== 'ranged' && d > usable.range - 0.5) steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
+    steps.push({ action: 'ability', ability: usable.id, effect: usable.eff, ...tgt });
+    if (c.def.role === 'ranged') { if (d < (c.def.keepDistance || 10)) steps.push(retreatStep(b, c, pe, 6)); }
+    else steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' });
+    return { interpretation: `（CPU・ローカル）『${usable.ab.name}：${usable.ed.name}』を狙う`, speech: say(0.3), steps };
+  }
+  // 届く技が無い：近接型・中距離型は詰め、遠距離型は間合いを保つ（共通の考え方に任せる）
+  return steps.length ? { interpretation: '（CPU・ローカル）身を守る', speech: null, steps } : null;
+}
+
 // どのキャラにも共通の反射的な判断（キャラごとの作戦より先に見る）
 function reflexPlan(b, c, pe, say) {
   // 体に何か付いている（エコー・ビーチの個体・コルベットの口）→ 払う
@@ -588,10 +631,16 @@ function alternativePlans(b, c, pe) {
     alts.push({ interpretation: tag('車両で口を付けて噛む'), speech: null, steps: [{ action: 'stand_move', targetType: 'enemy', duration: 0.3 }, retreatStep(b, c, pe, 6), { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' }, { action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 5 }] });
     if (c.mouths.some(m => m.on && m.on !== c.id)) alts.push({ interpretation: tag('食いしばって噛み続ける'), speech: null, steps: [{ action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 6 }, retreatStep(b, c, pe, 6)] });
   }
-  if (pe.visible && dist(c.x, c.y, pe.x, pe.y) < 4) alts.push({ interpretation: tag('構えて受けてから殴る'), speech: null, steps: [{ action: 'guard', targetType: 'enemy', duration: 1.2 }, { action: 'melee', targetType: 'enemy' }] });
+  if (pe.visible && dist(c.x, c.y, pe.x, pe.y) < 4 && c.def.role !== 'ranged') alts.push({ interpretation: tag('構えて受けてから殴る'), speech: null, steps: [{ action: 'guard', targetType: 'enemy', duration: 1.2 }, { action: 'melee', targetType: 'enemy' }] });
   for (const id of c.def.abilities) {
     const ab = ABILITIES[id];
     for (const [eff, ed] of Object.entries(ab.effects)) {
+      // データで追加した能力：自分にかける技（強化・回復・守り）や、地点に置く技も試す
+      if (ABILITIES[id].generic && !ed.targets.includes('enemy')) {
+        if (ed.targets.includes('self')) alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を使う`), speech: null, steps: [{ action: 'ability', ability: id, effect: eff, targetType: 'self' }, ...(c.def.role === 'ranged' ? [retreatStep(b, c, pe, 6)] : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }])] });
+        else if (ed.targets.includes('point')) alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を敵の所へ`), speech: null, steps: [{ action: 'ability', ability: id, effect: eff, targetType: 'point', x: Math.round(pe.x * 10) / 10, y: Math.round(pe.y * 10) / 10 }] });
+        continue;
+      }
       if (!ed.targets.includes('enemy') || id === 'corvette' || (id === 'hotel' && eff === 'seal')) continue;
       const near = (ed.range ?? ab.range) < 6;
       alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を狙う`), speech: null, steps: [...(near ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }] : []), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, ...(c.def.role === 'ranged' ? [retreatStep(b, c, pe, 6)] : [{ action: 'melee', targetType: 'enemy' }])] });
@@ -662,6 +711,10 @@ function basePlan(b, c) {
   if (c.def.abilities.includes('vacant')) {
     const vp = saragiinPlan(b, c, pe, line);
     if (vp) return vp;
+  }
+  if (c.def.custom) {
+    const gp = genericPlan(b, c, pe, line);
+    if (gp) return gp;
   }
   if (c.def.abilities.includes('hotel')) {
     const kp = kitoPlan(b, c, pe, line);

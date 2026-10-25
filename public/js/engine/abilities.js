@@ -3,6 +3,7 @@ import { ABILITIES, RULES } from './data.js';
 import { dist, angleTo, nearestPointOnRect, distToRect, circleRectPush, rectCenter, clamp } from './vec.js';
 import { buildingAt, FLOOR_H } from './world.js';
 import { interruptStep } from './plan.js';
+import { applyGeneric } from './generic.js';
 
 
 function fail(reason) {
@@ -579,5 +580,7 @@ IMPL.corvette = (b, c, effect, res, ab, step) => {
 
 export function applyAbility(b, c, step, res) {
   const ab = ABILITIES[step.ability];
+  // データで定義された能力（キャラクターのJSON）は、汎用の仕組みで効果を出す
+  if (ab.generic) return applyGeneric(b, c, step.effect, res, ab, step);
   return IMPL[step.ability](b, c, step.effect, res, ab, step);
 }

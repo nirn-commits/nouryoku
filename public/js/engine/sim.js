@@ -4,6 +4,7 @@ import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById, ne
 import { createWorld } from './maps.js';
 import { itemDef } from './items.js';
 import { blurt } from './persona.js';
+import { boltHit } from './generic.js';
 import { dist, angleTo, angDiff, circleRectPush, segRectRange, segCircle, distToRect, clamp, makeRng, pointInRect } from './vec.js';
 import { updateRunner, interruptStep, adoptPlan } from './plan.js';
 
@@ -689,6 +690,38 @@ export class Battle {
     this.emit({ text: `警察が到着！ 全員がその場から散った。判定：${name(0)} ${d0} 対 ${name(1)} ${d1}（与えたダメージ）→ ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
   }
 
+  // ---------- 汎用の能力：強化・鈍化・危険な場 ----------
+
+  // 能力の強化（buff）の倍率（power：殴る威力／speed：足の速さ／defense：受けるダメージ）
+  buffMult(c, stat) {
+    if (!c.buffs || !c.buffs.length) return 1;
+    c.buffs = c.buffs.filter(x => x.until > this.t);
+    return c.buffs.filter(x => x.stat === stat).reduce((m, x) => m * x.mult, 1);
+  }
+
+  // 足の速さの倍率：鈍化の状態・鈍化の場・強化
+  speedMult(c) {
+    let m = this.buffMult(c, 'speed');
+    if (c.status.slowUntil > this.t) m *= c.status.slowMult ?? 0.5;
+    const z = this.world.zones.find(z => z.kind === 'slow' && z.team !== c.team && (z.floor ?? 0) === c.floor && dist(z.x, z.y, c.x, c.y) <= z.r);
+    if (z) m *= z.mult ?? 0.5;
+    return m;
+  }
+
+  // 危険な場（炎・毒など）：中にいる敵は1秒ごとにダメージ
+  updateHazards() {
+    for (const z of this.world.zones) {
+      if (z.kind !== 'hazard') continue;
+      z.ticks ||= {};
+      for (const c of this.chars) {
+        if (!c.alive || c.team === z.team || (z.floor ?? 0) !== c.floor || dist(z.x, z.y, c.x, c.y) > z.r) continue;
+        if (this.t < (z.ticks[c.id] ?? 0)) continue;
+        z.ticks[c.id] = this.t + 1;
+        this.damage(c, z.dps ?? 3, { source: this.chars.find(o => o.id === z.owner) || null, kind: 'ability', label: z.label || '危険な場' });
+      }
+    }
+  }
+
   // ---------- 安全地帯（徐々に狭まる） ----------
 
   // 中心は地図の中ほどの歩ける屋外。最初の半径は地図全体を覆う大きさ
@@ -797,7 +830,7 @@ export class Battle {
         return 0;
       }
     }
-    let dmg = amount * target.def.defense;
+    let dmg = amount * target.def.defense * (target.buffs ? this.buffMult(target, 'defense') : 1);
     const scoring = source && source.team !== target.team;
     let guarded = false;
     if (from && target.status.guardUntil > this.t && (kind === 'melee' || kind === 'thrown')) {
@@ -1003,6 +1036,19 @@ export class Battle {
 
   // 飛来物は高さも持つ：手の高さから狙った高さへまっすぐ飛ぶ（2階から下へ投げ下ろすこともできる）
   // 手に持った物を投げる（item は投げた物。落ちた所に残る／割れ物は割れる）
+  // 汎用の飛び道具（魔法の弾など）：まっすぐ飛び、最初に当たった人（か爆発の範囲）に効果を出して消える
+  spawnBolt(owner, a, { speed = 16, damage = 6, range = 15, radius = 0, onHit = [], name = '弾', color = null } = {}) {
+    const z = this.baseZ(owner) + 1.3;
+    const p = {
+      id: `bolt_${++projSeq}`, kind: 'bolt', bolt: true, item: { name }, owner: owner.id, name, color,
+      x: owner.x + Math.cos(a) * 0.5, y: owner.y + Math.sin(a) * 0.5, z,
+      vx: Math.cos(a) * speed, vy: Math.sin(a) * speed, vz: 0,
+      traveled: 0, damage, maxRange: range, radius, onHit, born: this.t, floor: owner.floor,
+    };
+    this.world.projectiles.push(p);
+    return p;
+  }
+
   spawnThrown(owner, item, x, y, tx, ty, { speed = RULES.throwSpeed, damage = itemDef(item).throw, maxRange = RULES.throwRange, tz = null } = {}) {
     const a = angleTo(x, y, tx, ty);
     const z0 = this.baseZ(owner) + 1.4;
@@ -1050,6 +1096,7 @@ export class Battle {
     this.fx = this.fx.filter(f => this.t - f.t < (f.kind === 'ko' ? 2.5 : 1.2));
 
     this.updateSafeZone(dt);
+    if (this.world.zones.length) this.updateHazards();
     this.updatePolice();
     if (this.over) return;
     const t0 = this.teamAlive(0), t1 = this.teamAlive(1);
@@ -1128,7 +1175,7 @@ export class Battle {
       c.kbx = c.kby = 0;
       c.kbSlam = null;
       // 口に噛みつかれていると動きが鈍る（足首なら大きく）
-      const bitten = s.bittenUntil > this.t ? s.bittenSlow : 1;
+      const bitten = (s.bittenUntil > this.t ? s.bittenSlow : 1) * this.speedMult(c);
       let tvx = incapacitated ? 0 : c.desired.vx * bitten;
       let tvy = incapacitated ? 0 : c.desired.vy * bitten;
       if (Math.hypot(tvx, tvy) > 0.01) {
@@ -1448,6 +1495,17 @@ export class Battle {
         const sp = Math.hypot(p.vx, p.vy) || 1;
         const dropFloor = hz >= FLOOR_H - 0.1 && upperFloorAt(w, hx, hy) ? 1 : 0;
         const name = p.item.name;
+        if (p.bolt) {
+          // 汎用の飛び道具：人に当たれば効果、物や地面なら（爆発があれば）その場で弾ける
+          const at = { x: hx, y: hy, floor: dropFloor || (owner ? owner.floor : 0) };
+          if (hit.type === 'stand') this.standHit(hit.c, p.damage, name, owner);
+          else if (hit.type === 'umbrella') this.emit({ text: `${hit.c.name} の傘が${name}を防いだ！`, kind: 'combat', actor: hit.c, pos: hit.c, sound: 6, soundKind: 'impact' });
+          else if (hit.type === 'char') boltHit(this, owner, p, hit.c, at);
+          else if (p.radius > 0) boltHit(this, owner, p, null, at);
+          if (hit.type === 'obj') this.damageObject(hit.o, Math.round(p.damage * 0.5), owner);
+          this.puff('dust', at);
+          continue;
+        }
         if (hit.type === 'umbrella') {
           this.emit({ text: `${hit.c.name} の傘が${name}を防いだ！`, kind: 'combat', actor: hit.c, pos: hit.c, sound: 6, soundKind: 'impact' });
           this.landItem(p.item, hit.c.x + Math.cos(hit.c.facing) * 0.8, hit.c.y + Math.sin(hit.c.facing) * 0.8, hit.c.floor, owner, true);
@@ -1473,6 +1531,8 @@ export class Battle {
       p.traveled += Math.hypot(x1 - p.x, y1 - p.y);
       p.x = x1; p.y = y1; p.z = z1;
       if (p.traveled > (p.maxRange ?? RULES.throwRange)) {
+        // 汎用の飛び道具は届く距離の端で消える（爆発するものはその場で弾ける）
+        if (p.bolt) { if (p.radius > 0) boltHit(this, this.chars.find(c => c.id === p.owner), p, null, { x: p.x, y: p.y, floor: p.floor ?? 0 }); continue; }
         this.landItem(p.item, p.x, p.y, p.z >= FLOOR_H && upperFloorAt(w, p.x, p.y) ? 1 : 0, this.chars.find(c => c.id === p.owner), true);
         continue;
       }

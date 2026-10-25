@@ -1,0 +1,159 @@
+{
+  "id": "homura",
+  "name": "焔堂 アカネ",
+  "reading": "えんどう あかね",
+  "power": {
+    "label": "魔法",
+    "name": "紅蓮魔術"
+  },
+  "color": "#ff7b39",
+  "role": "ranged",
+  "keepDistance": 11,
+  "hp": 100,
+  "sp": 100,
+  "spRegen": 7,
+  "walk": 3.3,
+  "run": 6.2,
+  "punch": 6,
+  "defense": 1,
+  "kg": 50,
+  "stats": {
+    "power": "B",
+    "speed": "C",
+    "range": "B（約15m）",
+    "stamina": "C",
+    "precision": "B",
+    "growth": "A"
+  },
+  "profile": "魔法学院の3年生、18歳。赤いローブに身の丈ほどの杖。成績は優秀だが、実戦になると火力で押し切ろうとする癖がある。",
+  "personality": "自信家で負けず嫌い。距離を取って火の玉を撃ち込み、近づかれたら火の壁で足止めして離れる。",
+  "lines": [
+    "燃え尽きなさい",
+    "近づけると思って？",
+    "炎は嘘をつかないわ"
+  ],
+  "persona": {
+    "aggression": 1.15,
+    "caution": 1.2,
+    "gamble": 0.6,
+    "chatter": 0.5
+  },
+  "situationLines": {
+    "spot": [
+      "見つけた。逃がさないわ",
+      "そこね"
+    ],
+    "hit": [
+      "熱いでしょう？",
+      "まだまだ燃えるわよ"
+    ],
+    "hurt": [
+      "っ……やるじゃない",
+      "ローブが焦げたじゃない"
+    ],
+    "low": [
+      "……少し、退くわ",
+      "冗談じゃないわよ"
+    ],
+    "winning": [
+      "燃え尽きなさい",
+      "勝負あったわね"
+    ],
+    "losing": [
+      "本気、出してあげる"
+    ],
+    "hunting": [
+      "隠れても、焼き出すだけよ"
+    ],
+    "ability": [
+      "紅蓮よ！",
+      "燃えなさい"
+    ],
+    "downed": [
+      "そのまま寝てなさい"
+    ]
+  },
+  "examples": [
+    "敵に火球を撃つ",
+    "敵が5m以内に来たら炎の壁を張って離れる"
+  ],
+  "abilities": [
+    {
+      "id": "flame",
+      "name": "紅蓮魔術",
+      "desc": "杖から炎を放つ魔法。火球を撃つ、足元に炎の壁を張る、熱で身を守る。",
+      "range": 15,
+      "castTime": 0.4,
+      "cooldown": 1,
+      "cost": 12,
+      "weakness": "詠唱の間は無防備。近距離の殴り合いは苦手。",
+      "observedHint": "敵の能力？：杖から火の玉を撃ち、地面に炎を張る。近づけば燃やされる？",
+      "effects": {
+        "fireball": {
+          "name": "火球",
+          "desc": "火の玉をまっすぐ撃つ。当たると小さく爆発する（半径1.2m）。",
+          "targets": [
+            "enemy",
+            "point",
+            "direction"
+          ],
+          "do": [
+            {
+              "type": "projectile",
+              "name": "火球",
+              "speed": 14,
+              "damage": 14,
+              "range": 18,
+              "radius": 1.2,
+              "onHit": [
+                {
+                  "type": "status",
+                  "status": "slow",
+                  "seconds": 1.5,
+                  "amount": 0.6
+                }
+              ]
+            }
+          ]
+        },
+        "firewall": {
+          "name": "炎の壁",
+          "desc": "指定した場所に炎を張る（半径2m・6秒）。中にいる敵は毎秒5ダメージ。",
+          "targets": [
+            "point",
+            "self",
+            "enemy",
+            "direction"
+          ],
+          "range": 10,
+          "do": [
+            {
+              "type": "zone",
+              "kind": "hazard",
+              "name": "炎の壁",
+              "radius": 2,
+              "seconds": 6,
+              "dps": 5
+            }
+          ]
+        },
+        "heatguard": {
+          "name": "熱の衣",
+          "desc": "熱をまとって受けるダメージを3秒間3割減らす。",
+          "targets": [
+            "self"
+          ],
+          "castTime": 0.2,
+          "do": [
+            {
+              "type": "buff",
+              "stat": "defense",
+              "mult": 0.7,
+              "seconds": 3
+            }
+          ]
+        }
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
 import { Sound } from './audio.js';
 import { Director } from './spectate.js';
 import { PlanBuilder } from './planner-ui.js';
+import { loadCharacterFiles } from './engine/registry.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -173,7 +174,9 @@ function showTab(name) {
 }
 
 function standTipsHtml(c) {
-  const tips = [...(STAND_TIPS[c.charId] || []), ...(c.def.standRange ? STAND_COMMON : [])];
+  // データで追加したキャラは、能力の技の説明から自動で作る
+  const own = STAND_TIPS[c.charId] || c.def.abilities.flatMap(id => Object.values(ABILITIES[id].effects).map(ed => [`${ed.name}：${ed.desc}`, (c.def.examples && c.def.examples[0]) || `敵に${ed.name}`]));
+  const tips = [...own, ...(c.def.standRange ? STAND_COMMON : [])];
   tips.push(...GENERIC_TIPS);
   return `<ul>${tips.map(([what, ex]) => `<li>${what}<br><span class="ex" data-ex="${ex}">例：「${ex}」</span></li>`).join('')}</ul>`;
 }
@@ -352,9 +355,9 @@ function renderMapCards() {
 function renderCharCards() {
   $('#char-cards').innerHTML = Object.values(CHARACTERS).map(c => `
     <div class="char-card ${state.chosen === c.id ? 'chosen' : ''}" data-id="${c.id}" style="--c:${c.color}">
-      <div class="portraits">${portraitSlot(c.id, '本体')}${portraitSlot(`${c.id}_stand`, 'スタンド')}</div>
+      <div class="portraits">${portraitSlot(c.id, '本体')}${portraitSlot(`${c.id}_stand`, c.powerLabel || 'スタンド')}</div>
       ${chipThumb(c.id) || chipThumb(`${c.id}_stand`) ? `<div class="chips">${[c.id, `${c.id}_stand`].map(id => chipThumb(id) ? `<img class="chip" src="${chipThumb(id)}" alt="">` : '').join('')}</div>` : ''}
-      <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">スタンド『${c.stand}』</div></div></div>
+      <div class="char-head"><span class="dot"></span><div><b>${c.name}</b>${c.reading ? ` <small>（${c.reading}${c.nickname ? `・通称「${c.nickname}」` : ''}）</small>` : ''}<div class="stand">${c.powerLabel || 'スタンド'}『${c.stand}』</div></div></div>
       ${c.profile ? `<p class="profile">${c.profile}</p>` : ''}
       <p class="persona">${c.personality}</p>
       ${c.stats ? `<table class="stats"><tr>${Object.values(STAT_LABELS).map(l => `<th>${l}</th>`).join('')}</tr><tr>${Object.keys(STAT_LABELS).map(k => `<td>${c.stats[k]}</td>`).join('')}</tr></table>` : ''}
@@ -422,7 +425,8 @@ function startBattle() {
   $('#log').innerHTML = '';
   $('#cmd').value = '';
   const ex = $('#examples');
-  ex.innerHTML = '<option value="">例文…</option>' + EXAMPLES[state.chosen].map(t => `<option>${t}</option>`).join('');
+  const exList = EXAMPLES[state.chosen] || CHARACTERS[state.chosen].examples || [];
+  ex.innerHTML = '<option value="">例文…</option>' + exList.map(t => `<option>${t}</option>`).join('');
   $('#stand-tips-title').textContent = `『${b.player.stand}』と共通の行動（例文をクリックで入力欄へ）`;
   $('#stand-tips-body').innerHTML = standTipsHtml(b.player);
   $('#ability-ref').innerHTML = b.player.def.abilities.map(abilityHtml).join('') +
@@ -891,6 +895,14 @@ function insertText(t) {
 
 window.addEventListener('DOMContentLoaded', async () => {
   state.renderer = state.r2d = new Renderer($('#field'));
+  // public/characters/ の JSON で追加したキャラクターを読み込む（書き方の誤りは画面に出す）
+  const extra = await loadCharacterFiles();
+  if (extra.failed.length) {
+    const box = document.createElement('div');
+    box.className = 'char-errors';
+    box.innerHTML = `<b>キャラクターの読み込みに失敗したファイルがあります</b>${extra.failed.map(f => `<pre>${f.file}：${f.message.replace(/</g, '&lt;')}</pre>`).join('')}`;
+    $('#char-cards').before(box);
+  }
   renderCharCards();
   renderMapCards();
   preloadPortraits();

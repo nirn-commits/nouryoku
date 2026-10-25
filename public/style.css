@@ -272,3 +272,5 @@ button:disabled { opacity: .5; cursor: default; }
 .cmd-sub button { flex: 1; }
 .command.text-mode .builder { display: none; }
 .builder.disabled { opacity: .5; pointer-events: none; }
+.char-errors { background: #3a1820; border: 1px solid #ff6b6b; border-radius: 6px; padding: 8px 12px; margin-bottom: 10px; font-size: .82rem; }
+.char-errors pre { white-space: pre-wrap; margin: 4px 0; color: #ffb3b3; }

@@ -377,6 +377,15 @@ export class Renderer {
         ctx.setLineDash([]);
         ctx.fillStyle = 'rgba(242,138,178,0.12)';
         ctx.fill();
+      } else if (z.kind === 'hazard' || z.kind === 'slow') {
+        // 汎用の場：危険な場（炎・毒など）は赤橙、鈍化の場は青
+        const col = z.kind === 'hazard' ? '255,120,60' : '90,160,255';
+        const pulse = 0.25 + Math.sin(b.t * 6) * 0.06;
+        ctx.fillStyle = `rgba(${col},${pulse})`;
+        ctx.beginPath(); ctx.ellipse(zx, zy, z.r * P, z.r * P * 0.7, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.strokeStyle = `rgba(${col},0.8)`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
       } else if (z.kind === 'hum') {
         // 動いている発電機：うなりの届く範囲
         const ph = (b.t * 1.2) % 1;
@@ -464,6 +473,15 @@ export class Renderer {
         const rot = Math.atan2(this.sy(p.y + p.vy / sp, p.z) - this.sy(p.y, p.z), (p.vx / sp) * P);
         const L = P * (p.kind === 'ball' ? 2.2 : 1.6);
         this.sprite(ATLAS.trail[color], p.x * P - Math.cos(rot) * L * 0.45, this.sy(p.y, p.z) - Math.sin(rot) * L * 0.45, L * (38 / 238), { rot });
+      }
+      if (p.bolt) {
+        // 汎用の飛び道具（魔法の弾など）：色つきの光の玉
+        const col = p.color || '#ffb347';
+        ctx.fillStyle = col;
+        ctx.shadowColor = col; ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(p.x * P, this.sy(p.y, p.z), Math.max(3, P * 0.18), 0, Math.PI * 2); ctx.fill();
+        ctx.shadowBlur = 0;
+        continue;
       }
       if (p.kind === 'ball') {
         // パチンコ玉

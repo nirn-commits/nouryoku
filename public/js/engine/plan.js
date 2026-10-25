@@ -1438,7 +1438,9 @@ function weaponMelee(c) {
 }
 
 function meleePower(c) {
-  return Math.max(c.def.power, weaponMelee(c));
+  // 能力の強化（buff）で殴る威力が上がる（切れた強化は毎フレーム取り除かれている）
+  const buff = c.buffs ? c.buffs.filter(x => x.stat === 'power').reduce((m, x) => m * x.mult, 1) : 1;
+  return Math.max(c.def.power, weaponMelee(c)) * buff;
 }
 
 // 次の手順を敵に対して実行できる距離（追尾の終了判定に使う）
