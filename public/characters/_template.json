@@ -8,7 +8,6 @@
   "hp": 100, "sp": 100, "spRegen": 6,
   "walk": 3.2, "run": 5.8,
   "punch": 9, "defense": 1.0, "kg": 60,
-  "stats": { "power": "B", "speed": "B", "range": "C", "stamina": "B", "precision": "B", "growth": "B" },
   "profile": "見た目・経歴など",
   "personality": "性格・戦い方",
   "lines": ["いつものセリフ1", "いつものセリフ2"],

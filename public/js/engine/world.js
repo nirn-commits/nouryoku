@@ -192,6 +192,7 @@ export function buildingAt(world, x, y) {
 export function hasLOS(world, x0, y0, x1, y1, ignoreId = null, z0 = EYE_H, z1 = BODY_H) {
   for (const o of world.objects) {
     if (!o.blocksSight || o.id === ignoreId) continue;
+    if ((x0 < o.x && x1 < o.x) || (x0 > o.x + o.w && x1 > o.x + o.w) || (y0 < o.y && y1 < o.y) || (y0 > o.y + o.h && y1 > o.y + o.h)) continue; // 線の範囲に掛からない
     const r = segRectRange(x0, y0, x1, y1, o);
     if (!r || r[1] <= 1e-4 || r[0] >= 1 - 1e-4) continue;
     // 始点・終点が物体内にある（壁に密着・植え込みの中）場合は除外

@@ -454,11 +454,15 @@ export class Battle {
     let hit = null;
     for (let i = 0; i < n; i++) {
       const nx = c.x + (L.dx * step) / n, ny = c.y + (L.dy * step) / n;
-      if (this.sealedBoundaryBetween(c.x, c.y, nx, ny) !== null) { hit = { flame: true }; break; }
       if (L.kind !== 'aerial') {
         for (const o of this.world.objects) {
           if (o.blocksMove && o.floor === c.floor && circleRectPush(nx, ny, c.r, o)) { hit = { obj: o }; break; }
         }
+        if (hit) break;
+      }
+      // 密室の境目：壁に当たるのは普通の叩きつけ。開いた出口を抜けようとした時だけ炎に焼かれる
+      if (this.sealedBoundaryBetween(c.x, c.y, nx, ny) !== null) { hit = { flame: true, room: [...this.world.buildings].find(bd => bd.sealed && pointInRect(c.x, c.y, bd)) || null }; break; }
+      if (L.kind !== 'aerial') {
         if (!hit) {
           for (const other of this.chars) {
             if (other !== c && other.alive && other.floor === c.floor && !this.isAirborne(other) && dist(nx, ny, other.x, other.y) < c.r + other.r) { hit = { char: other }; break; }
@@ -482,7 +486,7 @@ export class Battle {
       }
       this.launchDone(c.x, c.y, traveled);
       if (hit && hit.flame) {
-        this.burn(c, null);
+        this.burn(c, hit.room);
       } else if (hit) {
         const what = hit.obj ? hit.obj.name : hit.char.name;
         this.emit({ text: `${c.name} は${what}に叩きつけられた！（${traveled.toFixed(2)}m）`, kind: 'combat', affected: c, pos: c, sound: 10, soundKind: 'impact', actor: L.source });
@@ -1215,7 +1219,8 @@ export class Battle {
         const p = circleRectPush(c.x, c.y, c.r, o);
         if (!p) continue;
         // 閉じた扉は、歩いてぶつかれば開ける（少し手間取る）
-        if (o.kind === 'door' && kbSpeed <= 0.2 && !incapacitated) {
+        // 密室の出口は、ぶつかっただけでは開けない（開けると炎の口が開くので、開ける時は「開ける」で）
+        if (o.kind === 'door' && kbSpeed <= 0.2 && !incapacitated && !this.sealedExit(o)) {
           this.setOpen(o, true, c);
           s.recoverUntil = Math.max(s.recoverUntil, this.t + 0.35);
         }
@@ -1237,11 +1242,12 @@ export class Battle {
     c.x = clamp(c.x, c.r, this.world.w - c.r);
     c.y = clamp(c.y, c.r, this.world.h - c.r);
 
-    // 密室の炎：建物の内と外の境目は越えられない
+    // 密室の炎：建物の内と外の境目は越えられない（開けた出口から出ようとすると焼かれて弾き戻される）
     if (this.crossesSealedRoom(c, roomBefore)) {
+      const after = this.roomOf(c);
       c.x = ox; c.y = oy;
       c.vx = c.vy = 0;
-      this.burn(c, roomBefore || this.roomOf({ x: c.x + c.vx * dt, y: c.y + c.vy * dt }));
+      this.burn(c, roomBefore && roomBefore.sealed ? roomBefore : after, !(roomBefore && roomBefore.sealed));
     }
 
     // 2階の床の外に出たら落下する（2階の窓から飛び出した時など）
@@ -1366,11 +1372,25 @@ export class Battle {
     return best;
   }
 
-  // 炎に触れた：火傷のダメージ（物は燃えない）
-  burn(c) {
+  // 密室の出口の扉か
+  sealedExit(o) {
+    return this.world.buildings.some(bd => bd.sealed && bd.exits.includes(o.id));
+  }
+
+  // 開いた出口の炎に触れた：火傷のダメージ（物は燃えない）を受けて、来た側へ弾き戻される。
+  // 密室の内側にいるだけ・壁に触れるだけでは焼かれない
+  burn(c, room = null, fromOutside = false) {
+    if (room) {
+      // 内側から出ようとした人は内側へ、外から入ろうとした人は外へ、2m弾き戻す
+      const cx = room.x + room.w / 2, cy = room.y + room.h / 2;
+      let ax = cx - c.x, ay = cy - c.y;
+      if (fromOutside) { ax = -ax; ay = -ay; }
+      const l = Math.hypot(ax, ay) || 1, v = Math.sqrt(28 * 2);
+      c.kbx = (ax / l) * v; c.kby = (ay / l) * v;
+    }
     if (c.burnCd > this.t) return;
     c.burnCd = this.t + 0.8;
-    this.emit({ text: `${c.name} は炎の壁に触れて焼かれた！ 外へは出られない`, kind: 'combat', affected: c, pos: c, hint: ABILITIES.hotel.observedHint });
+    this.emit({ text: `${c.name} は出口を塞ぐ炎に焼かれて弾き戻された！ ${fromOutside ? '中へは入れない' : '外へは出られない'}`, kind: 'combat', affected: c, pos: c, hint: ABILITIES.hotel.observedHint });
     this.damage(c, 12, { source: null, kind: 'burn', label: '炎' });
   }
 

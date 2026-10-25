@@ -16,14 +16,6 @@
   "punch": 8,
   "defense": 0.95,
   "kg": 68,
-  "stats": {
-    "power": "A",
-    "speed": "A",
-    "range": "D（約4m）",
-    "stamina": "B",
-    "precision": "A",
-    "growth": "C"
-  },
   "profile": "剣術道場の跡取り、20歳。木刀ではなく本物の刀を腰に差して歩く。無駄口は叩かない。",
   "personality": "寡黙で間合いに厳しい。一気に踏み込んで斬り、斬ったら離れず畳みかける。",
   "lines": [

@@ -9,11 +9,15 @@ import { registerCharacter, validateCharacter } from '../public/js/engine/regist
 import { CHARACTERS } from '../public/js/engine/data.js';
 
 const read = f => JSON.parse(readFileSync(new URL(`../public/characters/${f}`, import.meta.url), 'utf8'));
+const fixture = f => JSON.parse(readFileSync(new URL(`./fixtures/${f}`, import.meta.url), 'utf8'));
+const fixtures = ['homura.json', 'takamiya.json'];
 const list = read('index.json').characters;
 for (const f of list) registerCharacter(read(f), { replace: true });
+for (const f of fixtures) registerCharacter(fixture(f), { replace: true });
 
-test('キャラクターのJSON：同梱のキャラとひな形は書式どおり／誤りは日本語で指摘される', () => {
+test('キャラクターのJSON：同梱のキャラ・ひな形・テスト用のキャラは書式どおり／誤りは日本語で指摘される', () => {
   for (const f of [...list, '_template.json']) assert.deepEqual(validateCharacter(read(f)), [], f);
+  for (const f of fixtures) assert.deepEqual(validateCharacter(fixture(f)), [], f);
   const bad = read('_template.json');
   bad.id = 'Bad ID';
   bad.abilities[0].effects.strike.do = [{ type: 'explode' }];

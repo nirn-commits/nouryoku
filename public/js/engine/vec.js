@@ -91,6 +91,7 @@ export function segCircle(x0, y0, x1, y1, cx, cy, r) {
 
 // 円を矩形から押し出すベクトル（重なっていなければ null）
 export function circleRectPush(cx, cy, cr, r) {
+  if (cx + cr <= r.x || cx - cr >= r.x + r.w || cy + cr <= r.y || cy - cr >= r.y + r.h) return null; // 明らかに離れている
   const n = nearestPointOnRect(cx, cy, r);
   let dx = cx - n.x, dy = cy - n.y;
   const d = Math.hypot(dx, dy);

@@ -7,14 +7,12 @@
 1. `public/characters/_template.json` をコピーして、`public/characters/<id>.json` を作ります（例：`ninja.json`）。
 2. `public/characters/index.json` の `characters` にファイル名を足します。
    ```json
-   { "characters": ["homura.json", "takamiya.json", "ninja.json"] }
+   { "characters": ["ninja.json"] }
    ```
 3. ブラウザを再読み込みすると、タイトル画面のキャラクター一覧に出ます。書き方に誤りがあると、一覧の上に**どこがどう違うか**が日本語で表示されます。
 4. 見た目（任意）：`public/chips/<id>.png`（本体のキャラチップ）・`public/chips/<id>_stand.png`（スタンドなど）・`public/img/<id>.webp`（立ち絵）を置くと使われます。無ければ色つきの人影で表示されます。チップの形は `public/chips/README.md` を参照。
 
 追加したキャラは、キャラ選択・対戦相手・コマンド画面（能力のボタン）・文章入力（技の名前で使える）・CPU の思考（先読み）・場面ごとのセリフ・観戦モードに、自動で組み込まれます。
-
-同梱の例：`homura.json`（炎の魔法使い・遠距離型）、`takamiya.json`（剣士・近接型）。
 
 ## 項目
 
@@ -33,7 +31,6 @@
 | `defense` |  | 受けるダメージの倍率（小さいほど硬い。既定 1.0） |
 | `kg` |  | 体重 |
 | `standRange` |  | 体の外に出せる分身（スタンドなど）がある時の射程（m）。書くと「スタンドを出す・先行させる」が使える |
-| `stats` |  | キャラ紹介の能力値（`power` `speed` `range` `stamina` `precision` `growth`。文字は自由） |
 | `profile` `personality` |  | 紹介文・性格と戦い方 |
 | `lines` |  | いつものセリフ（配列） |
 | `persona` |  | CPU の性格：`aggression`（攻め気、1前後）・`caution`（用心深さ、1前後）・`gamble`（博打好き、0〜0.9）・`chatter`（口数、0〜1） |

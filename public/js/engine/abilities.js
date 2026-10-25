@@ -402,15 +402,19 @@ IMPL.hotel = (b, c, effect, res, ab) => {
     { d: e.x - room.x, x: -1, y: 0 }, { d: room.x + room.w - e.x, x: 1, y: 0 },
     { d: e.y - room.y, x: 0, y: -1 }, { d: room.y + room.h - e.y, x: 0, y: 1 },
   ].sort((p, q) => p.d - q.d);
-  const dir = edges[0];
-  interruptStep(b, e, '炎の壁へ投げつけられた', true);
-  b.emit({ text: `『${ab.name}』— ${e.name}を掴み、燃えさかる外壁へ叩きつける！`, obsText: `${c.name} が ${e.name} を炎の壁へ投げつけた！`, kind: 'ability', actor: c, affected: e, pos: e, sound: 10, soundKind: 'impact', hint: ab.observedHint });
+  let dir = edges[0];
+  // 開けてある出口が近ければ、そこ（炎の口）へ投げ込む：火傷を負って弾き戻される
+  const gate = room.exits.map(id => b.objectById(id)).filter(o => o && (o.open || o.broken) && (o.floor ?? 0) === e.floor)
+    .map(o => ({ o, x: o.x + o.w / 2, y: o.y + o.h / 2 })).filter(g => dist(e.x, e.y, g.x, g.y) < 6)
+    .sort((p, q) => dist(e.x, e.y, p.x, p.y) - dist(e.x, e.y, q.x, q.y))[0];
+  if (gate) { const l = dist(e.x, e.y, gate.x, gate.y) || 1; dir = { x: (gate.x - e.x) / l, y: (gate.y - e.y) / l }; }
+  interruptStep(b, e, '壁へ投げつけられた', true);
+  b.emit({ text: `『${ab.name}』— ${e.name}を掴み、外壁へ叩きつける！`, obsText: `${c.name} が ${e.name} を壁へ投げつけた！`, kind: 'ability', actor: c, affected: e, pos: e, sound: 10, soundKind: 'impact', hint: ab.observedHint });
   b.damage(e, 8, { source: c, kind: 'grab', label: '投げつけ' });
   if (e.alive) {
     e.kbx = dir.x * 11; e.kby = dir.y * 11;
     e.kbSlam = { damage: 6, source: c };
     e.status.proneUntil = Math.max(e.status.proneUntil, b.t + 0.8);
-    b.burn(e, room);
   }
   return { ok: true };
 };

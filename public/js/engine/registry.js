@@ -109,7 +109,7 @@ export function registerCharacter(json, { replace = false } = {}) {
     kg: num(json.kg, 60, 20, 200),
     ...(json.standRange ? { standRange: num(json.standRange, 2, 0.5, 10) } : {}),
     abilities: abilityIds,
-    stats: json.stats || { power: '-', speed: '-', range: '-', stamina: '-', precision: '-', growth: '-' },
+    stats: null,
     profile: json.profile || '',
     personality: json.personality || '',
     lines: Array.isArray(json.lines) && json.lines.length ? json.lines.slice(0, 12) : ['……'],

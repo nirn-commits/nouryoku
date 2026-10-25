@@ -815,17 +815,49 @@ test('十河：真上に打ち上げると、落ちてダメージと転倒', ()
   assert.ok(b.cpu.status.proneUntil > b.t, '転倒していない');
 });
 
-test('錠二：密室の中で相手を炎の壁へ叩きつける', () => {
+test('錠二：密室の中にいる間は誰も焼かれない。出口を開けて出ようとすると焼かれて内側へ弾き戻される', () => {
   const { b, bd } = kitoRoom();
   plan(b, b.player, [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }]);
   runFor(b, 3);
   assert.ok(bd.sealed);
-  b.player.x = b.cpu.x - 1; b.player.y = b.cpu.y; b.player.facing = 0;
+  // 中を走り回り、閉じた扉や壁にぶつかっても焼かれない（扉もぶつかっただけでは開かない）
+  const hpK = b.player.hp, hpS = b.cpu.hp;
+  plan(b, b.player, [{ action: 'move', mode: 'run', targetType: 'point', x: 20, y: 17 }]);
+  plan(b, b.cpu, [{ action: 'move', mode: 'run', targetType: 'point', x: 33, y: 12 }]);
+  runFor(b, 4);
+  assert.equal(b.player.hp, hpK, '錠二が密室の中で焼かれた');
+  assert.equal(b.cpu.hp, hpS, '密室の中にいるだけで焼かれた');
+  assert.ok(bd.sealed && b.buildingOf(b.player) && b.buildingOf(b.cpu));
+  // 窓を開けて外へ出ようとすると、焼かれて内側へ弾き戻される
+  plan(b, b.cpu, [{ action: 'open', targetType: 'object', targetId: 'house_right_window' }, { action: 'move', mode: 'run', targetType: 'point', x: 20, y: 17 }]);
+  runFor(b, 6);
+  assert.ok(b.cpu.hp < hpS, '開けた出口から出ようとしても焼かれない');
+  assert.ok(b.buildingOf(b.cpu), '外へ出られてしまった');
+  assert.ok(b.log.some(l => l.text.includes('弾き戻された')));
+});
+
+test('錠二：密室の中で相手を外壁へ叩きつける（開けた出口があれば炎へ投げ込む）', () => {
+  const { b, bd } = kitoRoom();
+  plan(b, b.player, [{ action: 'close', targetType: 'object', targetId: 'house_right_door' }]);
+  runFor(b, 3);
+  assert.ok(bd.sealed);
+  b.player.x = b.cpu.x + 1; b.player.y = b.cpu.y; b.player.facing = Math.PI;
   plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
   plan(b, b.player, [{ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' }]);
   const hp = b.cpu.hp;
   runFor(b, 1.5);
-  assert.ok(hp - b.cpu.hp >= 15, `炎への叩きつけのダメージが小さい（${hp - b.cpu.hp}）`);
+  assert.ok(hp - b.cpu.hp >= 12, `外壁への叩きつけのダメージが小さい（${hp - b.cpu.hp}）`);
+  assert.ok(b.buildingOf(b.cpu));
+  // 窓を開けておけば、そこの炎へ投げ込める（火傷を負って内側へ弾き戻される）
+  b.setOpen(b.objectById('house_right_window'), true, b.player);
+  b.cpu.x = 24.6; b.cpu.y = 17.2; b.cpu.status.proneUntil = 0; b.cpu.kbx = b.cpu.kby = 0;
+  b.player.x = 25.6; b.player.y = 17.2; b.player.facing = Math.PI;
+  plan(b, b.cpu, [{ action: 'wait', targetType: 'none', duration: 3 }]);
+  plan(b, b.player, [{ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' }]);
+  const hp2 = b.cpu.hp;
+  runFor(b, 1.5);
+  assert.ok(hp2 - b.cpu.hp >= 20, `開けた窓の炎へ投げ込んでも焼かれない（${hp2 - b.cpu.hp}）`);
+  assert.ok(b.buildingOf(b.cpu), '炎を越えて外へ出てしまった');
 });
 
 test('七海：無音の結界の中の足音は聞こえず、足音の行列は離れた所を歩く音に聞こえる', () => {

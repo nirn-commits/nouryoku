@@ -118,7 +118,7 @@ function kitoPlan(b, c, pe, say) {
         steps.push({ action: 'ability', ability: 'hotel', effect: 'flame_slam', targetType: 'enemy' });
         steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
         steps.push({ action: 'melee', targetType: 'enemy' });
-        return { interpretation: '（CPU・ローカル）炎の壁へ叩きつける', speech: say(0.3), steps };
+        return { interpretation: '（CPU・ローカル）外壁へ叩きつける', speech: say(0.3), steps };
       }
       if (exits.length && d > 3) steps.push({ action: 'close', targetType: 'object', targetId: exits[0].id });
       steps.push({ action: 'chase', targetType: 'enemy', mode: 'run' });
@@ -482,10 +482,10 @@ function kitoTrapEscape(b, c, pe) {
 
 // 逃げ先を選ぶ：敵から遠く、敵の横をすり抜けず、回り道にならず、10秒後も安全地帯の中で、
 // 角や壁際に追い詰められない場所。敵から見えない場所なら加点
-function retreatPoint(b, c, e, want = 8) {
+function retreatPoints(b, c, e, want = 8) {
   const ea = Math.atan2(e.y - c.y, e.x - c.x);
   const zr = b.zoneRadius(b.t + 10), z = b.safeZone;
-  let best = null;
+  const found = [];
   for (let i = 0; i < 10; i++) {
     const a = ea + Math.PI + ((i - 4.5) / 10) * Math.PI * 2;
     if (Math.cos(a - ea) > 0.35) continue; // 敵の方へ向かう逃げ道は使わない
@@ -500,11 +500,15 @@ function retreatPoint(b, c, e, want = 8) {
       let score = dist(x, y, e.x, e.y) - len * 0.25 - (edge < 3 ? 4 : 0);
       if (z && dist(x, y, z.x, z.y) > zr - 1) score -= 30;
       if (!hasLOS(b.world, e.x, e.y, x, y)) score += 3;
-      if (!best || score > best.score) best = { x, y, score };
+      found.push({ x, y, score, a });
       break;
     }
   }
-  return best;
+  return found.sort((p, q) => q.score - p.score);
+}
+
+function retreatPoint(b, c, e, want = 8) {
+  return retreatPoints(b, c, e, want)[0] || null;
 }
 
 function retreatStep(b, c, e, want = 8) {
@@ -623,30 +627,53 @@ export async function localCpuPlanAsync(b, c) {
 function alternativePlans(b, c, pe) {
   const alts = [];
   const tag = t => `（CPU・ローカル）${t}`;
-  alts.push({ interpretation: tag('距離を取る'), speech: null, steps: [retreatStep(b, c, pe, 8), { action: 'look', targetType: 'enemy' }] });
-  // 遠距離型に殴り合いの案は出さない
-  if (c.def.role !== 'ranged') alts.push({ interpretation: tag('詰めて殴り続ける'), speech: null, steps: [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }, { action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }] });
+  const d = dist(c.x, c.y, pe.x, pe.y);
+  const ranged = c.def.role === 'ranged';
+  const pt = p => ({ action: 'move', mode: 'run', targetType: 'point', x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10, floor: c.floor });
+  // 逃げ道は向きの違うものを2つまで試す（1つ目が塞がれる・回り込まれる時のため）
+  const outs = retreatPoints(b, c, pe, 8);
+  const second = outs.find(p => Math.abs(Math.atan2(Math.sin(p.a - outs[0].a), Math.cos(p.a - outs[0].a))) > 0.9);
+  alts.push({ interpretation: tag('距離を取る'), speech: null, steps: [outs[0] ? pt(outs[0]) : retreatStep(b, c, pe, 8), { action: 'look', targetType: 'enemy' }] });
+  if (second) alts.push({ interpretation: tag('別の向きへ距離を取る'), speech: null, steps: [pt(second), { action: 'look', targetType: 'enemy' }] });
+  // 張り付かれている：まず跳んでかわしてから走って離れる
+  if (pe.visible && d < 3.5 && !c.cd.dodge) alts.push({ interpretation: tag('跳んでかわして離れる'), speech: null, steps: [{ action: 'dodge', targetType: 'direction', direction: 'away_from_enemy' }, retreatStep(b, c, pe, 8), { action: 'look', targetType: 'enemy' }] });
+  // 遠距離型に殴り合いの案は出さない（武器を持っていて張り付かれた時だけ、殴り返す案も試す）
+  if (!ranged) alts.push({ interpretation: tag('詰めて殴り続ける'), speech: null, steps: [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }, { action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }] });
+  else if (pe.visible && d < 2.5 && c.held) alts.push({ interpretation: tag('得物で殴り返す'), speech: null, steps: [{ action: 'melee', targetType: 'enemy' }, retreatStep(b, c, pe, 8)] });
+  if (!ranged && pe.visible && d > 3 && d < 12) {
+    // 待ち構える：向こうから来るなら、間合いに入った所で先に殴る
+    alts.push({ interpretation: tag('待ち構えて、来た所を殴る'), speech: null, steps: [{ action: 'look', targetType: 'enemy' }, { action: 'wait', targetType: 'none', duration: 0, condition: { kind: 'enemy_within', value: 2, timeout: 3 } }, { action: 'melee', targetType: 'enemy' }, { action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }] });
+  }
   if (c.mouths) {
     // コルベット：車両を走らせて口を付け、離れながら噛む
     alts.push({ interpretation: tag('車両で口を付けて噛む'), speech: null, steps: [{ action: 'stand_move', targetType: 'enemy', duration: 0.3 }, retreatStep(b, c, pe, 6), { action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' }, { action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 5 }] });
     if (c.mouths.some(m => m.on && m.on !== c.id)) alts.push({ interpretation: tag('食いしばって噛み続ける'), speech: null, steps: [{ action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 6 }, retreatStep(b, c, pe, 6)] });
   }
-  if (pe.visible && dist(c.x, c.y, pe.x, pe.y) < 4 && c.def.role !== 'ranged') alts.push({ interpretation: tag('構えて受けてから殴る'), speech: null, steps: [{ action: 'guard', targetType: 'enemy', duration: 1.2 }, { action: 'melee', targetType: 'enemy' }] });
+  if (pe.visible && d < 4 && !ranged) {
+    alts.push({ interpretation: tag('構えて受けてから殴る'), speech: null, steps: [{ action: 'guard', targetType: 'enemy', duration: 1.2 }, { action: 'melee', targetType: 'enemy' }] });
+    // 殴りかかってくる相手には、受け流してから殴り返す
+    alts.push({ interpretation: tag('受け流して殴り返す'), speech: null, steps: [{ action: 'counter', targetType: 'none' }, { action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }] });
+  }
   for (const id of c.def.abilities) {
     const ab = ABILITIES[id];
     for (const [eff, ed] of Object.entries(ab.effects)) {
       // データで追加した能力：自分にかける技（強化・回復・守り）や、地点に置く技も試す
       if (ABILITIES[id].generic && !ed.targets.includes('enemy')) {
-        if (ed.targets.includes('self')) alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を使う`), speech: null, steps: [{ action: 'ability', ability: id, effect: eff, targetType: 'self' }, ...(c.def.role === 'ranged' ? [retreatStep(b, c, pe, 6)] : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }])] });
+        if (ed.targets.includes('self')) alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を使う`), speech: null, steps: [{ action: 'ability', ability: id, effect: eff, targetType: 'self' }, ...(ranged ? [retreatStep(b, c, pe, 6)] : [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }])] });
         else if (ed.targets.includes('point')) alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を敵の所へ`), speech: null, steps: [{ action: 'ability', ability: id, effect: eff, targetType: 'point', x: Math.round(pe.x * 10) / 10, y: Math.round(pe.y * 10) / 10 }] });
         continue;
       }
       if (!ed.targets.includes('enemy') || id === 'corvette' || (id === 'hotel' && eff === 'seal')) continue;
-      const near = (ed.range ?? ab.range) < 6;
-      alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を狙う`), speech: null, steps: [...(near ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }] : []), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, ...(c.def.role === 'ranged' ? [retreatStep(b, c, pe, 6)] : [{ action: 'melee', targetType: 'enemy' }])] });
+      const range = ed.range ?? ab.range;
+      const near = range < 6;
+      alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を狙う`), speech: null, steps: [...(near ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }] : []), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, ...(ranged ? [retreatStep(b, c, pe, 6)] : [{ action: 'melee', targetType: 'enemy' }])] });
+      // 遠くから撃てる技：近すぎるなら、先に離れてから撃つ
+      if (ranged && !near && pe.visible && d < Math.min(range, c.def.keepDistance || 10) - 2) {
+        alts.push({ interpretation: tag(`離れてから『${ab.name}：${ed.name}』`), speech: null, steps: [retreatStep(b, c, pe, 6), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, { action: 'look', targetType: 'enemy' }] });
+      }
     }
   }
-  return alts.slice(0, 7);
+  return alts.slice(0, 14);
 }
 
 function heuristicPlan(b, c) {
