@@ -6,9 +6,10 @@ import { buildObservation } from './perception.js';
 import { localCpuPlanAsync } from './localAI.js';
 
 export class TurnController {
-  constructor(battle, { cpuRemote = null, cpuTimeoutMs = 400000 } = {}) {
+  constructor(battle, { cpuRemote = null, cpuLine = null, cpuTimeoutMs = 400000 } = {}) {
     this.b = battle;
-    this.cpuRemote = cpuRemote;
+    this.cpuRemote = cpuRemote; // （旧）作戦も Gemini に考えさせる場合のみ
+    this.cpuLine = cpuLine; // セリフだけ Gemini に考えさせる
     this.cpuTimeoutMs = cpuTimeoutMs;
     this.turn = 0;
     this.phase = 'input'; // input | resolving | execute | over
@@ -45,7 +46,16 @@ export class TurnController {
         b.emit({ text: `（${c.name}の Gemini 呼び出しに失敗したため、簡易思考で行動します：${e.message}）`, kind: 'fail', all: true });
       }
     }
-    return compilePlan(b, c, await localCpuPlanAsync(b, c), 'local');
+    const raw = await localCpuPlanAsync(b, c);
+    // 作戦はゲーム内蔵の思考で決め、喋ると決めた時だけ、セリフを Gemini に言い換えさせる（間に合わなければ内蔵のセリフ）
+    if (this.cpuLine && raw.speech && this.lineFailures < 3) {
+      try {
+        const s = await withTimeout(this.cpuLine(c, raw), 3000);
+        if (s) raw.speech = s;
+        this.lineFailures = 0;
+      } catch { this.lineFailures = (this.lineFailures || 0) + 1; }
+    }
+    return compilePlan(b, c, raw, 'local');
   }
 
   // プレイヤーの計画が確定したら、CPU の計画を待って同時に実行を始める

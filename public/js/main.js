@@ -179,6 +179,27 @@ function standTipsHtml(c) {
 
 // ---------- API ----------
 
+// CPU のセリフ：今の状況・気分・取る行動と、内蔵のセリフ（下書き）を渡して、一言だけ返してもらう
+async function apiLine(b, c, raw) {
+  const pe = b.perceivedEnemy(c);
+  const context = {
+    hp: `${Math.round(c.hp)}/${c.maxHp}`,
+    mood: raw.lineInfo ? { confident: '優勢', pressed: '劣勢', desperate: '追い詰められている', hunting: '敵を探している', even: '五分' }[raw.lineInfo.mood] : '',
+    scene: raw.lineInfo ? { spot: '敵を見つけた', hit: '一撃を入れた直後', hurt: '強い一撃を受けた直後', low: '体力が少ない', winning: '押している', losing: '押されている', hunting: '敵を探している', ability: '能力を使う', downed: '相手が倒れている' }[raw.lineInfo.key] : '',
+    enemy: pe && pe.char ? { name: pe.char.name, distance_m: Math.round(dist(c.x, c.y, pe.x, pe.y)), hp: pe.visible ? `${Math.round(pe.char.hp)}/${pe.char.maxHp}` : '不明' } : null,
+    heard: c.memory.heard.filter(h => h.text && b.t - h.t < 8).slice(-2).map(h => h.text),
+    intention: raw.interpretation,
+    draft: raw.speech,
+  };
+  const res = await fetch('/api/plan', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ role: 'line', character: { name: c.def.name, stand: c.def.stand, profile: c.def.profile, personality: c.def.personality, lines: c.def.lines }, context }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return (await res.json()).speech || null;
+}
+
 async function apiPlan(payload, timeoutMs = state.clientTimeoutMs) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
@@ -213,7 +234,7 @@ async function checkStatus() {
     // サーバーは設定を変えて最大3回試すので、その分だけ待つ
     if (data.timeoutMs) state.clientTimeoutMs = data.timeoutMs * 3 + 5000;
     el.textContent = state.gemini
-      ? `AI：Gemini（${data.model}）で行動を解析します`
+      ? `AI：Gemini（${data.model}）であなたの指示を解析します（CPUの作戦は内蔵の思考、セリフだけ Gemini）`
       : 'AI：GEMINI_API_KEY が未設定のため、簡易ローカル解析で動作します';
     el.className = `ai-status ${state.gemini ? 'ok' : 'warn'}`;
   } catch {
@@ -390,9 +411,8 @@ function startBattle() {
   state.autoTurn = 0;
   state.turn = new TurnController(b, {
     cpuTimeoutMs: state.clientTimeoutMs,
-    cpuRemote: state.gemini
-      ? (obs, c) => apiPlan({ role: 'cpu', observation: obs, character: { name: c.def.name, stand: c.def.stand, personality: c.def.personality } })
-      : null,
+    // CPU の作戦はゲーム内蔵の思考（先読み）が決める。Gemini はセリフの言い換えだけに使う
+    cpuLine: state.gemini ? (c, raw) => apiLine(b, c, raw) : null,
   });
   state.lastPhase = null;
   $('#title').classList.add('hidden');

@@ -3,6 +3,7 @@ import { CHARACTERS, ABILITIES, RULES } from './data.js';
 import { hasLOS, soundFactor, findPath, markNavDirty, buildingAt, objectById, nearestWalkable, upperFloorAt, crossesSlab, isWalkablePoint, FLOOR_H, EYE_H, BODY_H } from './world.js';
 import { createWorld } from './maps.js';
 import { itemDef } from './items.js';
+import { blurt } from './persona.js';
 import { dist, angleTo, angDiff, circleRectPush, segRectRange, segCircle, distToRect, clamp, makeRng, pointInRect } from './vec.js';
 import { updateRunner, interruptStep, adoptPlan } from './plan.js';
 
@@ -822,6 +823,15 @@ export class Battle {
     if (dmg >= 6 && !guarded && !releasing) {
       target.status.stunUntil = Math.max(target.status.stunUntil, this.t + 0.25);
       interruptStep(this, target, '攻撃を受けて行動が中断された');
+    }
+    // 強い一撃：殴られた側・殴った側が思わず口にする一言（CPU のみ）
+    if (dmg >= 15 && target.hp > 0) {
+      const hurt = blurt(this, target, 'hurt');
+      if (hurt) this.speak(target, hurt);
+      else if (source && source !== target && source.alive) {
+        const hit = blurt(this, source, 'hit');
+        if (hit) this.speak(source, hit);
+      }
     }
     if (target.hp <= 0) {
       target.alive = false;

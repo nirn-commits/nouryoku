@@ -4,6 +4,7 @@
 // 平均と最悪の場合の両方で良い案を選ぶ
 import { compilePlan } from './plan.js';
 import { dist } from './vec.js';
+import { scoreWeights } from './persona.js';
 
 const HORIZON = 6; // 何秒先まで試すか
 const BUDGET_MS = 1500; // 1回の判断にかける時間の上限（普段は候補を全部試し切る）
@@ -32,16 +33,16 @@ function imagine(b, c, seed) {
   return { f, fc };
 }
 
-function score(b, c, f, fc) {
+function score(b, c, f, fc, w = { dealt: 1, taken: 1.2 }) {
   let s = 0;
   for (const o of b.chars) {
     const fo = f.chars.find(x => x.id === o.id);
     const lost = o.hp - fo.hp;
     if (o.team === c.team) {
-      s -= lost * (o.id === c.id ? 1.2 : 1);
+      s -= lost * (o.id === c.id ? w.taken : 1);
       if (o.alive && !fo.alive) s -= 60;
     } else {
-      s += lost;
+      s += lost * w.dealt;
       if (o.alive && !fo.alive) s += 45;
     }
   }
@@ -104,6 +105,8 @@ function* search(b, c, planner, alternatives) {
   for (const alt of alternatives(b, c, pe)) cands.push(alt);
   let best = null;
   const budget = globalThis.LOOK_BUDGET ?? BUDGET_MS;
+  // 性格と今の気分で採点の重みを変える（攻め気・用心深さ・博打好き）
+  const w = globalThis.LOOK_NOPERSONA ? { dealt: 1, taken: 1.2, gamble: 0.5 } : scoreWeights(b, c);
   for (const raw of cands) {
     if (best && performance.now() - t0 > budget) break;
     const scores = [];
@@ -116,13 +119,13 @@ function* search(b, c, planner, alternatives) {
       const end = f.t + HORIZON;
       // 早く終わる案が得をしないよう、どの案も同じ秒数だけ進める（終わった人はその場で待つ）
       while (f.t < end && !f.over) f.step();
-      scores.push(score(b, c, f, fc));
+      scores.push(score(b, c, f, fc, w));
       yield;
     }
     if (scores.length < models.length) continue;
-    // 平均と最悪の場合を半々で見る（読みが外れても大崩れしない案を選ぶ）
+    // 平均と最悪の場合をあわせて見る（博打好きほど平均を、用心深いほど最悪の場合を重く見る）
     const mean = scores.reduce((a, z) => a + z, 0) / scores.length;
-    const sc = models.length > 1 ? 0.5 * mean + 0.5 * Math.min(...scores) : mean;
+    const sc = models.length > 1 ? w.gamble * mean + (1 - w.gamble) * Math.min(...scores) : mean;
     if (!best || sc > best.sc) best = { raw, sc };
   }
   if (best && best.raw !== base) best.raw.interpretation = `${best.raw.interpretation}（先読みで選んだ案）`;

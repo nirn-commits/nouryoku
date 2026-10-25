@@ -5,6 +5,7 @@ import { ITEM_KINDS, meleeWith } from './items.js';
 import { dist, distToRect, pointInRect, angleTo } from './vec.js';
 import { nearestWalkable, isWalkablePoint, findPath, hasLOS, buildingAt } from './world.js';
 import { lookaheadPlan, lookaheadPlanAsync } from './lookahead.js';
+import { chooseLine } from './persona.js';
 
 function incomingProjectile(b, c) {
   return b.world.projectiles.find(p => p.owner !== c.id && b.canSee(c, p.x, p.y) && dist(c.x, c.y, p.x, p.y) < 6);
@@ -557,14 +558,22 @@ function zonePlan(b, c) {
 export function localCpuPlan(b, c) {
   const off = globalThis.AI_OFF;
   if (b.isSim || (off && off.has('look')) || !b.fork) return heuristicPlan(b, c);
-  return lookaheadPlan(b, c, heuristicPlan, alternativePlans);
+  return voice(b, c, lookaheadPlan(b, c, heuristicPlan, alternativePlans));
+}
+
+// 選んだ作戦と、その場の気分・出来事に合わせた一言を付ける（言わない方がいい時は黙る）
+function voice(b, c, plan) {
+  const line = chooseLine(b, c, plan);
+  plan.speech = line ? line.text : null;
+  plan.lineInfo = line ? { key: line.key, mood: line.mood } : null;
+  return plan;
 }
 
 // 同じ思考の非同期版（考えている間も画面が止まらない）
 export async function localCpuPlanAsync(b, c) {
   const off = globalThis.AI_OFF;
   if (b.isSim || (off && off.has('look')) || !b.fork) return heuristicPlan(b, c);
-  return lookaheadPlanAsync(b, c, heuristicPlan, alternativePlans);
+  return voice(b, c, await lookaheadPlanAsync(b, c, heuristicPlan, alternativePlans));
 }
 
 // 先読みで比べる型どおりの別案

@@ -255,7 +255,7 @@ function leastThinking(model) {
   return isLevelModel(model) ? { thinkingLevel: /flash/i.test(model) ? 'minimal' : 'low' } : { thinkingBudget: 0 };
 }
 
-function generationConfig({ schema, thinking }) {
+function generationConfig({ schema, thinking }, schemaObj = PLAN_SCHEMA) {
   const extra = Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 2048);
   // 出力が延々と続いて応答が返らなくなるのを防ぐ上限（思考トークンも含む）
   const max = thinking && thinking.thinkingBudget !== undefined ? Math.max(0, thinking.thinkingBudget) + extra : 8192;
@@ -263,12 +263,12 @@ function generationConfig({ schema, thinking }) {
     temperature: 0.4,
     responseMimeType: 'application/json',
     maxOutputTokens: max,
-    ...(schema ? { responseSchema: PLAN_SCHEMA } : {}),
+    ...(schema ? { responseSchema: schemaObj } : {}),
     ...(thinking ? { thinkingConfig: thinking } : {}),
   };
 }
 
-async function callModel(model, systemText, userText, label) {
+async function callModel(model, systemText, userText, label, schemaObj = PLAN_SCHEMA) {
   const thinking = defaultThinking(model);
   // 400 の場合は設定を減らして再試行（思考設定なし → 応答スキーマなし）
   const queue = [{ schema: true, thinking }];
@@ -278,13 +278,13 @@ async function callModel(model, systemText, userText, label) {
   let retriedTruncation = false;
   for (let i = 0; i < queue.length; i++) {
     const o = queue[i];
-    const sys = o.schema ? systemText : `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(PLAN_SCHEMA)}`;
+    const sys = o.schema ? systemText : `${systemText}\n\n# 出力形式（JSON）\n${JSON.stringify(schemaObj)}`;
     const started = Date.now();
     try {
       const { plan, info } = await requestOnce(model, {
         systemInstruction: { parts: [{ text: sys }] },
         contents: [{ role: 'user', parts: [{ text: userText }] }],
-        generationConfig: generationConfig(o),
+        generationConfig: generationConfig(o, schemaObj),
       });
       console.log(`[gemini] ${label} 成功（${model}）${((Date.now() - started) / 1000).toFixed(1)}秒 ${info}`);
       return plan;
@@ -305,12 +305,12 @@ async function callModel(model, systemText, userText, label) {
 }
 
 // 使えるモデルが見つかったら、以後はそのモデルを使い続ける
-async function callGemini(systemText, userText, label = '') {
+async function callGemini(systemText, userText, label = '', schemaObj = PLAN_SCHEMA) {
   const models = [activeModel, ...[MODEL, ...FALLBACK_MODELS].filter(m => m !== activeModel)];
   let lastErr;
   for (const model of [...new Set(models)]) {
     try {
-      const plan = await callModel(model, systemText, userText, label);
+      const plan = await callModel(model, systemText, userText, label, schemaObj);
       if (model !== activeModel) {
         console.log(`[gemini] 以後はモデル「${model}」を使います`);
         activeModel = model;
@@ -343,6 +343,31 @@ function sendJson(res, status, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// CPU のセリフだけを考えさせる（作戦はゲーム内蔵の思考が決める）
+const LINE_SCHEMA = { type: 'OBJECT', properties: { speech: { type: 'STRING' } }, required: ['speech'] };
+
+function linePrompt(character) {
+  return `あなたは超能力バトルゲームのキャラクター「${character.name}」（スタンド『${character.stand}』）です。
+人物：${character.profile || ''}
+性格：${character.personality || ''}
+口調の例：${(character.lines || []).join('／')}
+いまの状況と、これから取る行動が与えられます。その場で口にする一言だけを、キャラクターらしい口調で返してください。
+- 30文字以内の1文。相手に聞こえるセリフ。説明やト書き、かぎかっこは付けない。
+- 行動の内容をそのまま説明しない（相手に作戦がばれる）。挑発・はったり・つぶやきは可。
+- 「下書き」が与えられたら、その場面と気持ちを保ったまま言い換えてよい。`;
+}
+
+async function handleLine(input, res) {
+  const { character, context } = input || {};
+  if (!character || !context) return sendJson(res, 400, { error: 'character/context が必要です' });
+  try {
+    const out = await callGemini(linePrompt(character), `# 状況\n${JSON.stringify(context).slice(0, 2000)}`, 'CPUのセリフ', LINE_SCHEMA);
+    sendJson(res, 200, { speech: String(out.speech || '').replace(/^「|」$/g, '').slice(0, 40) });
+  } catch (e) {
+    sendJson(res, 502, { error: e.message || 'セリフの生成に失敗しました' });
+  }
+}
+
 async function handlePlan(req, res) {
   if (!API_KEY) return sendJson(res, 503, { error: 'GEMINI_API_KEY が設定されていません' });
   let input;
@@ -352,6 +377,7 @@ async function handlePlan(req, res) {
     return sendJson(res, 400, { error: 'リクエストが不正です' });
   }
   const { role, text, observation, character } = input || {};
+  if (role === 'line') return handleLine(input, res);
   if (!observation || (role !== 'player' && role !== 'cpu')) return sendJson(res, 400, { error: 'role/observation が必要です' });
   const rules = rulesSummary();
   const system = role === 'player' ? playerPrompt() : cpuPrompt(character || {});
