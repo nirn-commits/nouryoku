@@ -184,7 +184,8 @@ function* search(b, c, planner, alternatives) {
   const { f: f0 } = imagine(b, c, seed);
   const others = new Map(f0.chars.filter(o => o.alive && o.id !== c.id).map(o => [o.id, planner(f0, o)]));
   const models = [{ plans: others, weight: 1 }];
-  const foes = f0.chars.filter(o => o.alive && o.team !== c.team);
+  // 想定を変えるのは近くの敵だけ（大人数の戦いで、遠くの敵まで一斉に詰めてくる想定にはしない）
+  const foes = f0.chars.filter(o => o.alive && o.team !== c.team && dist(o.x, o.y, c.x, c.y) < 20);
   const nModels = globalThis.LOOK_MODELS ?? 4;
   if (nModels >= 2 && foes.length) {
     const m = new Map(others);

@@ -209,7 +209,7 @@ export function buildObservation(b, c) {
     // ガン待ち対策の時間制限：警察到着時点で、相手に与えたダメージが多い側の判定勝ち（同点は引き分け＝両者の負け扱い）
     time_limit: {
       police_arrives_in: r1(Math.max(0, RULES.timeLimit - b.t)),
-      damage_dealt: { my_team: b.teamDealt(c.team), enemy_team: b.teamDealt(1 - c.team) },
+      damage_dealt: { my_team: b.teamDealt(c.team), enemy_team: b.rivalDealt(c.team) },
       note: '警察が来た時点でダメージを多く与えていた側の判定勝ち。待っているだけでは勝てない',
     },
     ...(b.safeZone ? { safe_zone: {

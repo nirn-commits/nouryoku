@@ -5,7 +5,7 @@ import { compilePlan } from './engine/plan.js';
 import { buildObservation } from './engine/perception.js';
 import { localParse } from './engine/localParser.js';
 import { TurnController } from './engine/controller.js';
-import { Renderer } from './render.js';
+import { Renderer, teamColor } from './render.js';
 import { pointInRect, dist } from './engine/vec.js';
 import { MAPS } from './engine/maps.js';
 import { loadFxSheet, saveFxBlob, loadChips } from './fx.js';
@@ -24,9 +24,11 @@ const state = {
   gemini: false,
   model: '',
   chosen: 'sogo',
-  opponent: 'random',
-  opponent2: 'random',
-  ally: 'random',
+  // 出場キャラ：味方の枠と相手の枠（'random' ならランダム）。バトルロワイヤルは相手の枠だけ
+  allies: ['random', 'random', 'random', 'random'],
+  foes: Array(9).fill('random'),
+  royaleCount: 6,
+  allowDup: false,
   mode: '2v2',
   control: 'play', // play=自分で操作 / watch=CPU同士を観戦
   spectate: false,
@@ -364,33 +366,52 @@ function renderCharCards() {
       <div class="meta">HP ${c.hp} / 体重${c.kg}kg / 歩き${c.walk}m/s・走り${c.run}m/s</div>
       ${c.abilities.map(abilityHtml).join('')}
     </div>`).join('');
-  for (const [sel, key] of [['#opponent', 'opponent'], ['#opponent2', 'opponent2'], ['#ally', 'ally']]) {
-    $(sel).innerHTML = '<option value="random">ランダム</option>' +
-      Object.values(CHARACTERS).map(c => `<option value="${c.id}">${c.name}『${c.stand}』${c.id === state.chosen ? '（自分と同じ）' : ''}</option>`).join('');
-    $(sel).value = state[key];
-  }
-  $('#mode').value = state.mode;
-  document.querySelectorAll('.team-only').forEach(el => el.classList.toggle('hidden', state.mode !== '2v2'));
+  renderLineup();
 }
 
-// 出場キャラを決める。ランダムはまだ出ていないキャラから選ぶ（足りなければ重複可）
+// 形式ごとの枠の数：味方（自分以外）と相手
+function slotCounts() {
+  if (state.mode === 'royale') return { allies: 0, foes: state.royaleCount - 1 };
+  if (state.mode === '5v5') return { allies: 4, foes: 5 };
+  if (state.mode === '2v2') return { allies: 1, foes: 2 };
+  return { allies: 0, foes: 1 };
+}
+
+// 出場キャラの枠（キャラごとに選ぶか、ランダム）
+function renderLineup() {
+  $('#mode').value = state.mode;
+  document.querySelectorAll('.royale-only').forEach(el => el.classList.toggle('hidden', state.mode !== 'royale'));
+  $('#royale-count').innerHTML = [3, 4, 5, 6, 7, 8].map(n => `<option value="${n}">${n}人</option>`).join('');
+  $('#royale-count').value = String(state.royaleCount);
+  $('#allow-dup').checked = state.allowDup;
+  const { allies, foes } = slotCounts();
+  const options = v => '<option value="random">ランダム</option>' + Object.values(CHARACTERS).map(c => `<option value="${c.id}" ${v === c.id ? 'selected' : ''}>${c.name}『${c.stand}』${c.id === state.chosen ? '（自分と同じ）' : ''}</option>`).join('');
+  const slot = (kind, i, label) => `<label>${label}：<select data-kind="${kind}" data-i="${i}">${options(state[kind][i])}</select></label>`;
+  const foeLabel = i => (state.mode === 'royale' ? `参加者${i + 2}（CPU）` : foes > 1 ? `対戦相手${'①②③④⑤'[i]}（CPU）` : '対戦相手（CPU）');
+  $('#lineup').innerHTML =
+    (allies ? `<div class="slots"><span class="meta">味方</span>${Array.from({ length: allies }, (_, i) => slot('allies', i, `味方${allies > 1 ? '①②③④'[i] : ''}（CPU）`)).join('')}</div>` : '') +
+    `<div class="slots"><span class="meta">${state.mode === 'royale' ? '自分以外の参加者（全員が敵）' : '相手'}</span>${Array.from({ length: foes }, (_, i) => slot('foes', i, foeLabel(i))).join('')}</div>`;
+}
+
+// 出場キャラを決める。指定した枠はそのまま（同じキャラも可）。
+// ランダムの枠は、まだ出ていないキャラから選ぶ（足りなければ重複可。「重ねる」にしていれば最初から重複可）
 function pickLineup() {
-  const used = [state.chosen];
-  const pick = want => {
-    if (want !== 'random') { used.push(want); return want; }
-    const pool = Object.keys(CHARACTERS).filter(id => !used.includes(id));
-    const list = pool.length ? pool : Object.keys(CHARACTERS).filter(id => id !== state.chosen);
+  const { allies, foes } = slotCounts();
+  const all = Object.keys(CHARACTERS);
+  const want = [...state.allies.slice(0, allies), ...state.foes.slice(0, foes)];
+  const used = [state.chosen, ...want.filter(v => v !== 'random')];
+  const picked = want.map(v => {
+    if (v !== 'random') return v;
+    const pool = state.allowDup ? all : all.filter(id => !used.includes(id));
+    const list = pool.length ? pool : all;
     const id = list[Math.floor(Math.random() * list.length)];
     used.push(id);
     return id;
-  };
-  const team = state.mode === '2v2';
-  // 指定済みのキャラを先に確保してから、ランダムを埋める
-  for (const k of ['ally', 'opponent', 'opponent2']) if (state[k] !== 'random' && (team || k === 'opponent')) used.push(state[k]);
-  const cpuChar = state.opponent !== 'random' ? state.opponent : pick('random');
-  const allyChar = team ? (state.ally !== 'random' ? state.ally : pick('random')) : null;
-  const cpu2Char = team ? (state.opponent2 !== 'random' ? state.opponent2 : pick('random')) : null;
-  return { cpuChar, allyChar, cpu2Char };
+  });
+  const mine = [state.chosen, ...picked.slice(0, allies)];
+  const theirs = picked.slice(allies);
+  const teams = state.mode === 'royale' ? [mine, ...theirs.map(id => [id])] : [mine, theirs];
+  return { teams };
 }
 
 // ---------- 戦闘 ----------
@@ -456,6 +477,17 @@ function updateSpectate(now) {
   // 体力の綱引き（左がチームA）
   const hp = t => b.chars.filter(c => c.team === t).reduce((a, c) => a + Math.max(0, c.hp), 0);
   const max = t => b.chars.filter(c => c.team === t).reduce((a, c) => a + c.maxHp, 0);
+  if (b.teamCount > 2) {
+    // 3チーム以上：残り体力の割合をチームの色で並べる
+    const total = b.chars.reduce((a, c) => a + Math.max(0, c.hp), 0) || 1;
+    $('#tug .tug-bar').innerHTML = Array.from({ length: b.teamCount }, (_, t) => `<i class="tug-seg" title="${teamNames(b, t)}" style="width:${(hp(t) / total) * 100}%;background:${teamColor(t)}"></i>`).join('');
+    const alive = b.chars.filter(c => c.alive);
+    $('#tug .tug-a').textContent = `生存 ${alive.length}/${b.chars.length}`;
+    const lead = [...alive].sort((p, q) => q.hp - p.hp)[0];
+    $('#tug .tug-b').textContent = lead ? `体力トップ：${lead.name}` : '';
+    return;
+  }
+  if (!$('#tug .tug-fill')) $('#tug .tug-bar').innerHTML = '<i class="tug-fill"></i>';
   const a = hp(0) / max(0), z = hp(1) / max(1);
   $('#tug .tug-fill').style.width = `${(a + z > 0 ? a / (a + z) : 0.5) * 100}%`;
   $('#tug .tug-a').textContent = `${teamNames(b, 0)} ${Math.round(a * 100)}%`;
@@ -545,35 +577,48 @@ function renderSide() {
   }).join(' ');
   $('#self-card').style.setProperty('--c', me.color);
   $('#self-card').innerHTML = `
-    ${portrait(me.charId, 'mini')}<h3>${state.spectate ? 'チームA：' : ''}${me.name} <small>『${me.stand}』</small></h3>
+    ${portrait(me.charId, 'mini')}<h3>${state.spectate && b.teamCount === 2 ? 'チームA：' : ''}${me.name} <small>『${me.stand}』</small></h3>
     ${bar('hp', me.hp, me.maxHp, `HP ${Math.round(me.hp)}/${me.maxHp}`)}
     ${bar('sp', me.sp, me.maxSp, `スタンドエネルギー ${Math.round(me.sp)}`)}
     <div class="meta">${me.held ? `手に${me.held.name}` : '素手'} ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
     <div class="meta">${cds}</div>
     <div class="meta">${st.join('・')}</div>`;
 
-  const ally = b.alliesOf(me)[0];
+  const allies = b.alliesOf(me);
   const allyCard = $('#ally-card');
-  allyCard.classList.toggle('hidden', !ally);
-  if (ally) {
-    const abd = b.buildingOf(ally);
-    const ap = ally.runner.plan;
-    const cur = ap && ap.steps[Math.max(0, ally.runner.idx - 1)];
-    allyCard.style.setProperty('--c', ally.color);
-    allyCard.innerHTML = `${portrait(ally.charId, 'mini')}<h3>${state.spectate ? 'チームA：' : '味方：'}${ally.name} <small>『${ally.stand}』</small></h3>
-      ${ally.alive ? bar('hp', ally.hp, ally.maxHp, `HP ${Math.round(ally.hp)}/${ally.maxHp}`) : '<div class="meta"><b>再起不能</b></div>'}
+  allyCard.classList.toggle('hidden', !allies.length);
+  const teamName = t => (b.teamCount === 2 ? (t === 0 ? 'チームA' : 'チームB') : '');
+  // 大人数の時は1人1行の簡易表示にする
+  const many = n => n > 2;
+  if (allies.length) {
+    allyCard.style.setProperty('--c', allies[0].color);
+    allyCard.innerHTML = allies.map(ally => {
+      const abd = b.buildingOf(ally);
+      const ap = ally.runner.plan;
+      const cur = ap && ap.steps[Math.max(0, ally.runner.idx - 1)];
+      const head = `<h3>${state.spectate ? `${teamName(0)}：` : '味方：'}${ally.name} <small>『${ally.stand}』</small>${ally.alive ? '' : ' <span class="tag">再起不能</span>'}</h3>`;
+      if (many(allies.length)) return `<div class="mini-row" style="--c:${ally.color}">${head}${ally.alive ? bar('hp', ally.hp, ally.maxHp, `HP ${Math.round(ally.hp)}/${ally.maxHp}・${dist(me.x, me.y, ally.x, ally.y).toFixed(0)}m`) : ''}</div>`;
+      return `${portrait(ally.charId, 'mini')}${head}
+      ${ally.alive ? bar('hp', ally.hp, ally.maxHp, `HP ${Math.round(ally.hp)}/${ally.maxHp}`) : ''}
       ${ally.alive ? `<div class="meta">距離 ${dist(me.x, me.y, ally.x, ally.y).toFixed(1)}m・${abd ? `${abd.name}の${ally.floor + 1}階` : '屋外'}${ally.held ? `・${ally.held.name}` : ''}</div>
       <div class="meta">狙い：${b.enemyOf(ally).name}／${cur && ally.runner.step ? `行動中：${cur.label}` : '待機'}</div>` : ''}`;
+    }).join('');
   }
   const foes = b.enemiesOf(me);
+  const foeTitle = foe => (state.spectate ? (b.teamCount === 2 ? `${teamName(foe.team)}：` : '') : '敵：');
   $('#enemy-card').innerHTML = foes.map(foe => {
     const vis = foe.alive && b.canSee(me, foe.x, foe.y);
     const ls = me.memory.seen[foe.id];
     const target = foe.alive && b.enemyOf(me) === foe && foes.filter(f => f.alive).length > 1;
+    const head = `<h3>${foeTitle(foe)}${foe.name} ${!foe.alive ? '<span class="tag">再起不能</span>' : vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}${target ? ' <span class="tag focus">狙い</span>' : ''}</h3>`;
+    const where = foe.alive ? (vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後の目撃 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前${ls.via ? `（${ls.via}の報告）` : ''}` : '一度も姿を見ていない') : '';
+    if (many(foes.length)) {
+      return `<div class="foe mini-row" style="--c:${foe.color}">${head}${foe.alive && (vis || omni()) ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}・${where}`) : foe.alive ? `<div class="meta">${where}</div>` : ''}</div>`;
+    }
     return `<div class="foe" style="--c:${foe.color}">${portrait(foe.charId, 'mini')}
-    <h3>${state.spectate ? 'チームB：' : '敵：'}${foe.name} ${!foe.alive ? '<span class="tag">再起不能</span>' : vis ? '<span class="tag seen">視認中</span>' : '<span class="tag">見えていない</span>'}${target ? ' <span class="tag focus">狙い</span>' : ''}</h3>
+    ${head}
     ${foe.alive && (vis || omni()) ? bar('hp enemy', foe.hp, foe.maxHp, `HP 約${Math.round(foe.hp / 10) * 10}`) : ''}
-    ${foe.alive ? `<div class="meta">${vis ? `距離 ${dist(me.x, me.y, foe.x, foe.y).toFixed(1)}m・${b.buildingOf(foe) ? `${b.buildingOf(foe).name}の${foe.floor + 1}階` : '屋外'}` : ls ? `最後の目撃 (${ls.x.toFixed(1)}, ${ls.y.toFixed(1)})${ls.floor ? '・2階' : ''}・${(b.t - ls.t).toFixed(0)}秒前${ls.via ? `（${ls.via}の報告）` : ''}` : '一度も姿を見ていない'}</div>` : ''}
+    ${foe.alive ? `<div class="meta">${where}</div>` : ''}
     ${omni() ? `<div class="meta debug">計画：${(foe.runner.plan?.steps || []).map((s, i) => `${i === foe.runner.idx - 1 ? '▶' : ''}${s.label}`).join(' / ')}</div>` : ''}</div>`;
   }).join('') + `<div class="meta">敵の能力（観察から推測）：${me.memory.observed.length ? me.memory.observed.map(h => `<div>・${h}</div>`).join('') : '不明'}</div>`;
 
@@ -596,7 +641,7 @@ function renderSide() {
   const shrinking = RULES.zonePhases.some(([t0, t1]) => b.t >= t0 && b.t < t1);
   const next = RULES.zonePhases.find(([t0]) => b.t < t0);
   const out = me.alive && b.outsideZone(me);
-  tl.innerHTML = `経過 ${b.t.toFixed(1)}秒／${b.safeZone ? '' : '<!--'}<span class="${out ? 'zone-out' : 'zone'}">安全地帯 半径${zr.toFixed(0)}m${shrinking ? '（縮小中）' : next ? `（${(next[0] - b.t).toFixed(0)}秒後に縮小）` : ''}${out ? '・外にいる！' : ''}</span>／${b.safeZone ? '' : '-->'}警察まで ${left.toFixed(0)}秒／与ダメージ ${state.spectate ? 'A' : '自分側'} ${b.teamDealt(me.team)}：${state.spectate ? 'B' : '相手側'} ${b.teamDealt(1 - me.team)}`;
+  tl.innerHTML = `経過 ${b.t.toFixed(1)}秒／${b.safeZone ? '' : '<!--'}<span class="${out ? 'zone-out' : 'zone'}">安全地帯 半径${zr.toFixed(0)}m${shrinking ? '（縮小中）' : next ? `（${(next[0] - b.t).toFixed(0)}秒後に縮小）` : ''}${out ? '・外にいる！' : ''}</span>／${b.safeZone ? '' : '-->'}警察まで ${left.toFixed(0)}秒／与ダメージ ${state.spectate ? (b.teamCount === 2 ? 'A' : me.name) : '自分側'} ${b.teamDealt(me.team)}：${state.spectate ? (b.teamCount === 2 ? 'B' : '最多の相手') : b.teamCount === 2 ? '相手側' : '最多の相手'} ${b.rivalDealt(me.team)}`;
   tl.classList.toggle('siren', b.t >= RULES.policeWarn);
 }
 
@@ -637,21 +682,35 @@ function showResult() {
   const b = state.battle;
   state.ended = true;
   const won = b.winnerTeam === b.player.team;
+  const names = t => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
+  const teamWord = t => (b.teamCount === 2 && b.teamSize > 1 ? (t === 0 ? 'チームA' : 'チームB') : names(t));
+  const how = `${b.t.toFixed(1)}秒${b.endReason === 'police' ? '・警察到着で判定' : ''}`;
   if (state.spectate) {
-    const names = t => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
-    $('#result-title').textContent = b.winnerTeam === null ? '引き分け' : `${b.teamSize > 1 ? (b.winnerTeam === 0 ? 'チームA' : 'チームB') : names(b.winnerTeam)}の勝ち`;
-    $('#result-body').textContent = `${names(0)} 対 ${names(1)}／与えたダメージ ${b.teamDealt(0)} 対 ${b.teamDealt(1)}（${b.t.toFixed(1)}秒${b.endReason === 'police' ? '・警察到着で判定' : ''}）`;
+    $('#result-title').textContent = b.winnerTeam === null ? '引き分け' : `${teamWord(b.winnerTeam)}の勝ち`;
+    $('#result-body').textContent = b.teamCount === 2
+      ? `${names(0)} 対 ${names(1)}／与えたダメージ ${b.teamDealt(0)} 対 ${b.teamDealt(1)}（${how}）`
+      : `${b.mode}／与えたダメージ：${ranking()}（${how}）`;
     setTimeout(() => $('#result').classList.remove('hidden'), 1800);
     return;
   }
   const team = b.teamSize > 1;
   $('#result-title').textContent = b.winnerTeam === null ? '相打ち' : won ? '勝利！' : '敗北……';
-  const names = b.winnerTeam === null ? '' : b.chars.filter(c => c.team === b.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
-  const score = `与えたダメージ ${b.teamDealt(b.player.team)} 対 ${b.teamDealt(1 - b.player.team)}`;
+  const winners = b.winnerTeam === null ? '' : b.chars.filter(c => c.team === b.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
+  if (b.teamCount > 2) {
+    // バトルロワイヤル：順位（倒れた順の逆）と与えたダメージ
+    $('#result-body').textContent = `${b.winnerTeam === null ? '勝者なし' : `${winners}の勝ち`}（${how}）／与えたダメージ：${ranking()}`;
+    setTimeout(() => $('#result').classList.remove('hidden'), 1800);
+    return;
+  }
+  const score = `与えたダメージ ${b.teamDealt(b.player.team)} 対 ${b.rivalDealt(b.player.team)}`;
   $('#result-body').textContent = b.endReason === 'police'
-    ? (b.winnerTeam === null ? `警察が到着し、両者その場から逃げた（${score}で引き分け）` : `警察が到着。${names}${team ? 'のチーム' : ''}の判定勝ち（${score}）`)
-    : b.winnerTeam === null ? '全員再起不能' : `${names}${team ? 'のチーム' : ''}の勝ち（${b.t.toFixed(1)}秒）`;
+    ? (b.winnerTeam === null ? `警察が到着し、両者その場から逃げた（${score}で引き分け）` : `警察が到着。${winners}${team ? 'のチーム' : ''}の判定勝ち（${score}）`)
+    : b.winnerTeam === null ? '全員再起不能' : `${winners}${team ? 'のチーム' : ''}の勝ち（${b.t.toFixed(1)}秒）`;
   setTimeout(() => $('#result').classList.remove('hidden'), 1800);
+
+  function ranking() {
+    return [...b.chars].sort((p, q) => (q.dealt || 0) - (p.dealt || 0)).map(c => `${c.name} ${Math.round(c.dealt || 0)}${c.alive ? '' : '（脱落）'}`).join('・');
+  }
 }
 
 // ---------- 戦闘の演出：ヒットストップ・画面揺れ・効果音 ----------
@@ -930,10 +989,13 @@ window.addEventListener('DOMContentLoaded', async () => {
   $('#fx-btn').addEventListener('click', () => fxIn.click());
   $('#fx-clear').addEventListener('click', async () => { await saveFxBlob(null).catch(() => {}); reloadFx(); });
   await checkStatus();
-  $('#opponent').addEventListener('change', e => { state.opponent = e.target.value; });
-  $('#opponent2').addEventListener('change', e => { state.opponent2 = e.target.value; });
-  $('#ally').addEventListener('change', e => { state.ally = e.target.value; });
-  $('#mode').addEventListener('change', e => { state.mode = e.target.value; renderCharCards(); });
+  $('#lineup').addEventListener('change', e => {
+    const sel = e.target.closest('select[data-kind]');
+    if (sel) state[sel.dataset.kind][Number(sel.dataset.i)] = sel.value;
+  });
+  $('#royale-count').addEventListener('change', e => { state.royaleCount = Number(e.target.value); renderLineup(); });
+  $('#allow-dup').addEventListener('change', e => { state.allowDup = e.target.checked; });
+  $('#mode').addEventListener('change', e => { state.mode = e.target.value; renderLineup(); });
   $('#control').addEventListener('change', e => { state.control = e.target.value; renderCharCards(); });
   const sfxBtn = $('#sfx-btn');
   const sfxLabel = () => { sfxBtn.textContent = `効果音：${state.sfx ? 'ON' : 'OFF'}`; };

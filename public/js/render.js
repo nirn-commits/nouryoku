@@ -18,6 +18,10 @@ const SOUND_LABEL = {
 const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
 
 // 物体の色：[上面, 手前の面]
+// チームの色（観戦・大人数の時の名札とHPバー）
+export const TEAM_COLORS = ['#4cc9f0', '#ff6b6b', '#ffd166', '#06d6a0', '#c77dff', '#f4a261', '#90be6d', '#f15bb5', '#a0c4ff', '#e9c46a'];
+export const teamColor = t => TEAM_COLORS[t % TEAM_COLORS.length];
+
 export function colorsOf(o, b) {
   switch (o.kind) {
     case 'wall':
@@ -531,7 +535,7 @@ export class Renderer {
       ctx.setLineDash([]);
       ctx.fillStyle = 'rgba(255,160,160,0.95)';
       ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
-      ctx.fillText(`? ${b.teamSize > 1 ? `${foe.name.split(/\s+/)[0]}・` : ''}${(b.t - ls.t).toFixed(0)}秒前${ls.floor ? '・2階' : ''}${ls.via ? '（報告）' : ''}`, ls.x * P + 8, this.sy(ls.y, lz + 1));
+      ctx.fillText(`? ${b.teamSize > 1 || b.teamCount > 2 ? `${foe.name.split(/\s+/)[0]}${foe.name.match(/[①-⑫]$/)?.[0] || ''}・` : ''}${(b.t - ls.t).toFixed(0)}秒前${ls.floor ? '・2階' : ''}${ls.via ? '（報告）' : ''}`, ls.x * P + 8, this.sy(ls.y, lz + 1));
     }
 
     // エフェクト
@@ -1380,7 +1384,7 @@ export class Renderer {
     const barW = P * 1.2;
     ctx.fillStyle = '#000';
     ctx.fillRect(x - barW / 2, headY - 10, barW, 5);
-    ctx.fillStyle = this.spectate ? (c.team === 0 ? '#4cc9f0' : '#ff6b6b') : isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
+    ctx.fillStyle = this.spectate ? teamColor(c.team) : isMe ? '#06d6a0' : isAlly ? '#4cc9f0' : '#ff6b6b';
     ctx.fillRect(x - barW / 2, headY - 10, barW * (c.hp / c.maxHp), 5);
     ctx.fillStyle = '#fff';
     ctx.font = `${Math.max(10, P * 0.42)}px sans-serif`;
@@ -1391,7 +1395,7 @@ export class Renderer {
     if (c.climb) tags.push('階段');
     if ((c.floor === 0 && b.bushAt(c.x, c.y)) || s.hideUntil > b.t) tags.push('潜伏');
     if (air) tags.push('空中');
-    const label = this.spectate ? `${b.teamSize > 1 ? (c.team === 0 ? 'A:' : 'B:') : ''}${c.name}` : isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name;
+    const label = this.spectate ? `${b.teamSize > 1 && b.teamCount === 2 ? (c.team === 0 ? 'A:' : 'B:') : ''}${c.name}` : isMe ? '自分' : isAlly ? `味方:${c.name}` : c.name;
     ctx.fillText(`${label}${tags.length ? ` [${tags.join('・')}]` : ''}`, x - barW / 2, headY - 14);
     ctx.globalAlpha = 1;
   }

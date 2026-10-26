@@ -4,7 +4,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { FLOOR_H } from './engine/world.js';
 import { RULES } from './engine/data.js';
-import { colorsOf } from './render.js';
+import { colorsOf, teamColor } from './render.js';
 
 const CELL = 48; // キャラチップ1コマの大きさ（px）
 const DIRS = [2, 1, 0, 7, 6, 5, 4, 3]; // 向き（東から時計回り8方向）→ シートの列（南・南東・東・北東・北・北西・西・南西）
@@ -351,7 +351,7 @@ export class Renderer3D {
       // 体に重なっている（先行させていない）スタンドは描かない：本体の板に隠れて端だけがはみ出して見えるため
       const apart = sb && (c.def.standBlind || Math.hypot(sb.x - c.x, sb.y - c.y) > 1.0);
       s.ring.scale.setScalar(sb && c.alive && !apart ? 1.35 : 1); // スタンドを出している間は足元の輪を大きく
-      s.ring.material.color.set(c === me && !this.spectate ? '#06d6a0' : c.team === me.team ? '#4cc9f0' : '#ff6b6b');
+      s.ring.material.color.set(this.spectate ? teamColor(c.team) : c === me ? '#06d6a0' : c.team === me.team ? '#4cc9f0' : '#ff6b6b');
       const st = c.status;
       const moving = Math.hypot(c.vx, c.vy) > 0.4;
       const fps = moving ? (Math.hypot(c.vx, c.vy) > c.def.walk + 0.3 ? 14 : 9) : 0;

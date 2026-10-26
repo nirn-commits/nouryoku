@@ -28,18 +28,23 @@
         <select id="control"><option value="play">自分で操作する</option><option value="watch">CPU同士を観戦する</option></select>
       </label>
       <label>形式：
-        <select id="mode"><option value="2v2">2対2（味方CPUと組む）</option><option value="1v1">1対1</option></select>
+        <select id="mode">
+          <option value="2v2">2対2（味方CPUと組む）</option>
+          <option value="1v1">1対1</option>
+          <option value="5v5">5対5（味方CPU4人と組む）</option>
+          <option value="royale">バトルロワイヤル（全員が敵）</option>
+        </select>
       </label>
-      <label class="team-only">味方（CPU）：<select id="ally"></select></label>
-      <label>対戦相手①（CPU）：<select id="opponent"></select></label>
-      <label class="team-only">対戦相手②（CPU）：<select id="opponent2"></select></label>
+      <label class="royale-only">人数：<select id="royale-count"></select></label>
+      <label><input type="checkbox" id="allow-dup"> ランダムでも同じキャラを重ねる</label>
+      <div id="lineup" class="lineup"></div>
     </div>
     <div class="start-row"><button id="start-btn" class="big">戦闘開始</button></div>
     <details class="howto">
       <summary>遊び方</summary>
       <ul>
         <li>戦闘は「入力ターン（時間停止）→ 全員の行動を同時に実行 → 次の入力ターン」の繰り返しです。</li>
-        <li>2対2では、あなたと味方CPUのチームで、敵CPU2人と戦います。相手チームを全員倒せば勝ち。味方とは連絡を取り合っていて、位置や味方が見た敵の位置は共有されます。飛び道具は味方には当たりません。</li>
+        <li>2対2・5対5では、あなたと味方CPUのチームで、敵CPUのチームと戦います。相手チームを全員倒せば勝ち。バトルロワイヤルは全員が敵で、最後の1人になれば勝ち（警察が来たら、生き残りの中で与えたダメージが一番多い人の判定勝ち）。同じキャラ同士も戦えます（名前に①②…が付きます）。味方とは連絡を取り合っていて、位置や味方が見た敵の位置は共有されます。飛び道具は味方には当たりません。</li>
         <li>「鷺沼を殴る」のように敵の名前（姓・名・スタンド名）を書くと、その敵を狙います。「味方の所へ走る」で合流できます。</li>
         <li>戦闘が長引くと通報されます。120秒でサイレンが聞こえ始め、180秒で警察が到着した時点で、相手に多くダメージを与えていた側の判定勝ち（同点は引き分け）。待っているだけでは勝てません。</li>
         <li>近接は読み合いです：殴り→掴みに勝つ、掴み→ガード・受け流しに勝つ、受け流し→殴りに勝つ。フェイント・体当たり・潜む・物音を立てる・乗り越える・道具（消火器の煙幕、傘）も使えます。戦闘画面の「できること」に例文があります。</li>

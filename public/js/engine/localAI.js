@@ -556,7 +556,7 @@ function chooseFocus(b, c) {
 
 // 警察が近づいていて判定で負けている（同点含む）なら、攻撃の無い計画を攻めの計画に差し替える
 function hurry(b, c, plan) {
-  if (b.t < RULES.policeWarn - 15 || b.teamDealt(c.team) > b.teamDealt(1 - c.team)) return plan;
+  if (b.t < RULES.policeWarn - 15 || b.teamDealt(c.team) > b.rivalDealt(c.team)) return plan;
   const attacks = (plan.steps || []).some(st => ['melee', 'throw', 'ability'].includes(st.action) && st.effect !== 'silence_self' && st.effect !== 'recall' && st.effect !== 'deploy');
   if (attacks) return plan;
   const ab = c.def.abilities;

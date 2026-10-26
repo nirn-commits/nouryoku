@@ -47,11 +47,21 @@ function makeChar(id, charId, x, y, isCPU, team) {
   };
 }
 
+// 試合の形式の名前
+export function modeLabel(teams) {
+  const sizes = teams.map(t => t.length);
+  if (teams.length > 2) return sizes.every(n => n === 1) ? `バトルロワイヤル（${teams.length}人）` : `${teams.length}チーム戦（${sizes.join('・')}人）`;
+  return `${sizes[0]}対${sizes[1]}`;
+}
+
 export class Battle {
   // 1対1：playerChar 対 cpuChar。2対2：allyChar（味方CPU）と cpu2Char を加える
+  // 何人でも：teams に各チームのキャラを並べる（teams[0][0] がプレイヤー）。
+  //   5対5：[[自分, 味方×4], [敵×5]]／バトルロワイヤル：[[自分], [敵1], [敵2], ...]（全員が1人1チーム）
+  //   同じキャラが何人いてもよい（名前に①②…が付く）
   // randomSpawn：開始位置を毎回ランダムにする（false なら地図ごとの決まった位置）
   // spectate：観戦モード。プレイヤーのキャラも CPU が操作する
-  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, mapId = 'town', randomSpawn = true, spectate = false, shrinkZone = true } = {}) {
+  constructor({ seed = Date.now(), playerChar = 'sogo', cpuChar = 'kito', allyChar = null, cpu2Char = null, teams = null, mapId = 'town', randomSpawn = true, spectate = false, shrinkZone = true } = {}) {
     this.seed = seed;
     this.rng = makeRng(seed ^ 0x9e3779b9);
     this.mapId = mapId;
@@ -63,21 +73,41 @@ export class Battle {
     this.over = false;
     this.winner = null;
     this.winnerTeam = null;
-    const sp = randomSpawn ? this.randomSpawns() || this.world.spawns : this.world.spawns;
-    this.player = makeChar('player', playerChar, sp.player.x, sp.player.y, spectate, 0);
+    if (!teams) teams = [[playerChar, ...(allyChar ? [allyChar] : [])], [cpuChar, ...(cpu2Char ? [cpu2Char] : [])]];
+    teams = teams.filter(t => t && t.length);
+    if (teams.length < 2) throw new Error('2チーム以上が必要');
+    this.teamCount = teams.length;
     this.spectate = spectate;
-    this.cpu = makeChar('cpu', cpuChar, sp.cpu.x, sp.cpu.y, true, 1);
-    this.chars = [this.player, this.cpu];
-    if (allyChar) this.chars.push(this.ally = makeChar('ally', allyChar, ...this.spawnNear(sp.player), true, 0));
-    if (cpu2Char) this.chars.push(this.cpu2 = makeChar('cpu2', cpu2Char, ...this.spawnNear(sp.cpu), true, 1));
+    const anchors = this.teamSpawns(teams.length, randomSpawn);
+    // 識別子：自分は player、味方は ally・ally2…、敵は cpu・cpu2・cpu3…（チームの順）
+    let nAlly = 0, nFoe = 0;
+    this.chars = [];
+    teams.forEach((members, team) => {
+      const spots = this.spawnSpots(anchors[team], members.length);
+      members.forEach((charId, i) => {
+        const id = team === 0 ? (i === 0 ? 'player' : `ally${++nAlly > 1 ? nAlly : ''}`) : `cpu${++nFoe > 1 ? nFoe : ''}`;
+        this.chars.push(makeChar(id, charId, spots[i].x, spots[i].y, team !== 0 || i > 0 || spectate, team));
+      });
+    });
+    this.player = this.chars[0];
+    this.cpu = this.chars.find(c => c.team === 1);
+    this.ally = this.chars.find(c => c.team === 0 && c !== this.player) || undefined;
+    this.cpu2 = this.chars.filter(c => c.team === 1)[1] || undefined;
+    // 同じキャラが複数いる時は、名前に番号を付けて見分ける
+    const count = {};
+    for (const c of this.chars) count[c.charId] = (count[c.charId] || 0) + 1;
+    const seq = {};
+    for (const c of this.chars) if (count[c.charId] > 1) c.name = `${c.def.name}${'①②③④⑤⑥⑦⑧⑨⑩⑪⑫'[(seq[c.charId] = (seq[c.charId] || 0) + 1) - 1] || seq[c.charId]}`;
     for (const c of this.chars) {
       c.facing = angleTo(c.x, c.y, this.world.w / 2, this.world.h / 2);
       if (c.units) for (const u of c.units) { u.x = c.x; u.y = c.y; }
     }
-    this.teamSize = Math.max(...[0, 1].map(t => this.chars.filter(c => c.team === t).length));
+    this.teamSize = Math.max(...teams.map(t => t.length));
+    this.royale = teams.length > 2;
+    this.mode = modeLabel(teams);
     this.safeZone = null;
     if (shrinkZone) this.initSafeZone();
-    this.emit({ text: `―― 戦闘開始${this.teamSize > 1 ? '（2対2）' : ''} ――`, kind: 'system', all: true });
+    this.emit({ text: `―― 戦闘開始（${this.mode}） ――`, kind: 'system', all: true });
   }
 
   // ランダムな開始位置：屋外の歩ける場所から、互いに十分離れていて歩いて行き来できる2点を選ぶ
@@ -100,6 +130,55 @@ export class Battle {
       return this.rng() < 0.5 ? { player: a, cpu: c } : { player: c, cpu: a };
     }
     return null;
+  }
+
+  // チームごとの出現地点：ランダムなら、屋外の歩ける場所から互いになるべく離れた点を選ぶ
+  teamSpawns(n, random) {
+    const w = this.world;
+    const fixed = [w.spawns.player, w.spawns.cpu];
+    if (!random && n <= 2) return fixed;
+    if (n <= 2) {
+      const r = this.randomSpawns();
+      return r ? [r.player, r.cpu] : fixed;
+    }
+    const pts = [];
+    for (let i = 0; i < 900 && pts.length < 160; i++) {
+      const x = 1.5 + this.rng() * (w.w - 3), y = 1.5 + this.rng() * (w.h - 3);
+      if (!isWalkablePoint(w, x, y, 0) || buildingAt(w, x, y)) continue;
+      if (w.objects.some(o => o.kind === 'bush' && pointInRect(x, y, o, 0.5))) continue;
+      pts.push({ x, y });
+    }
+    if (pts.length < n) return Array.from({ length: n }, (_, i) => fixed[i % 2]);
+    // 最初の点から歩いて行ける点だけを使い、すでに選んだ点から一番遠い点を順に足していく
+    const first = random ? pts[Math.floor(this.rng() * pts.length)] : fixed[0];
+    const reach = pts.filter(p => findPath(w, first.x, first.y, p.x, p.y, 0, 0));
+    const chosen = [first];
+    while (chosen.length < n && reach.length) {
+      let best = null, bd = -1;
+      for (const p of reach) {
+        const d = Math.min(...chosen.map(q => dist(p.x, p.y, q.x, q.y)));
+        if (d > bd) { bd = d; best = p; }
+      }
+      chosen.push(best);
+    }
+    while (chosen.length < n) chosen.push(fixed[chosen.length % 2]);
+    // 自分の場所が毎回同じにならないよう、並びを混ぜる
+    for (let i = chosen.length - 1; i > 0 && random; i--) { const j = Math.floor(this.rng() * (i + 1)); [chosen[i], chosen[j]] = [chosen[j], chosen[i]]; }
+    return chosen;
+  }
+
+  // チームの仲間を出現地点のまわりに並べる（歩ける場所・互いに重ならない）
+  spawnSpots(p, n) {
+    const spots = [{ x: p.x, y: p.y }];
+    for (const r of [2.2, 3.6, 5]) {
+      for (let k = 0; k < 8 && spots.length < n; k++) {
+        const a = (k / 8) * Math.PI * 2 + r;
+        const q = nearestWalkable(this.world, p.x + Math.cos(a) * r, p.y + Math.sin(a) * r, 1.2, 0);
+        if (q && !buildingAt(this.world, q.x, q.y) && spots.every(s => dist(s.x, s.y, q.x, q.y) > 1.2)) spots.push(q);
+      }
+    }
+    while (spots.length < n) spots.push({ x: p.x + spots.length * 0.9, y: p.y });
+    return spots.slice(0, n);
   }
 
   // 出現地点の少し横（歩ける場所）
@@ -677,6 +756,13 @@ export class Battle {
     return Math.round(this.chars.filter(c => c.team === team).reduce((s, c) => s + (c.dealt || 0), 0));
   }
 
+  // 相手側の与ダメージ（2チームなら相手チーム、3チーム以上なら一番多いチーム）
+  rivalDealt(team) {
+    let m = 0;
+    for (let t = 0; t < this.teamCount; t++) if (t !== team) m = Math.max(m, this.teamDealt(t));
+    return m;
+  }
+
   // 通報で警察が来る：サイレン（全員に聞こえる）→ 到着で判定
   updatePolice() {
     if (!this.policeWarned && this.t >= RULES.policeWarn) {
@@ -685,13 +771,21 @@ export class Battle {
       for (const c of this.chars) if (c.alive) this.recordSound(c, { x: this.world.w / 2, y: this.world.h + 5, floor: 0 }, 'siren', null);
     }
     if (this.t < RULES.timeLimit) return;
-    const d0 = this.teamDealt(0), d1 = this.teamDealt(1);
     this.over = true;
     this.endReason = 'police';
-    this.winnerTeam = d0 > d1 ? 0 : d1 > d0 ? 1 : null;
-    this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive) || this.chars.find(c => c.team === this.winnerTeam);
     const name = t => this.chars.filter(c => c.team === t).map(c => c.name).join('・');
-    this.emit({ text: `警察が到着！ 全員がその場から散った。判定：${name(0)} ${d0} 対 ${name(1)} ${d1}（与えたダメージ）→ ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
+    if (this.teamCount <= 2) {
+      const d0 = this.teamDealt(0), d1 = this.teamDealt(1);
+      this.winnerTeam = d0 > d1 ? 0 : d1 > d0 ? 1 : null;
+      this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive) || this.chars.find(c => c.team === this.winnerTeam);
+      this.emit({ text: `警察が到着！ 全員がその場から散った。判定：${name(0)} ${d0} 対 ${name(1)} ${d1}（与えたダメージ）→ ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
+      return;
+    }
+    // 3チーム以上：生き残っているチームの中で、与えたダメージが一番多いチームの判定勝ち
+    const ranks = this.aliveTeams().map(t => ({ t, d: this.teamDealt(t) })).sort((p, q) => q.d - p.d);
+    this.winnerTeam = ranks.length && (ranks.length === 1 || ranks[0].d > ranks[1].d) ? ranks[0].t : null;
+    this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive);
+    this.emit({ text: `警察が到着！ 全員がその場から散った。判定（生き残り・与えたダメージ）：${ranks.map(r => `${name(r.t)} ${r.d}`).join('／')} → ${this.winnerTeam === null ? '引き分け' : `${name(this.winnerTeam)}の判定勝ち`}`, kind: 'system', all: true });
   }
 
   // ---------- 汎用の能力：強化・鈍化・危険な場 ----------
@@ -795,6 +889,11 @@ export class Battle {
 
   teamAlive(team) {
     return this.chars.some(c => c.team === team && c.alive);
+  }
+
+  // まだ戦える人が残っているチーム
+  aliveTeams() {
+    return [...new Set(this.chars.filter(c => c.alive).map(c => c.team))];
   }
 
   // ---------- ダメージ ----------
@@ -1103,10 +1202,10 @@ export class Battle {
     if (this.world.zones.length) this.updateHazards();
     this.updatePolice();
     if (this.over) return;
-    const t0 = this.teamAlive(0), t1 = this.teamAlive(1);
-    if (!t0 || !t1) {
+    const alive = this.aliveTeams();
+    if (alive.length <= 1) {
       this.over = true;
-      this.winnerTeam = t0 ? 0 : t1 ? 1 : null;
+      this.winnerTeam = alive.length ? alive[0] : null;
       this.winner = this.winnerTeam === null ? null : this.chars.find(c => c.team === this.winnerTeam && c.alive);
       const names = this.winnerTeam === null ? '' : this.chars.filter(c => c.team === this.winnerTeam).map(c => `${c.name}『${c.stand}』`).join('・');
       this.emit({ text: this.winnerTeam === null ? '相打ち' : `勝者：${names}`, kind: 'system', all: true });

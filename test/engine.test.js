@@ -448,7 +448,7 @@ test('2対2：4人が出現し、CPU同士のチーム戦が例外なく決着�
     const r = i => ids[(seed + i) % 4];
     const b = new Battle({ seed, playerChar: r(0), allyChar: r(1), cpuChar: r(2), cpu2Char: r(3), mapId: seed % 2 ? 'town' : 'lot' });
     assert.equal(b.chars.length, 4);
-    assert.deepEqual(b.chars.map(c => c.team), [0, 1, 0, 1]);
+    assert.deepEqual(Object.fromEntries(b.chars.map(c => [c.id, c.team])), { player: 0, ally: 0, cpu: 1, cpu2: 1 });
     for (const c of b.chars) assert.ok(isWalkablePoint(b.world, c.x, c.y), `${c.id} が歩けない場所に出現した`);
     const tc = new TurnController(b);
     while (!b.over && tc.turn <= 70) {
