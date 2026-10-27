@@ -579,7 +579,7 @@ function renderSide() {
   $('#self-card').innerHTML = `
     ${portrait(me.charId, 'mini')}<h3>${state.spectate && b.teamCount === 2 ? 'チームA：' : ''}${me.name} <small>『${me.stand}』</small></h3>
     ${bar('hp', me.hp, me.maxHp, `HP ${Math.round(me.hp)}/${me.maxHp}`)}
-    ${bar('sp', me.sp, me.maxSp, `スタンドエネルギー ${Math.round(me.sp)}`)}
+    ${bar('sp', me.sp, me.maxSp, `${me.def.powerLabel && me.def.powerLabel !== 'スタンド' ? `${me.def.powerLabel}の力` : 'スタンドエネルギー'} ${Math.round(me.sp)}`)}
     <div class="meta">${me.held ? `手に${me.held.name}` : '素手'} ／ 位置 (${me.x.toFixed(1)}, ${me.y.toFixed(1)}) ／ ${room ? `${room.name}の${me.floor + 1}階` : '屋外'}${room ? `（出口 開${room.exits.filter(id => b.exitOpen(id)).length}/${room.exits.length}）` : ''}</div>
     <div class="meta">${cds}</div>
     <div class="meta">${st.join('・')}</div>`;

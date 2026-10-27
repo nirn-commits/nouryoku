@@ -665,6 +665,9 @@ function alternativePlans(b, c, pe) {
     alts.push({ interpretation: tag('構えて受けてから殴る'), speech: null, steps: [{ action: 'guard', targetType: 'enemy', duration: 1.2 }, { action: 'melee', targetType: 'enemy' }] });
     // 殴りかかってくる相手には、受け流してから殴り返す
     alts.push({ interpretation: tag('受け流して殴り返す'), speech: null, steps: [{ action: 'counter', targetType: 'none' }, { action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }] });
+    // 近接の読み合い：受け流し・ガードで待つ相手には掴み、構えを誘うならフェイントを挟む
+    alts.push({ interpretation: tag('掴んでから殴る'), speech: null, steps: [{ action: 'grab', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }] });
+    alts.push({ interpretation: tag('フェイントを入れて殴る'), speech: null, steps: [{ action: 'feint', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }, { action: 'melee', targetType: 'enemy' }] });
   }
   for (const id of c.def.abilities) {
     const ab = ABILITIES[id];

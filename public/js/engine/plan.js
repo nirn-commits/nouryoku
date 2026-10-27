@@ -1379,7 +1379,7 @@ const EXEC = {
         st.data.phase = 'cooldown';
         return null;
       }
-      if (c.sp < ab.cost) return `スタンドエネルギーが足りない（必要${ab.cost}）`;
+      if (c.sp < ab.cost) return `${c.def.powerLabel && c.def.powerLabel !== 'スタンド' ? `${c.def.powerLabel}の力` : 'スタンドエネルギー'}が足りない（必要${ab.cost}）`;
       const res = resolveTarget(b, c, s.target, s);
       // 口を残す：見えていなくても、車両が体の上を走った相手には付けられる（判定は能力側）
       if (res.error && s.ability !== 'corvette') return res.error;
