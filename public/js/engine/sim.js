@@ -734,7 +734,7 @@ export class Battle {
     for (const e of this.enemiesOf(c)) {
       if (!e.alive || !this.canSee(c, e.x, e.y)) continue;
       if (this.t - c.memory.sawEnemyAt > 1.5) c.memory.newlySpotted = true;
-      const rec = { id: e.id, name: e.name, x: e.x, y: e.y, floor: e.floor, t: this.t, facing: e.facing };
+      const rec = { id: e.id, name: e.name, x: e.x, y: e.y, floor: e.floor, t: this.t, facing: e.facing, vx: e.vx, vy: e.vy };
       c.memory.seen[e.id] = rec;
       c.memory.sawEnemyAt = this.t;
       for (const a of this.alliesOf(c)) if (a.alive) a.memory.seen[e.id] = { ...rec, via: c.name };
