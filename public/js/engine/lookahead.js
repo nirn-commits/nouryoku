@@ -65,7 +65,11 @@ function hpScore(c, before, after, w) {
 function positionScore(c, f, fc) {
   if (!fc.alive) return 0;
   let s = 0;
-  if (f.outsideZone(fc, f.t + 5)) s -= 8;
+  // 安全地帯の外：その後も削られ続けるので、狭まるほど重く減点し、縁からの距離でも減点する
+  if (f.safeZone && f.outsideZone(fc, f.t + 5)) {
+    const over = dist(fc.x, fc.y, f.safeZone.x, f.safeZone.y) - f.zoneRadius(f.t + 5);
+    s -= 10 + 4 * f.zonePhaseAt() + Math.min(20, Math.max(0, over) * 1.5);
+  }
   const down = x => x.status.proneUntil > f.t || x.status.stunUntil > f.t || x.air || x.launch;
   if (down(fc)) s -= 3;
   const foes = f.enemiesOf(fc).filter(e => e.alive);
@@ -239,6 +243,7 @@ function* search(b, c, planner, alternatives) {
     while (f.t < end && !f.over) f.step();
     const hp = hpScore(c, b.chars, f.chars, w);
     const setup = globalThis.LOOK_NOSETUP ? 0 : setupValue(f, fc) - 0.7 * f.enemiesOf(fc).reduce((a, e) => a + setupValue(f, e), 0);
+    if (globalThis.LOOK_DEBUG > 1) console.log('      run', raw.interpretation.slice(0, 30), 'hp', hp.toFixed(1), 'pos', positionScore(c, f, fc).toFixed(1), 'setup', setup.toFixed(1));
     return { hp, sc: hp + positionScore(c, f, fc) + setup, f };
   };
 
@@ -368,7 +373,7 @@ function* search(b, c, planner, alternatives) {
   const full = final.filter(x => x.s.n === models.length);
   const pick = (full.length ? full : final)[0];
   const best = pick ? { raw: pick.r, sc: pick.s.sc, hp: pick.s.hp } : null;
-  if (globalThis.LOOK_DEBUG) for (const x of final.slice(0, 8)) console.log('    ', c.charId, x.s.sc.toFixed(1), `n${x.s.n}`, x.r.interpretation);
+  if (globalThis.LOOK_DEBUG) for (const x of final.slice(0, +(globalThis.LOOK_DEBUG_N || 8))) console.log('    ', c.charId, x.s.sc.toFixed(1), `n${x.s.n}`, x.r.interpretation);
   remember(b, c, mem, pe, best, w);
   // 決めた作戦を味方に伝える（後から考える味方が、それを前提に動ける）
   if (best) {

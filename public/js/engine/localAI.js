@@ -6,6 +6,7 @@ import { dist, distToRect, pointInRect, angleTo } from './vec.js';
 import { nearestWalkable, isWalkablePoint, findPath, hasLOS, buildingAt } from './world.js';
 import { lookaheadPlan, lookaheadPlanAsync } from './lookahead.js';
 import { chooseLine } from './persona.js';
+import { abilityCombos, nanamiCombos } from './combos.js';
 
 function incomingProjectile(b, c) {
   return b.world.projectiles.find(p => p.owner !== c.id && b.canSee(c, p.x, p.y) && dist(c.x, c.y, p.x, p.y) < 6);
@@ -198,6 +199,11 @@ function nanamiPlan(b, c, pe, say) {
     steps.push(retreatStep(b, c, pe, 8));
     return { interpretation: '（CPU・ローカル）囮の足音を置いて身を隠す', speech: null, steps };
   }
+  // 敵が近くにいない・居場所が分からない間に、物を叩いて轟音の材料を自分で作っておく
+  if (!(visible && d < 14) && (!pe || b.t - pe.t > 6 || dist(c.x, c.y, pe.x, pe.y) > 22) && loud < RULES.roarLoud) {
+    const col = nanamiCombos(b, c, pe && !pe.visible ? null : pe)[0];
+    if (col) return { ...col, steps: [...steps, ...col.steps].slice(0, 5) };
+  }
   // 見えている敵には、空いている個体を群がらせて引っかく（音集めの合間のけん制）
   const spare = alive.filter(u => u.state === 'home' || (u.state === 'deployed' && !u.sound)).length;
   if (visible && d < 30 && spare >= 8 && !alive.some(u => u.state === 'scratch')) {
@@ -355,7 +361,12 @@ function mikuriyaPlan(b, c, pe, say) {
         steps.push({ action: 'stand_move', targetType: 'point', x: clampW(b, pe.x + Math.cos(a) * r, 'w'), y: clampW(b, pe.y + Math.sin(a) * r, 'h') });
       }
     }
-    steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' });
+    // 見えている敵には体に口を付ける。位置が古い時は、車両が走り回った所に口を残して罠にする（踏み込んだら噛む）
+    if (fresh) steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'enemy' });
+    else {
+      const last = steps[steps.length - 1];
+      steps.push({ action: 'ability', ability: 'corvette', effect: 'mouth', targetType: 'point', x: last.x, y: last.y }, { action: 'ability', ability: 'corvette', effect: 'bite', targetType: 'none', duration: 4 });
+    }
     // 車両を走らせている間も、本体は距離を取る（口を付けるのは離れてから）
     if (backOff) steps.splice(steps.length - 1, 0, retreatStep(b, c, pe, Math.min(10, c.def.keepDistance - d + 3)));
     return { interpretation: fresh ? '（CPU・ローカル）車両を敵の体の上に走らせて口を残す' : '（CPU・ローカル）車両で敵のいそうな所を走り回って探す', speech: c.clench ? null : say(0.3), steps };
@@ -625,7 +636,8 @@ export async function localCpuPlanAsync(b, c) {
 
 // 先読みで比べる型どおりの別案
 function alternativePlans(b, c, pe) {
-  const alts = [];
+  // 能力を生かす連携の案を先に入れる（数が多い時に削られないように）
+  const alts = globalThis.AI_OFF && globalThis.AI_OFF.has('combos') ? [] : abilityCombos(b, c, pe);
   const tag = t => `（CPU・ローカル）${t}`;
   const d = dist(c.x, c.y, pe.x, pe.y);
   const ranged = c.def.role === 'ranged';
@@ -664,6 +676,8 @@ function alternativePlans(b, c, pe) {
         continue;
       }
       if (!ed.targets.includes('enemy') || id === 'corvette' || (id === 'hotel' && eff === 'seal')) continue;
+      // 前提が満たされていない技は試さない（持っていない物を飛ばす・密室の外での叩きつけ）
+      if ((eff === 'launch_held' && !c.held) || (eff === 'flame_slam' && !(b.buildingOf(c)?.sealed?.by === c.id))) continue;
       const range = ed.range ?? ab.range;
       const near = range < 6;
       alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を狙う`), speech: null, steps: [...(near ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }] : []), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, ...(ranged ? [retreatStep(b, c, pe, 6)] : [{ action: 'melee', targetType: 'enemy' }])] });
@@ -673,7 +687,7 @@ function alternativePlans(b, c, pe) {
       }
     }
   }
-  return alts.slice(0, 14);
+  return alts.slice(0, 16);
 }
 
 function heuristicPlan(b, c) {

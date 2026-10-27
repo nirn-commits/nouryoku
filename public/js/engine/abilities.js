@@ -317,15 +317,22 @@ const IMPL = {
       const hits = [];
       for (let i = 0; i < N; i++) {
         const a = (i / N) * Math.PI * 2;
-        let found = null, length = 0, blockedEarly = false;
+        let found = null, length = 0, blockedEarly = false, after = 0;
         b.traceBall(o.x, o.y, z, c.floor, Math.cos(a), Math.sin(a), 100, (sg, bounces) => {
           const segLen = Math.hypot(sg.x1 - sg.x0, sg.y1 - sg.y0);
           const vx = sg.x1 - sg.x0, vy = sg.y1 - sg.y0;
+          // 外れた後の弾道：目標を通り過ぎた弾が跳ね返って自分に戻ってこないか（2回跳ねる分まで確かめる）
+          if (found) {
+            const sx = (c.x - sg.x0) * vx + (c.y - sg.y0) * vy;
+            const st2 = segLen > 0 ? Math.max(0, Math.min(1, sx / (segLen * segLen))) : 0;
+            if (Math.hypot(c.x - (sg.x0 + vx * st2), c.y - (sg.y0 + vy * st2)) < 0.9) { blockedEarly = true; return false; }
+            return ++after < 3;
+          }
           const tt = segLen > 0 ? Math.max(0, Math.min(1, ((aimAt.x - sg.x0) * vx + (aimAt.y - sg.y0) * vy) / (segLen * segLen))) : 0;
           const px = sg.x0 + vx * tt, py = sg.y0 + vy * tt;
           const d = Math.hypot(aimAt.x - px, aimAt.y - py);
           if (d < 0.45) {
-            if (bounces === k) found = { a, length: length + segLen * tt, d };
+            if (bounces === k) { found = { a, length: length + segLen * tt, d }; return true; }
             else if (bounces < k) blockedEarly = true; // もっと早く目標を通ってしまう
             return false;
           }
