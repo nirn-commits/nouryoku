@@ -1040,7 +1040,7 @@ export class Battle {
     if (!o || !this.world.objects.includes(o)) return false;
     if (o.kind === 'window') return !o.broken;
     if (o.kind === 'wall') return !String(o.id).startsWith('outer_');
-    return !o.indestructible && !['stairs', 'bush', 'hole'].includes(o.kind);
+    return !o.indestructible && !['stairs', 'bush', 'hole', 'water'].includes(o.kind);
   }
 
   addPile(rect, floor, material, obj, by) {

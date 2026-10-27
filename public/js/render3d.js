@@ -4,7 +4,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { FLOOR_H } from './engine/world.js';
 import { RULES } from './engine/data.js';
-import { colorsOf, teamColor } from './render.js';
+import { colorsOf, teamColor, BUILDING_FLOOR } from './render.js';
 
 const CELL = 48; // キャラチップ1コマの大きさ（px）
 const DIRS = [2, 1, 0, 7, 6, 5, 4, 3]; // 向き（東から時計回り8方向）→ シートの列（南・南東・東・北東・北・北西・西・南西）
@@ -167,14 +167,14 @@ export class Renderer3D {
       return m;
     };
     plane(0, 0, w.w, w.h, '#2f2f34');
-    const groundColor = { road: '#3b3b40', site: '#6e5e46', lot: '#505055', park: '#3d5a34', crosswalk: '#9a9aa0' };
+    const groundColor = { road: '#3b3b40', site: '#6e5e46', lot: '#505055', park: '#3d5a34', crosswalk: '#9a9aa0', grass: '#4a6b3a', plaza: '#6d6a66', field: '#9b8463', parking: '#505055', rail: '#5b554d' };
     for (const gr of w.ground) {
       if (gr.kind === 'crosswalk') {
         for (let yy = gr.y + 0.3; yy < gr.y + gr.h - 0.3; yy += 0.9) plane(gr.x, yy, gr.w, 0.45, '#8c8c92', 0.012);
       } else plane(gr.x, gr.y, gr.w, gr.h, groundColor[gr.kind] || '#444', 0.005);
     }
     for (const bd of w.buildings) {
-      plane(bd.x, bd.y, bd.w, bd.h, { store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6' }[bd.kind] || '#6b5848', 0.02);
+      plane(bd.x, bd.y, bd.w, bd.h, BUILDING_FLOOR[bd.kind] || '#6b5848', 0.02);
     }
     this.scene.add(g);
     // 2階の床（自分が1階にいる時は透ける）
@@ -221,7 +221,7 @@ export class Renderer3D {
     } else {
       mesh = new THREE.Mesh(new THREE.BoxGeometry(o.w, h, o.h), this.mat(top));
     }
-    mesh.castShadow = !/window|bush|hole|stairs/.test(o.kind);
+    mesh.castShadow = !/window|bush|hole|water|stairs/.test(o.kind);
     mesh.receiveShadow = true;
     return mesh;
   }

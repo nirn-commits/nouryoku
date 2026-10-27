@@ -18,6 +18,9 @@ const SOUND_LABEL = {
 const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
 
 // 物体の色：[上面, 手前の面]
+// 建物の床の色
+export const BUILDING_FLOOR = { store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6', station: '#b9b4aa', shop: '#9c8a74', school: '#a8a094', gym: '#b38a5a', shrine: '#7a5a3a', warehouse: '#7d7a70' };
+
 // チームの色（観戦・大人数の時の名札とHPバー）
 export const TEAM_COLORS = ['#4cc9f0', '#ff6b6b', '#ffd166', '#06d6a0', '#c77dff', '#f4a261', '#90be6d', '#f15bb5', '#a0c4ff', '#e9c46a'];
 export const teamColor = t => TEAM_COLORS[t % TEAM_COLORS.length];
@@ -49,6 +52,7 @@ export function colorsOf(o, b) {
     }
     case 'steel': return ['#7d8186', '#575a5e'];
     case 'hole': return ['#17110c', '#17110c'];
+    case 'water': return ['#2d5f86', '#244e70'];
     case 'tree': return ['#2c6b31', '#1f4d22'];
     case 'pole': return ['#8a8a8a', '#666'];
     case 'bush': return ['rgba(60,130,60,0.92)', 'rgba(40,95,40,0.92)'];
@@ -283,7 +287,7 @@ export class Renderer {
     this.drawGround(b);
     const modes = this.buildingModes(b, debug);
     for (const bd of b.world.buildings) {
-      ctx.fillStyle = { store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6' }[bd.kind] || '#6b5848';
+      ctx.fillStyle = BUILDING_FLOOR[bd.kind] || '#6b5848';
       ctx.fillRect(bd.x * P, bd.y * P, bd.w * P, bd.h * P);
     }
     for (const r of b.world.rubble) {
@@ -294,6 +298,7 @@ export class Renderer {
     for (const o of b.world.objects) {
       if (o.kind === 'stairs') this.drawStairs(o, 0);
       if (o.kind === 'hole') this.box(o.x, o.y, o.w, o.h, 0, 0.02, '#17110c', '#17110c');
+      if (o.kind === 'water') this.drawWater(o, b.t);
     }
     for (const it of b.world.items) {
       if ((it.floor ?? 0) === 0 && !this.hiddenUnderRoof(b, it, modes) && see(it.x, it.y, 0.3)) this.drawItem(it, 0);
@@ -316,7 +321,7 @@ export class Renderer {
     const groups = new Map(b.world.buildings.map(bd => [bd.id, []]));
     const buildingOfPoint = (x, y) => b.world.buildings.find(bd => pointInRect(x, y, bd));
     for (const o of b.world.objects) {
-      if (o.kind === 'stairs' || o.kind === 'hole' || o.id.startsWith('outer_')) continue;
+      if (o.kind === 'stairs' || o.kind === 'hole' || o.kind === 'water' || o.id.startsWith('outer_')) continue;
       const bd = o.building ? b.world.buildings.find(x => x.id === o.building) : buildingOfPoint(o.x + o.w / 2, o.y + o.h / 2);
       const item = { key: o.y + o.h, z: o.z0, draw: cap => this.drawObject(b, o, cap) , obj: o };
       if (bd) groups.get(bd.id).push(item); else items.push(item);
@@ -877,6 +882,42 @@ export class Renderer {
       } else if (g.kind === 'park') {
         ctx.fillStyle = '#3d5a34';
         ctx.fillRect(x, y, w, h);
+      } else if (g.kind === 'grass') {
+        ctx.fillStyle = '#4a6b3a';
+        ctx.fillRect(x, y, w, h);
+      } else if (g.kind === 'plaza') {
+        // 石畳・ホーム：明るい舗装に目地
+        ctx.fillStyle = '#6d6a66';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+        ctx.lineWidth = 1;
+        for (let xx = g.x + 1.5; xx < g.x + g.w; xx += 1.5) { ctx.beginPath(); ctx.moveTo(xx * P, y); ctx.lineTo(xx * P, y + h); ctx.stroke(); }
+        if (g.edge) { ctx.fillStyle = '#e8c547'; ctx.fillRect(x, (g.y + g.h - 0.35) * P, w, P * 0.18); } // ホームの点字ブロック
+      } else if (g.kind === 'field') {
+        ctx.fillStyle = '#9b8463';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+        ctx.lineWidth = Math.max(1, P * 0.08);
+        ctx.strokeRect(x + P, y + P, w - 2 * P, h - 2 * P);
+        ctx.beginPath(); ctx.moveTo(x + w / 2, y + P); ctx.lineTo(x + w / 2, y + h - P); ctx.stroke();
+        ctx.beginPath(); ctx.arc(x + w / 2, y + h / 2, Math.min(w, h) * 0.15, 0, Math.PI * 2); ctx.stroke();
+      } else if (g.kind === 'parking') {
+        ctx.fillStyle = '#505055';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1;
+        for (let xx = g.x + 2.6; xx < g.x + g.w - 0.5; xx += 2.6) { ctx.beginPath(); ctx.moveTo(xx * P, y + P); ctx.lineTo(xx * P, y + h - P); ctx.stroke(); }
+      } else if (g.kind === 'rail') {
+        // 線路：砂利・枕木・2本のレール（上下線）
+        ctx.fillStyle = '#5b554d';
+        ctx.fillRect(x, y, w, h);
+        for (const ty of [g.y + g.h * 0.28, g.y + g.h * 0.72]) {
+          ctx.fillStyle = '#4a3a2c';
+          for (let xx = g.x; xx < g.x + g.w; xx += 0.7) ctx.fillRect(xx * P, (ty - 0.75) * P, P * 0.25, P * 1.5);
+          ctx.fillStyle = '#b8bcc2';
+          ctx.fillRect(x, (ty - 0.55) * P, w, Math.max(1, P * 0.08));
+          ctx.fillRect(x, (ty + 0.5) * P, w, Math.max(1, P * 0.08));
+        }
       }
     }
     ctx.font = `${Math.max(10, P * 0.5)}px sans-serif`;
@@ -884,6 +925,22 @@ export class Renderer {
     for (const a of b.world.areas) {
       if (a.floor || /road|crossing|gate/.test(a.id)) continue;
       ctx.fillText(a.name, (a.x + 0.6) * P, (a.y + a.h - 0.6) * P);
+    }
+  }
+
+  // 川：水面と流れのさざ波
+  drawWater(o, t) {
+    const ctx = this.ctx, P = this.px;
+    ctx.fillStyle = '#2d5f86';
+    ctx.fillRect(o.x * P, o.y * P, o.w * P, o.h * P);
+    ctx.strokeStyle = 'rgba(200,230,255,0.25)';
+    ctx.lineWidth = Math.max(1, P * 0.06);
+    for (let yy = o.y + 0.8; yy < o.y + o.h - 0.3; yy += 1.4) {
+      const off = ((t * 0.8 + yy) % 3) - 1.5;
+      for (let xx = o.x + off; xx < o.x + o.w - 1; xx += 3) {
+        if (xx < o.x) continue;
+        ctx.beginPath(); ctx.moveTo(xx * P, yy * P); ctx.lineTo((xx + 1) * P, yy * P); ctx.stroke();
+      }
     }
   }
 

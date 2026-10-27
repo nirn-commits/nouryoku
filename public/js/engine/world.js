@@ -23,6 +23,8 @@ const KINDS = {
   car: { height: 1.5, blocksMove: true, blocksSight: true, movable: false, hp: 999, indestructible: true, soundDamp: 0.8 },
   steel: { height: 1.2, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
   hole: { height: 0.05, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
+  // 川：入れない（流れが速く深い）。視線も音も通る
+  water: { height: 0.05, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
   tree: { height: 5, blocksMove: true, blocksSight: true, movable: false, hp: 999, indestructible: true, soundDamp: 0.9 },
   pole: { height: 8, blocksMove: true, blocksSight: false, movable: false, hp: 999, indestructible: true, soundDamp: 1 },
   // 干渉できる物：水飲み場（水を飲んで少し回復）・発電機（動かすと周りの音をかき消す）・ゴミ箱（陰に深く隠れる）
@@ -188,18 +190,67 @@ export function buildingAt(world, x, y) {
   return world.buildings.find(b => pointInRect(x, y, b)) || null;
 }
 
+// 視線の判定を速くするための升目（4m）：動かない物は升目に登録し、線が通る升目の物だけを調べる。
+// 押して動く物は毎回すべて調べる。物の増減（壊れる・崩れる）で配列が作り直されたら升目も作り直す
+const LOS_CELL = 4;
+const losCache = new WeakMap();
+let losStamp = 0;
+
+function losIndex(world) {
+  const objs = world.objects;
+  const hit = losCache.get(objs);
+  if (hit && hit.len === objs.length) return hit;
+  const cols = Math.ceil(world.w / LOS_CELL), rows = Math.ceil(world.h / LOS_CELL);
+  const cells = Array.from({ length: cols * rows }, () => []);
+  const dyn = [];
+  for (const o of objs) {
+    if (o.movable) { dyn.push(o); continue; }
+    const c0 = Math.max(0, Math.floor(o.x / LOS_CELL)), c1 = Math.min(cols - 1, Math.floor((o.x + o.w) / LOS_CELL));
+    const r0 = Math.max(0, Math.floor(o.y / LOS_CELL)), r1 = Math.min(rows - 1, Math.floor((o.y + o.h) / LOS_CELL));
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) cells[r * cols + c].push(o);
+  }
+  const idx = { len: objs.length, cols, rows, cells, dyn };
+  losCache.set(objs, idx);
+  return idx;
+}
+
+// 1つの物が視線を遮るか
+function losBlockedBy(o, x0, y0, x1, y1, ignoreId, z0, z1) {
+  if (!o.blocksSight || o.id === ignoreId) return false;
+  if ((x0 < o.x && x1 < o.x) || (x0 > o.x + o.w && x1 > o.x + o.w) || (y0 < o.y && y1 < o.y) || (y0 > o.y + o.h && y1 > o.y + o.h)) return false; // 線の範囲に掛からない
+  const r = segRectRange(x0, y0, x1, y1, o);
+  if (!r || r[1] <= 1e-4 || r[0] >= 1 - 1e-4) return false;
+  // 始点・終点が物体内にある（壁に密着・植え込みの中）場合は除外
+  if (pointInRect(x0, y0, o) || pointInRect(x1, y1, o)) return false;
+  const za = z0 + (z1 - z0) * r[0], zb = z0 + (z1 - z0) * r[1];
+  if (Math.max(za, zb) < o.z0 || Math.min(za, zb) > o.z1) return false; // 上か下を通り抜ける
+  return true;
+}
+
 // 視線（立体）：目の高さ z0 から対象の高さ z1 への線が、物体の高さの範囲や床・天井を横切るか
 export function hasLOS(world, x0, y0, x1, y1, ignoreId = null, z0 = EYE_H, z1 = BODY_H) {
-  for (const o of world.objects) {
-    if (!o.blocksSight || o.id === ignoreId) continue;
-    if ((x0 < o.x && x1 < o.x) || (x0 > o.x + o.w && x1 > o.x + o.w) || (y0 < o.y && y1 < o.y) || (y0 > o.y + o.h && y1 > o.y + o.h)) continue; // 線の範囲に掛からない
-    const r = segRectRange(x0, y0, x1, y1, o);
-    if (!r || r[1] <= 1e-4 || r[0] >= 1 - 1e-4) continue;
-    // 始点・終点が物体内にある（壁に密着・植え込みの中）場合は除外
-    if (pointInRect(x0, y0, o) || pointInRect(x1, y1, o)) continue;
-    const za = z0 + (z1 - z0) * r[0], zb = z0 + (z1 - z0) * r[1];
-    if (Math.max(za, zb) < o.z0 || Math.min(za, zb) > o.z1) continue; // 上か下を通り抜ける
-    return false;
+  const idx = losIndex(world);
+  for (const o of idx.dyn) if (losBlockedBy(o, x0, y0, x1, y1, ignoreId, z0, z1)) return false;
+  // 線が通る升目を順にたどる（同じ物は1回だけ調べる）
+  const stamp = ++losStamp;
+  const { cols, rows, cells } = idx;
+  let cx = Math.floor(x0 / LOS_CELL), cy = Math.floor(y0 / LOS_CELL);
+  const ex = Math.floor(x1 / LOS_CELL), ey = Math.floor(y1 / LOS_CELL);
+  const dx = x1 - x0, dy = y1 - y0;
+  const sx = dx > 0 ? 1 : -1, sy = dy > 0 ? 1 : -1;
+  const tdx = dx !== 0 ? Math.abs(LOS_CELL / dx) : Infinity, tdy = dy !== 0 ? Math.abs(LOS_CELL / dy) : Infinity;
+  let tx = dx !== 0 ? ((dx > 0 ? (cx + 1) * LOS_CELL - x0 : x0 - cx * LOS_CELL) / Math.abs(dx)) : Infinity;
+  let ty = dy !== 0 ? ((dy > 0 ? (cy + 1) * LOS_CELL - y0 : y0 - cy * LOS_CELL) / Math.abs(dy)) : Infinity;
+  for (let guard = 0; guard < cols + rows + 4; guard++) {
+    if (cx >= 0 && cy >= 0 && cx < cols && cy < rows) {
+      for (const o of cells[cy * cols + cx]) {
+        if (o._los === stamp) continue;
+        o._los = stamp;
+        if (losBlockedBy(o, x0, y0, x1, y1, ignoreId, z0, z1)) return false;
+      }
+    }
+    if (cx === ex && cy === ey) break;
+    if (tx < ty) { tx += tdx; cx += sx; } else { ty += tdy; cy += sy; }
   }
   return !crossesSlab(world, x0, y0, z0, x1, y1, z1);
 }

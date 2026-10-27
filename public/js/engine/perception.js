@@ -63,7 +63,7 @@ export function landmarks(b, c = null) {
     // 窓はガラスの状態も別に持つ（割れていれば枠が閉まっていても通れる。密室の判定は枠の開閉）
     if (o.kind === 'window') item.glass = o.broken ? 'broken' : 'intact';
     if (o.height >= 0.5 && o.kind !== 'wall' && !exit) item.height = o.height;
-    if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
+    if (o.kind === 'wall' || o.kind === 'hole' || o.kind === 'water' || o.kind === 'bush') item.size = [r1(o.w), r1(o.h)];
     if (o.kind === 'wall' && o.style === 'block') item.height = o.height;
     if (!o.indestructible) item.hp = Math.max(0, Math.round(o.hp));
     if (o.movable) { item.movable = true; if (o.kg) item.kg = o.kg; }
@@ -105,6 +105,7 @@ export function rulesSummary() {
       bush: '植え込み。通れるが遅く音が出る。中にいると2.5m以内に近づかれない限り見つからない（中から外は見える）',
       car: '車。遮蔽物になる。衝撃を与えると防犯アラームが鳴り、遠くまで聞こえる（陽動に使える）',
       hole: '掘削穴。通れないが視線は通る',
+      water: '川。入れない（橋を渡る）が、視線も音も通る',
       movable: '木箱・ドラム缶・商品棚・自販機・机・三角コーンは押せる（重い物ほど動きにくい）',
       area: 'kind=area は区域。move の対象にすると中心付近へ向かう。「〇〇の2階」の区域を対象にすると階段を使って2階へ行く',
       floors: '高さがある。1階分は3m。2階建ての家は階段で上り下りする（約1秒）。床・天井は階をまたぐ視線を遮る。2階の窓からは塀や車越しに道路を見下ろせ、地上からは低い塀（1.8m）や車（1.5m）の陰に隠れられる。飛び道具も高さを持ち、2階から投げ下ろせる',
