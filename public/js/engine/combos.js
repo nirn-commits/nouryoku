@@ -319,7 +319,8 @@ function genericCombos(b, c, pe) {
 export function abilityCombos(b, c, pe) {
   if (!pe) return [];
   const out = genericCombos(b, c, pe);
-  for (const id of c.def.abilities) if (COMBOS[id]) out.push(...COMBOS[id](b, c, pe));
+  const off = globalThis.AI_OFF;
+  for (const id of c.def.abilities) if (COMBOS[id] && !(off && off.has(`combo_${id}`))) out.push(...COMBOS[id](b, c, pe));
   return out;
 }
 
