@@ -13,6 +13,7 @@ import { Sound } from './audio.js';
 import { Director } from './spectate.js';
 import { PlanBuilder } from './planner-ui.js';
 import { loadCharacterFiles } from './engine/registry.js';
+import { Drama } from './drama.js';
 
 const $ = s => document.querySelector(s);
 const params = new URLSearchParams(location.search);
@@ -433,6 +434,7 @@ function startBattle() {
   snd.unlock();
   if (state.mapId === 'town') snd.startAmbience(); else snd.stopAmbience();
   state.lastFx = 0;
+  state.drama.reset(b);
   state.autoTurn = 0;
   state.turn = new TurnController(b, {
     cpuTimeoutMs: state.clientTimeoutMs,
@@ -502,6 +504,7 @@ async function submitCommand() {
   const b = state.battle;
   const turn = state.turn;
   if (!b || b.over || turn.phase !== 'input' || state.thinking) return;
+  state.drama.hideRecap();
   // 文章で入力している時はローカルの簡易解析、そうでなければ組み立てたコマンドをそのまま使う
   let raw;
   if (state.textMode) {
@@ -546,6 +549,7 @@ function updatePhase() {
   $('#phase-label').textContent = label;
   $('#phase-label').className = `phase phase-${phase}`;
   if (phase !== state.lastPhase) {
+    if (state.battle) guard('演出', () => state.drama.onPhase(phase, turn, viewerOf(state.battle)));
     if (phase === 'input' && !state.spectate && state.textMode) $('#cmd').focus();
     if (phase === 'input') state.builder.render();
     state.lastPhase = phase;
@@ -656,6 +660,8 @@ function renderLog() {
   for (const l of fresh) state.logSeen.add(l);
   const log = $('#log');
   for (const l of fresh) {
+    const stop = state.drama.onLog(l);
+    if (stop) state.freezeUntil = Math.max(state.freezeUntil, performance.now() + stop);
     const p = document.createElement('p');
     p.className = `k-${l.kind}`;
     const text = team.has(l.actor) || omni() ? l.text : l.obsText || l.text;
@@ -681,6 +687,8 @@ function escapeHtml(s) {
 function showResult() {
   const b = state.battle;
   state.ended = true;
+  // 名場面と、締めの「To Be Continued」
+  $('#result-extra').innerHTML = `${state.drama.highlights()}<div class="tbc"><span class="arrow">To Be Continued</span></div>`;
   const won = b.winnerTeam === b.player.team;
   const names = t => b.chars.filter(c => c.team === t).map(c => c.name).join('・');
   const teamWord = t => (b.teamCount === 2 && b.teamSize > 1 ? (t === 0 ? 'チームA' : 'チームB') : names(t));
@@ -725,6 +733,16 @@ function sfx(kind, power = 1) {
     out.gain.setValueAtTime(Math.min(0.5, 0.12 + power * 0.25), t);
     out.gain.exponentialRampToValueAtTime(0.001, t + (kind === 'ko' ? 0.9 : 0.25));
     out.connect(audio.destination);
+    if (kind === 'heart') {
+      // 心音：低い2拍（ドクン）
+      for (const [dt, f0] of [[0, 70], [0.16, 60]]) {
+        const o = audio.createOscillator(), g = audio.createGain();
+        o.type = 'sine'; o.frequency.setValueAtTime(f0, t + dt);
+        g.gain.setValueAtTime(0.0001, t + dt); g.gain.exponentialRampToValueAtTime(0.5 * power, t + dt + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + dt + 0.18);
+        o.connect(g); g.connect(audio.destination); o.start(t + dt); o.stop(t + dt + 0.25);
+      }
+      return;
+    }
     // 打撃音：低い唸り＋短いノイズ
     const osc = audio.createOscillator();
     osc.type = kind === 'ability' ? 'sawtooth' : 'sine';
@@ -792,6 +810,9 @@ function handleImpacts(now) {
     if (f.kind === 'hit' && f.hitKind === 'zone') continue; // 安全地帯の外の削りは演出なし
     if (f.kind === 'hit') {
       const power = Math.min(1, f.dmg / 30);
+      // 大きな一撃・決め技：技の名前の帯を出して時間を一瞬止める
+      const stop = state.drama.onHit(f, b.chars.find(c => c.id === f.src), b.chars.find(c => c.id === f.target));
+      if (stop) state.freezeUntil = Math.max(state.freezeUntil, now + stop);
       state.freezeUntil = Math.max(state.freezeUntil, now + 40 + power * 190);
       state.renderer.kick(3 + power * 12);
       if (f.dmg >= 15) {
@@ -803,7 +824,8 @@ function handleImpacts(now) {
       const name = f.guarded ? 'guard' : f.hitKind === 'scratch' ? 'scratch' : f.dmg >= 15 ? 'hit_heavy' : 'hit_light';
       playSe(name, seVolume(me, f.x, f.y) * (0.6 + power * 0.4), 'hit');
     } else if (f.kind === 'ko') {
-      state.freezeUntil = Math.max(state.freezeUntil, now + 260);
+      state.drama.onKO(f, b.chars.find(c => c.name === f.name));
+      state.freezeUntil = Math.max(state.freezeUntil, now + 600);
       closeUp(f, 2.6, 1.9);
       slowMo(now, 0.2, 1600);
       state.renderer.kick(16);
@@ -895,6 +917,7 @@ function loop(now) {
     guard('情報欄の表示', () => renderSide());
     guard('ログの表示', () => renderLog());
     guard('観戦の演出', () => updateSpectate(now));
+    guard('演出', () => state.drama.tick(now, viewer));
     if (b.over && !state.ended) showResult();
   }
 }
@@ -954,6 +977,14 @@ function insertText(t) {
 
 window.addEventListener('DOMContentLoaded', async () => {
   state.renderer = state.r2d = new Renderer($('#field'));
+  // 演出（決め技の帯・ゴゴゴ・答え合わせ・心音など）
+  state.drama = new Drama({
+    portrait: c => portraitSrc[`${c.charId}_stand`] || portraitSrc[c.charId] || chipThumb(`${c.charId}_stand`) || chipThumb(c.charId),
+    playSe: (name, vol, fb) => playSe(name, vol, fb),
+    flash: color => flashScreen(color),
+    kick: n => state.renderer.kick(n),
+    isOn: () => state.cine,
+  });
   // public/characters/ の JSON で追加したキャラクターを読み込む（書き方の誤りは画面に出す）
   const extra = await loadCharacterFiles();
   if (extra.failed.length) {

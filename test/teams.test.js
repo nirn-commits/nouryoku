@@ -128,3 +128,36 @@ test('視線の判定（升目で速くした版）が、すべての物を調�
     }
   }
 });
+
+test('シムリア：どこへでも歩いて行け、列車の警報のあと線路の上にいると撥ねられ、異常区域が脈動する', async () => {
+  const { createWorld } = await import('../public/js/engine/maps.js');
+  const { findPath, isWalkablePoint, nearestWalkable } = await import('../public/js/engine/world.js');
+  const w = createWorld(5, 'simria');
+  let unreachable = 0;
+  for (let x = 1; x < 95; x += 3) for (let y = 1; y < 63; y += 3) {
+    if (!isWalkablePoint(w, x, y, 0)) continue;
+    const p = findPath(w, 4, 44, x, y, 0, 0);
+    if (!p || p.partial) unreachable++;
+  }
+  assert.equal(unreachable, 0, '行き来できない場所がある');
+  for (const bd of w.buildings) for (const f of bd.floors > 1 ? [0, 1] : [0]) {
+    const q = nearestWalkable(w, bd.x + bd.w / 2, bd.y + bd.h / 2, 4, f);
+    const p = q && findPath(w, 4, 44, q.x, q.y, 0, f);
+    assert.ok(p && !p.partial, `${bd.name}の${f + 1}階に入れない`);
+  }
+  // 列車：線路の上で待っている人は撥ねられる
+  const b = new Battle({ seed: 5, mapId: 'simria', playerChar: 'kito', cpuChar: 'sogo', randomSpawn: false, shrinkZone: false });
+  const tr = b.world.trains[0];
+  tr.next = 3;
+  b.player.x = 40; b.player.y = tr.y + tr.h / 2;
+  b.setPlan(b.player, compilePlan(b, b.player, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+  b.setPlan(b.cpu, compilePlan(b, b.cpu, { steps: [{ action: 'wait', targetType: 'none', duration: 10 }] }));
+  const hp = b.player.hp;
+  for (let i = 0; i < 30 * 8; i++) b.step();
+  assert.ok(b.log.some(l => l.text.includes('警報')), '警報が鳴らない');
+  assert.ok(b.player.hp < hp, '列車に撥ねられない');
+  // 異常区域：時間がたつと脈動して場が生まれる
+  b.world.anomaly.next = b.t + 2.5;
+  for (let i = 0; i < 30 * 4; i++) b.step();
+  assert.ok(b.world.zones.some(z => z.anomaly), '異常区域が脈動しない');
+});

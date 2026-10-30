@@ -452,6 +452,19 @@ function genericPlan(b, c, pe, say) {
 
 // どのキャラにも共通の反射的な判断（キャラごとの作戦より先に見る）
 function reflexPlan(b, c, pe, say) {
+  // 列車の警報が鳴っている（または通過中）のに線路の上にいる：近い側へ走って出る
+  for (const tr of b.world.trains || []) {
+    if (!(tr.warned || tr.active) || c.floor !== 0) continue;
+    if (c.y < tr.y - 0.6 || c.y > tr.y + tr.h + 0.6) continue;
+    const up = c.y < tr.y + tr.h / 2;
+    const ty = up ? tr.y - 1.6 : tr.y + tr.h + 1.6;
+    const p = nearestWalkable(b.world, c.x, ty, 3) || { x: c.x, y: ty };
+    // 柵で出られない所なら、近い踏切の外へ
+    const path = findPath(b.world, c.x, c.y, p.x, p.y, 0, 0);
+    const steps = [{ action: 'move', mode: 'run', targetType: 'point', x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 }];
+    if (!path || path.partial || (path.length ?? 0) > 12) continue;
+    return { interpretation: `（CPU・ローカル）${tr.name}が来るので線路から出る`, speech: null, steps };
+  }
   // 体に何か付いている（エコー・ビーチの個体・コルベットの口）→ 払う
   if (c.memory.suspectAttached) {
     return { interpretation: '（CPU・ローカル）体についた何かを払う', speech: null, steps: [{ action: 'swat', targetType: 'self' }, ...(pe && pe.visible && c.def.role !== 'ranged' ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }, { action: 'melee', targetType: 'enemy' }] : [])] };
@@ -681,6 +694,8 @@ function alternativePlans(b, c, pe) {
       if (!ed.targets.includes('enemy') || id === 'corvette' || (id === 'hotel' && eff === 'seal')) continue;
       // 前提が満たされていない技は試さない（持っていない物を飛ばす・密室の外での叩きつけ）
       if ((eff === 'launch_held' && !c.held) || (eff === 'flame_slam' && !(b.buildingOf(c)?.sealed?.by === c.id))) continue;
+      // 轟音の決め技は、大きな音がそろっている時だけ
+      if (eff === 'roar' && (c.units || []).filter(u => u.state !== 'dead' && b.isLoud(u.sound)).length < RULES.roarLoud) continue;
       const range = ed.range ?? ab.range;
       const near = range < 6;
       alts.push({ interpretation: tag(`『${ab.name}：${ed.name}』を狙う`), speech: null, steps: [...(near ? [{ action: 'chase', targetType: 'enemy', mode: 'run' }] : []), { action: 'ability', ability: id, effect: eff, targetType: 'enemy' }, ...(ranged ? [retreatStep(b, c, pe, 6)] : [{ action: 'melee', targetType: 'enemy' }])] });

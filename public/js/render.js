@@ -19,7 +19,7 @@ const CAR_COLORS = ['#c0392b', '#f4f4f4', '#2c3e50', '#2980b9', '#7f8c8d'];
 
 // 物体の色：[上面, 手前の面]
 // 建物の床の色
-export const BUILDING_FLOOR = { store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6', station: '#b9b4aa', shop: '#9c8a74', school: '#a8a094', gym: '#b38a5a', shrine: '#7a5a3a', warehouse: '#7d7a70' };
+export const BUILDING_FLOOR = { ruin: '#6b6358', vault: '#9aa3ad', lab: '#d4dde0', store: '#c9d1d3', office: '#8a8676', toilet: '#8c99a6', station: '#b9b4aa', shop: '#9c8a74', school: '#a8a094', gym: '#b38a5a', shrine: '#7a5a3a', warehouse: '#7d7a70' };
 
 // チームの色（観戦・大人数の時の名札とHPバー）
 export const TEAM_COLORS = ['#4cc9f0', '#ff6b6b', '#ffd166', '#06d6a0', '#c77dff', '#f4a261', '#90be6d', '#f15bb5', '#a0c4ff', '#e9c46a'];
@@ -303,6 +303,7 @@ export class Renderer {
     for (const it of b.world.items) {
       if ((it.floor ?? 0) === 0 && !this.hiddenUnderRoof(b, it, modes) && see(it.x, it.y, 0.3)) this.drawItem(it, 0);
     }
+    this.drawMapWarnings(b);
 
     // 霧（見えていない地面を暗く）
     if (!debug) {
@@ -325,6 +326,10 @@ export class Renderer {
       const bd = o.building ? b.world.buildings.find(x => x.id === o.building) : buildingOfPoint(o.x + o.w / 2, o.y + o.h / 2);
       const item = { key: o.y + o.h, z: o.z0, draw: cap => this.drawObject(b, o, cap) , obj: o };
       if (bd) groups.get(bd.id).push(item); else items.push(item);
+    }
+    // 通過中の列車
+    for (const tr of b.world.trains || []) {
+      if (tr.active && tr.x0 != null) items.push({ key: tr.y + tr.h - 0.3, z: 0, draw: () => this.drawTrain(tr, b.world.w) });
     }
     // 味方は連絡を取り合っているので常に表示。敵は見えている時だけ
     const visibleChar = c => c === me || c.team === me.team || (c.alive && see(c.x, c.y));
@@ -882,6 +887,24 @@ export class Renderer {
       } else if (g.kind === 'park') {
         ctx.fillStyle = '#3d5a34';
         ctx.fillRect(x, y, w, h);
+      } else if (g.kind === 'ruin') {
+        // 砦跡：古い石畳（ひびの入った敷石）
+        ctx.fillStyle = '#5e5850';
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+        ctx.lineWidth = 1;
+        for (let yy = g.y + 1.2; yy < g.y + g.h; yy += 1.2) { ctx.beginPath(); ctx.moveTo(x, yy * P); ctx.lineTo(x + w, yy * P); ctx.stroke(); }
+        for (let yy = g.y, r = 0; yy < g.y + g.h; yy += 1.2, r++) for (let xx = g.x + (r % 2) * 0.9; xx < g.x + g.w; xx += 1.8) { ctx.beginPath(); ctx.moveTo(xx * P, yy * P); ctx.lineTo(xx * P, (yy + 1.2) * P); ctx.stroke(); }
+      } else if (g.kind === 'anomaly') {
+        // 異常区域：紫に澱んだ地面が、ゆっくり脈打つ
+        const pulse = 0.5 + 0.5 * Math.sin(b.t * 1.6);
+        ctx.fillStyle = '#3d2f4f';
+        ctx.fillRect(x, y, w, h);
+        const gr = ctx.createRadialGradient(x + w / 2, y + h / 2, 0, x + w / 2, y + h / 2, Math.max(w, h) * 0.7);
+        gr.addColorStop(0, `rgba(190,120,255,${0.18 + pulse * 0.12})`);
+        gr.addColorStop(1, 'rgba(190,120,255,0)');
+        ctx.fillStyle = gr;
+        ctx.fillRect(x, y, w, h);
       } else if (g.kind === 'grass') {
         ctx.fillStyle = '#4a6b3a';
         ctx.fillRect(x, y, w, h);
@@ -925,6 +948,48 @@ export class Renderer {
     for (const a of b.world.areas) {
       if (a.floor || /road|crossing|gate/.test(a.id)) continue;
       ctx.fillText(a.name, (a.x + 0.6) * P, (a.y + a.h - 0.6) * P);
+    }
+  }
+
+  // 通過中の列車：銀色の車体と窓の列
+  drawTrain(tr, W) {
+    const y = tr.y + 0.35, h = tr.h - 0.7, x0 = Math.max(0, tr.x0), x1 = Math.min(W, tr.x1);
+    if (x1 <= x0) return;
+    this.box(x0, y, x1 - x0, h, 0, 3.4, '#d9dde3', '#8e95a0');
+    const ctx = this.ctx, P = this.px;
+    ctx.fillStyle = 'rgba(40,70,110,0.85)';
+    for (let x = x0 + 0.6; x < x1 - 1; x += 2.2) ctx.fillRect(x * P, this.sy(y + h, 2.4), 1.4 * P, 0.5 * P);
+    ctx.fillStyle = '#e8c547';
+    ctx.fillRect(x0 * P, this.sy(y + h, 1.2), (x1 - x0) * P, Math.max(2, 0.12 * P));
+  }
+
+  // 仕掛けの予告：列車の警報（線路が赤く点滅）と、異常区域の脈動の兆し（紫の輪が縮んでいく）
+  drawMapWarnings(b) {
+    const ctx = this.ctx, P = this.px;
+    for (const tr of b.world.trains || []) {
+      if (!tr.warned || tr.active) continue;
+      const left = tr.next - b.t;
+      const on = Math.floor(b.t * 4) % 2 === 0;
+      ctx.fillStyle = `rgba(255,40,40,${on ? 0.28 : 0.1})`;
+      ctx.fillRect(0, tr.y * P, b.world.w * P, tr.h * P);
+      ctx.font = `bold ${Math.max(12, P * 0.8)}px sans-serif`;
+      ctx.fillStyle = on ? '#ff5d5d' : '#ffd166';
+      ctx.strokeStyle = '#000'; ctx.lineWidth = 3;
+      const label = `⚠ 列車通過まで ${Math.max(0, left).toFixed(1)}秒`;
+      for (const cx of [b.world.w * 0.25, b.world.w * 0.75]) { ctx.strokeText(label, cx * P - 70, (tr.y + tr.h / 2) * P + 5); ctx.fillText(label, cx * P - 70, (tr.y + tr.h / 2) * P + 5); }
+    }
+    const an = b.world.anomaly;
+    if (an && an.pending) {
+      const p = an.pending;
+      const k = Math.max(0, Math.min(1, (p.at - b.t) / 2));
+      const col = p.kind === 'hazard' ? '255,120,80' : '170,120,255';
+      ctx.strokeStyle = `rgba(${col},0.9)`;
+      ctx.lineWidth = Math.max(2, P * 0.12);
+      ctx.setLineDash([P * 0.5, P * 0.3]);
+      ctx.beginPath(); ctx.ellipse(p.x * P, p.y * P, p.r * P * (1 + k), p.r * P * (1 + k), 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = `rgba(${col},${0.15 + (1 - k) * 0.2})`;
+      ctx.beginPath(); ctx.ellipse(p.x * P, p.y * P, p.r * P, p.r * P, 0, 0, Math.PI * 2); ctx.fill();
     }
   }
 

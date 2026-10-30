@@ -552,8 +552,207 @@ function buildStation(seed) {
   return world;
 }
 
+// ---------- シムリア：旧領域境界区（96m × 64m） ----------
+// 惑星シムリアの、旧領域と中央都市圏の境目。北をリニア貨物線（列車がときどき高速で通過する）が横切り、
+// 西に旧騎士団の砦跡、中央に異常区域（ときどき脈動して危険な場が生まれる）、東にオルヴェンの遺物保管施設、
+// 南にカルドラの採掘場とニヴェルの研究所、北にオルヴェンの貨物ターミナル
+
+function buildSimria(seed) {
+  const rng = makeRng(seed);
+  const jitter = (v, r) => v + (rng() - 0.5) * 2 * r;
+  const W = 96, H = 64;
+  const world = newWorld(W, H, seed);
+  world.spawns = { player: { x: 4, y: 44 }, cpu: { x: 92, y: 44 } };
+  // 通過する列車（警報の6秒後に、長さ26mの貨物列車が時速約100kmで通る。撥ねられると22ダメージ・転倒）
+  world.trains = [{ id: 'freight', name: 'リニア貨物列車', y: 10.6, h: 3.8, len: 26, speed: 28, damage: 22, warn: 6, period: 32, next: 24 + rng() * 10, dir: -1, active: false }];
+  // 異常区域：中央の区域が十数秒ごとに脈動する
+  world.anomaly = { x: 36, y: 19, w: 24, h: 20, period: 13, next: 15 + rng() * 6, pending: null };
+
+  world.ground.push(
+    { kind: 'plaza', x: 0.5, y: 0.5, w: W - 1, h: 9.6 },
+    { kind: 'rail', x: 0.5, y: 10.6, w: W - 1, h: 3.8 },
+    { kind: 'crosswalk', x: 20, y: 10.6, w: 5, h: 3.8 },
+    { kind: 'crosswalk', x: 70, y: 10.6, w: 5, h: 3.8 },
+    { kind: 'ruin', x: 1, y: 16, w: 32, h: 25 },
+    { kind: 'anomaly', x: 36, y: 19, w: 24, h: 20 },
+    { kind: 'road', x: 0.5, y: 42, w: W - 1, h: 5 },
+    { kind: 'road', x: 61.5, y: 15, w: 5, h: 27 },
+    { kind: 'site', x: 1, y: 48, w: 40, h: 15.5 },
+    { kind: 'plaza', x: 66.5, y: 15.5, w: 29, h: 26 },
+    { kind: 'grass', x: 43, y: 48, w: 18, h: 15.5 },
+    { kind: 'plaza', x: 62, y: 48, w: 33.5, h: 15.5 },
+  );
+  world.areas.push(
+    { id: 'area_terminal', name: 'オルヴェン貨物ターミナル', x: 0.5, y: 0.5, w: W - 1, h: 9.6 },
+    { id: 'area_maglev', name: 'リニア貨物線', x: 0.5, y: 10.6, w: W - 1, h: 3.8 },
+    { id: 'area_crossing_w', name: '西の踏切', x: 20, y: 10.6, w: 5, h: 3.8 },
+    { id: 'area_crossing_e', name: '東の踏切', x: 70, y: 10.6, w: 5, h: 3.8 },
+    { id: 'area_ruins', name: '旧騎士団の砦跡', x: 1, y: 16, w: 32, h: 25 },
+    { id: 'area_anomaly', name: '異常区域', x: 36, y: 19, w: 24, h: 20 },
+    { id: 'area_border_road', name: '境界道路', x: 0.5, y: 42, w: W - 1, h: 5 },
+    { id: 'area_vault_yard', name: '遺物保管施設の前庭', x: 66.5, y: 15.5, w: 29, h: 26 },
+    { id: 'area_quarry', name: 'カルドラ採掘場', x: 1, y: 48, w: 40, h: 15.5 },
+    { id: 'area_lab_yard', name: 'ニヴェル研究所の敷地', x: 62, y: 48, w: 33.5, h: 15.5 },
+    { id: 'area_wasteland', name: '荒れ地', x: 43, y: 48, w: 18, h: 15.5 },
+  );
+
+  // ---- 北：オルヴェン貨物ターミナル（コンテナの山・管理棟・クレーン） ----
+  const containers = [[3, 2, 6, 2.4], [3, 5.2, 6, 2.4], [12, 3, 2.4, 6], [30, 2, 6, 2.4], [38, 2, 6, 2.4], [38, 5.4, 6, 2.4], [55, 3, 6, 2.4], [82, 2, 6, 2.4], [82, 5.4, 6, 2.4], [90, 2.5, 2.4, 6]];
+  containers.forEach(([x, y, w, h], i) => addObj(world, 'car', { id: `container_${i + 1}`, name: `貨物コンテナ${i + 1}`, x, y, w, h, height: 2.6 }));
+  addHouse(world, {
+    id: 'orven_office', name: 'ターミナル管理棟', kind: 'office', aliases: ['管理棟', 'ターミナル'], x: 63, y: 1.2, w: 12, h: 7.5, wallHp: 60,
+    openings: [
+      { side: 'S', a: 2, b: 4, type: 'door', id: 'orven_office_door', name: '管理棟の入口' },
+      { side: 'W', a: 2.5, b: 4.5, type: 'window', id: 'orven_office_window_w', name: '管理棟の西窓' },
+      { side: 'E', a: 2.5, b: 4.5, type: 'window', id: 'orven_office_window_e', name: '管理棟の東窓' },
+    ],
+  });
+  addObj(world, 'generator', { id: 'orven_power', name: '管理棟の配電盤', x: 72.5, y: 2, w: 1.6, h: 1 });
+  addObj(world, 'table', { id: 'orven_desk', name: '管理棟の端末机', x: 66, y: 3, w: 2.2, h: 0.9 });
+  [[22, 2], [50, 2], [78, 4]].forEach(([x, y], i) => addObj(world, 'pole', { id: `crane_${i + 1}`, name: `クレーンの脚${i + 1}`, x, y, w: 0.6, h: 0.6 }));
+  [[18, 7], [27, 8], [48, 7.6], [60, 8.2]].forEach(([x, y], i) => addObj(world, 'crate', { id: `crate_t${i + 1}`, name: `荷箱${i + 1}`, x: jitter(x, 0.4), y: jitter(y, 0.3), w: 1.1, h: 1.1 }));
+
+  // ---- リニア貨物線：柵（西と東の踏切だけ切れる） ----
+  addFence(world, { id: 'maglev_fence_n', name: '貨物線の柵・北', x: 0.5, y: 10.2, len: W - 1, horiz: true, gaps: [[19.5, 24.5], [69.5, 74.5]], style: 'panel', hp: 25, t: 0.15 });
+  addFence(world, { id: 'maglev_fence_s', name: '貨物線の柵・南', x: 0.5, y: 14.8, len: W - 1, horiz: true, gaps: [[19.5, 24.5], [69.5, 74.5]], style: 'panel', hp: 25, t: 0.15 });
+  [[19.15, 10.05], [24.5, 10.05], [19.15, 14.6], [24.5, 14.6], [69.15, 10.05], [74.5, 10.05], [69.15, 14.6], [74.5, 14.6]].forEach(([x, y], i) => {
+    addObj(world, 'pole', { id: `maglev_bar_${i + 1}`, name: `踏切の遮断機${i + 1}`, x, y, w: 0.35, h: 0.35 });
+  });
+
+  // ---- 西：旧騎士団の砦跡（崩れた外壁・見張り塔・礼拝堂跡・折れた柱） ----
+  addFence(world, { id: 'fort_wall_n', name: '砦の外壁・北', x: 2, y: 17, len: 30, horiz: true, gaps: [[6, 8.5], [19, 21]], style: 'concrete', hp: 80, t: 0.6 });
+  addFence(world, { id: 'fort_wall_w', name: '砦の外壁・西', x: 2, y: 17, len: 23, horiz: false, gaps: [[10, 12.5]], style: 'concrete', hp: 80, t: 0.6 });
+  addFence(world, { id: 'fort_wall_s', name: '砦の外壁・南', x: 2, y: 39.4, len: 30, horiz: true, gaps: [[3, 6], [14, 18], [25, 27]], style: 'concrete', hp: 80, t: 0.6 });
+  addFence(world, { id: 'fort_wall_e', name: '砦の外壁・東', x: 31.4, y: 17, len: 23, horiz: false, gaps: [[4, 6.5], [15, 18]], style: 'concrete', hp: 80, t: 0.6 });
+  addHouse(world, {
+    id: 'watchtower', name: '見張り塔', kind: 'ruin', aliases: ['塔', '見張り塔'], x: 4, y: 19.5, w: 7, h: 7, floors: 2, wallHp: 90,
+    openings: [
+      { side: 'E', a: 2.5, b: 4.5, type: 'door', id: 'watchtower_door', name: '見張り塔の扉' },
+      { side: 'S', a: 2.5, b: 4, type: 'window', id: 'watchtower_slit', name: '見張り塔の矢狭間' },
+    ],
+    stairs: { x: 4.5, y: 20, w: 1.2, h: 2.4 },
+    upper: {
+      openings: [
+        { side: 'N', a: 2.5, b: 4.5, type: 'window', id: 'watchtower_f2_n', name: '見張り塔の2階の北窓' },
+        { side: 'E', a: 2.5, b: 4.5, type: 'window', id: 'watchtower_f2_e', name: '見張り塔の2階の東窓' },
+        { side: 'S', a: 2.5, b: 4.5, type: 'window', id: 'watchtower_f2_s', name: '見張り塔の2階の南窓' },
+      ],
+    },
+  });
+  addHouse(world, {
+    id: 'chapel', name: '礼拝堂跡', kind: 'ruin', aliases: ['礼拝堂', '聖堂'], x: 17, y: 28, w: 10, h: 8.5, wallHp: 70,
+    openings: [
+      { side: 'S', a: 4, b: 6, type: 'door', id: 'chapel_door', name: '礼拝堂の大扉' },
+      { side: 'W', a: 3, b: 5, type: 'window', id: 'chapel_window_w', name: '礼拝堂の西の窓' },
+      { side: 'E', a: 3, b: 5, type: 'window', id: 'chapel_window_e', name: '礼拝堂の東の窓' },
+    ],
+  });
+  addObj(world, 'table', { id: 'chapel_altar', name: '神の祭壇（朽ちている）', x: 20.5, y: 29, w: 3, h: 1, mass: 4 });
+  addObj(world, 'table', { id: 'chapel_pew_1', name: '礼拝堂の長椅子1', x: 18.5, y: 31.5, w: 3, h: 0.6, mass: 2 });
+  addObj(world, 'table', { id: 'chapel_pew_2', name: '礼拝堂の長椅子2', x: 22.5, y: 31.5, w: 3, h: 0.6, mass: 2 });
+  [[14, 22], [24, 21], [10, 32], [28, 25]].forEach(([x, y], i) => addObj(world, 'wall', { id: `fort_pillar_${i + 1}`, name: `折れた柱${i + 1}`, x, y, w: 0.9, h: 0.9, hp: 90, style: 'concrete', height: 2.2 }));
+  world.rubble.push({ kind: 'stone', name: '崩れた石積み', x: 12, y: 25, w: 4, h: 3 }, { kind: 'stone', name: '瓦礫', x: 6, y: 33, w: 5, h: 3 });
+  addObj(world, 'bush', { id: 'bush_fort_1', name: '砦の茂み（北）', x: 22, y: 19, w: 3.5, h: 2 });
+  addObj(world, 'bush', { id: 'bush_fort_2', name: '砦の茂み（南）', x: 27, y: 37, w: 3, h: 1.8 });
+  addObj(world, 'tree', { id: 'tree_fort', name: '砦の老木', x: 13.5, y: 36, w: 1.1, h: 1.1 });
+
+  // ---- 中央：異常区域（変質した岩・結晶柱）と、環境・異常現象局の観測所 ----
+  [[40, 23, 1.6, 1.2], [47, 27, 1.2, 1.2], [54, 22, 1.4, 1.8], [43, 33, 2, 1.2], [52, 34, 1.2, 1.2], [57, 29, 1, 2]].forEach(([x, y, w, h], i) => {
+    addObj(world, 'steel', { id: `crystal_${i + 1}`, name: `結晶柱${i + 1}`, x: jitter(x, 0.4), y: jitter(y, 0.4), w, h, height: 2.6 });
+  });
+  [[45, 21], [50, 37]].forEach(([x, y], i) => addObj(world, 'wall', { id: `altered_rock_${i + 1}`, name: `変質した岩${i + 1}`, x, y, w: 2.2, h: 1.4, hp: 120, style: 'concrete', height: 1.6 }));
+  addHouse(world, {
+    id: 'observatory', name: '異常現象局の観測所', kind: 'office', aliases: ['観測所', '異常現象局'], x: 36.5, y: 15.6, w: 7, h: 3, wallHp: 50,
+    openings: [
+      { side: 'S', a: 2.6, b: 4.2, type: 'door', id: 'observatory_door', name: '観測所の扉' },
+      { side: 'E', a: 0.8, b: 2.2, type: 'window', id: 'observatory_window', name: '観測所の窓' },
+    ],
+  });
+  addObj(world, 'table', { id: 'observatory_console', name: '観測装置', x: 37.3, y: 16.2, w: 2.4, h: 0.7 });
+  addObj(world, 'pole', { id: 'observatory_antenna', name: '観測アンテナ', x: 44.2, y: 16, w: 0.4, h: 0.4 });
+
+  // ---- 東：オルヴェン遺物保管施設（大きな1階建て。中は保管庫と変電室に分かれる） ----
+  addHouse(world, {
+    id: 'vault', name: '遺物保管施設', kind: 'vault', aliases: ['保管施設', '遺物', 'オルヴェン'], x: 70, y: 18, w: 22, h: 14, wallHp: 120,
+    openings: [
+      { side: 'W', a: 5, b: 8, type: 'door', id: 'vault_door_w', name: '保管施設の正面ゲート' },
+      { side: 'S', a: 15, b: 17, type: 'door', id: 'vault_door_s', name: '保管施設の通用口' },
+      { side: 'N', a: 4, b: 9, type: 'door', id: 'vault_door_n', name: '保管施設の搬入口' },
+      { side: 'E', a: 5, b: 7, type: 'window', id: 'vault_window_e', name: '保管施設の監視窓', hp: 20, fixed: true },
+    ],
+  });
+  // 中の仕切り（保管庫と変電室の間の壁。通り抜けられる切れ目が2か所）
+  addObj(world, 'wall', { id: 'vault_inner_1', name: '保管庫の仕切り壁1', x: 84, y: 18.3, w: 0.3, h: 4.2, building: 'vault', hp: 80 });
+  addObj(world, 'wall', { id: 'vault_inner_2', name: '保管庫の仕切り壁2', x: 84, y: 24.2, w: 0.3, h: 3.3, building: 'vault', hp: 80 });
+  addObj(world, 'wall', { id: 'vault_inner_3', name: '保管庫の仕切り壁3', x: 84, y: 29.4, w: 0.3, h: 2.3, building: 'vault', hp: 80 });
+  [[72, 20.5], [76, 20.5], [80, 20.5], [72, 26.5], [76, 26.5], [80, 26.5]].forEach(([x, y], i) => addObj(world, 'shelf', { id: `relic_case_${i + 1}`, name: `遺物の展示ケース${i + 1}`, x, y, w: 2.4, h: 1.1 }));
+  addObj(world, 'generator', { id: 'vault_substation', name: '保管施設の変電設備', x: 87.5, y: 20, w: 3, h: 2 });
+  addObj(world, 'generator', { id: 'vault_substation_2', name: '保管施設の蓄電器', x: 87.5, y: 27.5, w: 3, h: 1.6 });
+  [[68, 35], [75, 37], [86, 36], [92, 34]].forEach(([x, y], i) => addObj(world, 'car', { id: `vault_truck_${i + 1}`, name: `警備車両${i + 1}`, x: jitter(x, 0.6), y: jitter(y, 0.4), w: 4.4, h: 1.9 }));
+  addObj(world, 'cone', { id: 'vault_cone_1', name: '三角コーン（ゲート前）', x: 67.5, y: 22, w: 0.45, h: 0.45 });
+  addObj(world, 'cone', { id: 'vault_cone_2', name: '三角コーン（ゲート前2）', x: 67.5, y: 25, w: 0.45, h: 0.45 });
+
+  // ---- 南西：カルドラ採掘場（掘削穴・土砂・重機・ドラム缶） ----
+  addObj(world, 'hole', { id: 'quarry_pit_1', name: '採掘坑', x: 6, y: 51, w: 8, h: 6 });
+  addObj(world, 'hole', { id: 'quarry_pit_2', name: '試掘穴', x: 24, y: 55, w: 4, h: 3.5 });
+  world.rubble.push({ kind: 'gravel', name: '土砂の山', x: 16, y: 50, w: 4, h: 4 }, { kind: 'gravel', name: '砕石', x: 30, y: 49, w: 8, h: 3 });
+  addObj(world, 'car', { id: 'excavator', name: '重機（掘削機）', x: 17, y: 57, w: 5, h: 3, height: 3 });
+  addObj(world, 'steel', { id: 'quarry_steel', name: '支保工の鋼材', x: 27, y: 61.4, w: 5, h: 1.3 });
+  [[35, 54], [36.2, 54.4], [3, 60]].forEach(([x, y], i) => addObj(world, 'drum', { id: `drum_${i + 1}`, name: `ドラム缶${i + 1}`, x, y, w: 0.7, h: 0.7 }));
+  addHouse(world, {
+    id: 'kaldra_hut', name: 'カルドラの作業小屋', kind: 'office', aliases: ['作業小屋', 'カルドラ'], x: 33, y: 59.5, w: 6, h: 3.6, wallHp: 40,
+    openings: [{ side: 'N', a: 2, b: 3.6, type: 'door', id: 'kaldra_hut_door', name: '作業小屋の扉' }],
+  });
+
+  // ---- 南中央：荒れ地（茂み・枯れ木） ----
+  [[45, 51], [53, 56], [47, 59.5]].forEach(([x, y], i) => addObj(world, 'bush', { id: `bush_waste_${i + 1}`, name: `荒れ地の茂み${i + 1}`, x, y, w: 3.2, h: 2 }));
+  [[57, 50], [44, 56.5]].forEach(([x, y], i) => addObj(world, 'tree', { id: `tree_waste_${i + 1}`, name: `枯れ木${i + 1}`, x, y, w: 0.9, h: 0.9 }));
+
+  // ---- 南東：ニヴェル生命工学研究所（ガラス張り・冷却装置） ----
+  addHouse(world, {
+    id: 'nivel_lab', name: 'ニヴェル研究所', kind: 'lab', aliases: ['研究所', 'ニヴェル'], x: 72, y: 50, w: 14, h: 10, wallHp: 70,
+    openings: [
+      { side: 'N', a: 0.4, b: 5, type: 'window', id: 'lab_glass_1', name: '研究所のガラス壁（西）', hp: 10, fixed: true },
+      { side: 'N', a: 5, b: 7, type: 'door', id: 'lab_door', name: '研究所の自動ドア' },
+      { side: 'N', a: 7, b: 13.6, type: 'window', id: 'lab_glass_2', name: '研究所のガラス壁（東）', hp: 10, fixed: true },
+      { side: 'E', a: 4, b: 6, type: 'door', id: 'lab_backdoor', name: '研究所の搬出口' },
+    ],
+  });
+  addObj(world, 'table', { id: 'lab_bench_1', name: '実験台1', x: 74, y: 53, w: 3, h: 1 });
+  addObj(world, 'table', { id: 'lab_bench_2', name: '実験台2', x: 79, y: 53, w: 3, h: 1 });
+  addObj(world, 'shelf', { id: 'lab_cryo', name: '低温保管庫', x: 74, y: 57.6, w: 4, h: 1.2 });
+  addObj(world, 'vending', { id: 'lab_vending', name: '研究所の自販機', x: 88, y: 50.5, w: 0.8, h: 1 });
+  addObj(world, 'car', { id: 'lab_van', name: '研究所の搬送車', x: jitter(66, 0.5), y: 55, w: 1.9, h: 4.4 });
+  addObj(world, 'tree', { id: 'tree_lab', name: '研究所の植栽', x: 91, y: 59, w: 0.9, h: 0.9 });
+
+  // ---- 境界道路 ----
+  addObj(world, 'car', { id: 'car_border_1', name: '路上の車1', x: jitter(28, 2), y: 42.6, w: 4.4, h: 1.9 });
+  addObj(world, 'car', { id: 'car_border_2', name: '路上の車2', x: jitter(54, 2), y: 44.6, w: 4.4, h: 1.9 });
+  [[10, 47.4], [36, 47.4], [60, 41.3], [80, 47.4]].forEach(([x, y], i) => addObj(world, 'pole', { id: `pole_${i + 1}`, name: `街灯${i + 1}`, x, y, w: 0.4, h: 0.4 }));
+
+  placeItems(world, [
+    // ターミナル
+    ['pipe', 16, 8.5], ['wrench', 26, 4], ['extinguisher', 67, 6.5], ['bandage', 69, 3], ['drink', 46.5, 8.6], ['lumber', 58, 6],
+    // 砦跡
+    ['stone', 15, 27], ['stone', 9, 30], ['branch', 14.8, 35], ['brick', 26, 23], ['umbrella', 7, 24, 1], ['first_aid', 9, 24.5, 1], ['vase', 24, 34],
+    // 異常区域・観測所
+    ['stone', 48, 30], ['stone', 41, 36], ['first_aid', 41.5, 17.2],
+    // 保管施設
+    ['pipe', 75, 24.5], ['extinguisher', 86, 30.5], ['onigiri', 90, 24.5], ['wrench', 89, 31], ['stone', 70, 39],
+    // 採掘場
+    ['pipe', 20, 52], ['brick', 29, 52], ['lumber', 38, 57], ['wrench', 34.5, 61.6], ['drink', 36, 61.6], ['stone', 12, 59],
+    // 荒れ地・研究所
+    ['branch', 50, 53], ['stone', 58, 60], ['bandage', 77, 55.6], ['kitchen_knife', 82, 55.6], ['bottle', 84, 52], ['drink', 87, 57],
+  ], rng);
+  addObj(world, 'fountain', { id: 'fort_well', name: '砦の古井戸', x: 9, y: 37.5, w: 1.2, h: 1.2 });
+  addObj(world, 'trashcan', { id: 'trash_terminal', name: 'ターミナルのゴミ箱', x: 33.5, y: 8.4, w: 0.8, h: 0.8 });
+  addObj(world, 'trashcan', { id: 'trash_road', name: '境界道路のゴミ箱', x: 46, y: 41.2, w: 0.8, h: 0.8 });
+  return world;
+}
+
 export const MAPS = {
   town: { id: 'town', name: '住宅街', desc: '工事現場・コンビニ・公園のある住宅街（60m×40m）。植え込みに隠れたり、車の防犯アラームで気を引いたりできる。', build: buildTown },
+  simria: { id: 'simria', name: 'シムリア：旧領域境界区（大型）', desc: '惑星シムリアの旧領域と中央都市圏の境目（96m×64m）。リニア貨物線をときどき列車が通過し（警報の6秒後・撥ねられると大ダメージ）、中央の異常区域はときどき脈動して危険な場が生まれる。旧騎士団の砦跡・オルヴェンの遺物保管施設・カルドラ採掘場・ニヴェル研究所。', build: buildSimria },
   station: { id: 'station', name: '駅前（大型）', desc: '駅とロータリー・線路と踏切・商店街・神社・倉庫・学校・河川敷のある大きな町（100m×70m）。5対5やバトルロワイヤル向け。線路は踏切と南口、川は3本の橋でしか渡れない。', build: buildStation },
   lot: { id: 'lot', name: '空き地', desc: '2軒の家と木箱が並ぶ小さな空き地（36m×24m）。すぐに接敵する短期決戦向け。', build: buildLot },
 };

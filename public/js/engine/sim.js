@@ -820,6 +820,70 @@ export class Battle {
     }
   }
 
+  // ---------- マップの仕掛け：通過する列車・異常区域の脈動 ----------
+
+  updateMapEvents() {
+    const w = this.world;
+    for (const tr of w.trains || []) {
+      // 警報 → 通過 → 次の列車まで待つ、の繰り返し。向きは毎回入れ替わる
+      if (!tr.active && !tr.warned && this.t >= tr.next - tr.warn) {
+        tr.warned = true;
+        const cx = w.w / 2, cy = tr.y + tr.h / 2;
+        this.emit({ text: `${tr.name}の警報が鳴り響く。${tr.warn}秒後に列車が通過する（線路の上にいると撥ねられる）`, kind: 'env', pos: { x: cx, y: cy, z: 1 }, sound: 45, soundKind: 'alarm', all: true });
+        this.fx.push({ kind: 'train_warn', seq: ++this.fxSeq, x: cx, y: cy, t: this.t, until: tr.next, tr: tr.id });
+        for (const c of this.chars) if (c.alive) this.recordSound(c, { x: c.x, y: cy, floor: 0 }, 'alarm', `${tr.name}の警報`);
+      }
+      if (!tr.active && this.t >= tr.next) {
+        tr.active = true;
+        tr.dir = tr.dir === 1 ? -1 : 1;
+        tr.head = tr.dir === 1 ? -2 : w.w + 2;
+        tr.hitIds = [];
+      }
+      if (tr.active) {
+        tr.head += tr.dir * tr.speed * RULES.dt;
+        const x0 = Math.min(tr.head, tr.head - tr.dir * tr.len), x1 = Math.max(tr.head, tr.head - tr.dir * tr.len);
+        tr.x0 = x0; tr.x1 = x1;
+        for (const c of this.chars) {
+          if (!c.alive || c.floor !== 0 || tr.hitIds.includes(c.id) || this.isAirborne(c)) continue;
+          if (c.x < x0 - c.r || c.x > x1 + c.r || c.y < tr.y - c.r || c.y > tr.y + tr.h + c.r) continue;
+          // 撥ねられる：線路の外（近い側）へ大きく弾き飛ばされる
+          tr.hitIds.push(c.id);
+          const side = c.y < tr.y + tr.h / 2 ? -1 : 1;
+          const v = Math.sqrt(28 * 6);
+          c.kbx = tr.dir * v * 0.6; c.kby = side * v;
+          c.status.proneUntil = Math.max(c.status.proneUntil, this.t + 1.4);
+          interruptStep(this, c, `${tr.name}に撥ねられた`, true);
+          this.emit({ text: `${c.name} は${tr.name}に撥ねられた！`, kind: 'combat', affected: c, pos: c, sound: 16, soundKind: 'crash' });
+          this.damage(c, tr.damage, { source: null, kind: 'train', label: tr.name });
+          this.puff('dust', c);
+        }
+        if ((tr.dir === 1 && x0 > w.w + 2) || (tr.dir === -1 && x1 < -2)) {
+          tr.active = false; tr.warned = false; tr.x0 = tr.x1 = null;
+          tr.next = this.t + tr.period * (0.8 + this.rng() * 0.4);
+        }
+      }
+    }
+    const an = w.anomaly;
+    if (an) {
+      // 異常区域：ときどき脈動し、区域の中のどこかに危険な場か、動きの鈍る場が生まれる（2秒前に兆しが見える）
+      if (!an.pending && this.t >= an.next - 2) {
+        const kind = this.rng() < 0.55 ? 'hazard' : 'slow';
+        const x = an.x + 2 + this.rng() * (an.w - 4), y = an.y + 2 + this.rng() * (an.h - 4);
+        an.pending = { x, y, r: kind === 'hazard' ? 3 : 4, kind, at: an.next };
+        this.fx.push({ kind: 'anomaly_warn', seq: ++this.fxSeq, x, y, r: an.pending.r, zk: kind, t: this.t, until: an.next, visibleTo: this.visibleSet({ x, y, z: 0.5 }) });
+      }
+      if (an.pending && this.t >= an.pending.at) {
+        const p = an.pending;
+        an.pending = null;
+        an.next = this.t + an.period * (0.7 + this.rng() * 0.6);
+        if (p.kind === 'hazard') this.addZone({ kind: 'hazard', x: p.x, y: p.y, r: p.r, dps: 5, until: this.t + 5, label: '異常区域の脈動', anomaly: true });
+        else this.addZone({ kind: 'slow', x: p.x, y: p.y, r: p.r, mult: 0.45, until: this.t + 6, anomaly: true });
+        this.emit({ text: p.kind === 'hazard' ? '異常区域が脈動した。地面から熱を帯びた光が噴き出す！' : '異常区域が脈動した。空気が重く澱み、足が沈む', kind: 'env', pos: { x: p.x, y: p.y, z: 0.5 }, sound: 14, soundKind: 'impact' });
+        this.fx.push({ kind: 'shock', seq: ++this.fxSeq, x: p.x, y: p.y, z: 0.5, t: this.t, anomaly: true, visibleTo: this.visibleSet({ x: p.x, y: p.y, z: 0.5 }) });
+      }
+    }
+  }
+
   // ---------- 安全地帯（徐々に狭まる） ----------
 
   // 中心は地図の中ほどの歩ける屋外。最初の半径は地図全体を覆う大きさ
@@ -952,7 +1016,7 @@ export class Battle {
     this.fx.push({ kind: 'num', x: target.x, y: target.y - 0.6, text: `-${dmg}`, t: this.t, color: guarded ? '#aaa' : '#ff5d73', big: dmg >= 15, visibleTo: entry.visibleTo });
     if (['fall', 'slam', 'launch_impact', 'debris'].includes(kind)) this.puff('dust', { x: target.x, y: target.y, floor: target.floor });
     // 演出用：打撃の瞬間（画面側でヒットストップ・揺れ・擬音にする）
-    this.fx.push({ kind: 'hit', seq: ++this.fxSeq, x: target.x, y: target.y, z: this.baseZ(target) + 1.1, dmg, guarded, hitKind: kind, target: target.id, t: this.t, visibleTo: entry.visibleTo, ang: from ? angleTo(from.x, from.y, target.x, target.y) : this.rng() * Math.PI * 2 });
+    this.fx.push({ kind: 'hit', seq: ++this.fxSeq, x: target.x, y: target.y, z: this.baseZ(target) + 1.1, dmg, guarded, hitKind: kind, target: target.id, src: source ? source.id : null, label, t: this.t, visibleTo: entry.visibleTo, ang: from ? angleTo(from.x, from.y, target.x, target.y) : this.rng() * Math.PI * 2 });
     // 怯み：構えや詠唱を中断させる
     // 同じ瞬間に放たれる攻撃は相打ちにする（処理順で有利不利が出ないように）
     const releasing = target.windup && target.windup.until <= this.t + RULES.dt + 1e-6;
@@ -1179,6 +1243,7 @@ export class Battle {
       this.scheduled = this.scheduled.filter(s => s.t > this.t);
       for (const s of due) s.fn();
     }
+    if (w.trains || w.anomaly) this.updateMapEvents();
     for (const c of this.chars) if (c.burst && c.alive) this.updateBurst(c);
     for (const c of this.chars) if (c.alive) this.updateLinger(c);
     for (const c of this.chars) if (c.alive && c.mouths) this.updateMouths(c, dt);

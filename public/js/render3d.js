@@ -167,7 +167,7 @@ export class Renderer3D {
       return m;
     };
     plane(0, 0, w.w, w.h, '#2f2f34');
-    const groundColor = { road: '#3b3b40', site: '#6e5e46', lot: '#505055', park: '#3d5a34', crosswalk: '#9a9aa0', grass: '#4a6b3a', plaza: '#6d6a66', field: '#9b8463', parking: '#505055', rail: '#5b554d' };
+    const groundColor = { ruin: '#5e5850', anomaly: '#3d2f4f', road: '#3b3b40', site: '#6e5e46', lot: '#505055', park: '#3d5a34', crosswalk: '#9a9aa0', grass: '#4a6b3a', plaza: '#6d6a66', field: '#9b8463', parking: '#505055', rail: '#5b554d' };
     for (const gr of w.ground) {
       if (gr.kind === 'crosswalk') {
         for (let yy = gr.y + 0.3; yy < gr.y + gr.h - 0.3; yy += 0.9) plane(gr.x, yy, gr.w, 0.45, '#8c8c92', 0.012);
@@ -435,6 +435,35 @@ export class Renderer3D {
       else if (z.kind === 'hazard') this.addDisc(z.x, z.y, zz, z.r, '#ff783c', 0.35 + Math.sin(b.t * 6) * 0.06);
       else if (z.kind === 'slow') this.addDisc(z.x, z.y, zz, z.r, '#5aa0ff', 0.3);
       else if (z.kind === 'hum') this.addRing(z.x, z.y, zz, z.r * (0.3 + ((b.t * 1.2) % 1) * 0.7), '#e8c547', 0.5);
+    }
+    // 通過中の列車と、その予告（線路が赤く点滅）
+    for (const tr of b.world.trains || []) {
+      if (tr.active && tr.x0 != null) {
+        const x0 = Math.max(0, tr.x0), x1 = Math.min(b.world.w, tr.x1);
+        if (x1 > x0) {
+          const m = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0, 3.4, tr.h - 0.7), this.mat('#d9dde3'));
+          m.position.copy(V((x0 + x1) / 2, tr.y + tr.h / 2, 1.7));
+          m.castShadow = true;
+          this.dyn.add(m);
+          const band = new THREE.Mesh(new THREE.BoxGeometry(x1 - x0 + 0.02, 0.15, tr.h - 0.68), this.mat('#e8c547'));
+          band.position.copy(V((x0 + x1) / 2, tr.y + tr.h / 2, 1.2));
+          this.dyn.add(band);
+        }
+      } else if (tr.warned) {
+        const on = Math.floor(b.t * 4) % 2 === 0;
+        const m = new THREE.Mesh(new THREE.PlaneGeometry(b.world.w, tr.h), new THREE.MeshBasicMaterial({ color: '#ff2828', transparent: true, opacity: on ? 0.35 : 0.12, depthWrite: false }));
+        m.rotation.x = -Math.PI / 2;
+        m.position.copy(V(b.world.w / 2, tr.y + tr.h / 2, 0.06));
+        this.dyn.add(m);
+      }
+    }
+    // 異常区域の脈動の兆し：縮んでいく輪
+    const an = b.world.anomaly;
+    if (an && an.pending) {
+      const p = an.pending, k = Math.max(0, Math.min(1, (p.at - b.t) / 2));
+      const col = p.kind === 'hazard' ? '#ff7850' : '#aa78ff';
+      this.addRing(p.x, p.y, 0, p.r * (1 + k), col, 0.9, 0.15);
+      this.addDisc(p.x, p.y, 0, p.r, col, 0.15 + (1 - k) * 0.2);
     }
     // 粉の山・瓦礫
     for (const p of b.world.piles || []) this.addDisc(p.x + p.w / 2, p.y + p.h / 2, p.floor * FLOOR_H, Math.max(p.w, p.h) / 2 * (p.scattered ? 1.3 : 0.75), p.material === '鉄粉' ? '#5a5c62' : p.material === 'ガラス粉' ? '#cde8f0' : '#d6d0c4', p.scattered ? 0.25 : 0.75);

@@ -286,3 +286,65 @@ button:disabled { opacity: .5; cursor: default; }
 .mini-row .bar em { font-size: 10px; }
 .lineup .slots label { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; }
 .lineup .slots select { width: auto; max-width: min(260px, 60vw); min-width: 0; }
+
+/* ---------- 演出 ---------- */
+/* 決め技・再起不能：画面を横切る帯 */
+.finisher { position: fixed; left: 0; right: 0; top: 34%; height: 150px; display: flex; align-items: center; gap: 18px; padding: 0 6vw; pointer-events: none; z-index: 60; overflow: hidden;
+  background: linear-gradient(90deg, rgba(0,0,0,0.0), rgba(0,0,0,0.88) 12%, rgba(0,0,0,0.88) 88%, rgba(0,0,0,0)); border-top: 4px solid var(--c, #fff); border-bottom: 4px solid var(--c, #fff);
+  transform: scaleY(0); opacity: 0; box-sizing: border-box; }
+.finisher.show { animation: finisher 1.35s cubic-bezier(.2,.9,.3,1) forwards; }
+@keyframes finisher { 0% { transform: scaleY(0); opacity: 0; } 10% { transform: scaleY(1.15); opacity: 1; } 18% { transform: scaleY(1); } 82% { transform: scaleY(1); opacity: 1; } 100% { transform: scaleY(0.2); opacity: 0; } }
+.finisher .lines { position: absolute; inset: 0; background: repeating-linear-gradient(100deg, transparent 0 22px, color-mix(in srgb, var(--c, #fff) 28%, transparent) 22px 26px); animation: lines 0.35s linear infinite; opacity: 0.8; }
+@keyframes lines { from { background-position: 0 0; } to { background-position: -120px 0; } }
+.finisher img { position: relative; height: 140px; max-width: 30vw; object-fit: contain; filter: drop-shadow(0 0 10px var(--c, #fff)); animation: finImg 1.35s ease-out forwards; }
+.finisher.pixel img { image-rendering: pixelated; }
+@keyframes finImg { 0% { transform: translateX(-60px); } 20% { transform: translateX(0); } 100% { transform: translateX(20px); } }
+.finisher .txt { position: relative; display: flex; flex-direction: column; color: #fff; text-shadow: 3px 3px 0 #000; min-width: 0; }
+.finisher .txt small { font-size: clamp(12px, 1.6vw, 18px); opacity: 0.9; }
+.finisher .txt b { font-size: clamp(30px, 6vw, 68px); line-height: 1.05; color: var(--c, #fff); letter-spacing: 0.04em; font-style: italic; animation: finTitle 1.35s ease-out forwards; overflow-wrap: anywhere; }
+.finisher .txt span { font-size: clamp(13px, 1.8vw, 20px); }
+.finisher .txt.ko b { color: #ff5d73; }
+@keyframes finTitle { 0% { transform: translateX(80px) skewX(-12deg); opacity: 0; } 15% { transform: translateX(0) skewX(-12deg); opacity: 1; } 100% { transform: translateX(-16px) skewX(-12deg); } }
+
+/* ゴゴゴゴ：画面の両端に大きな文字が立ちのぼる */
+.menace { position: fixed; inset: 0; pointer-events: none; z-index: 55; opacity: 0; }
+.menace.show { animation: menace 2.6s ease-out forwards; }
+@keyframes menace { 0% { opacity: 0; } 12% { opacity: 1; } 75% { opacity: 1; } 100% { opacity: 0; } }
+.menace i { position: absolute; font-style: normal; font-weight: 900; font-size: clamp(34px, 6vw, 72px); color: var(--c, #b56cff); -webkit-text-stroke: 2px #000; text-shadow: 4px 4px 0 rgba(0,0,0,0.6); transform: skewX(-10deg); }
+.menace i:nth-child(1) { left: 2vw; top: 18%; } .menace i:nth-child(2) { left: 6vw; top: 34%; } .menace i:nth-child(3) { left: 1vw; top: 52%; } .menace i:nth-child(4) { left: 5vw; top: 68%; }
+.menace i:nth-child(5) { right: 2vw; left: auto; top: 22%; } .menace i:nth-child(6) { right: 6vw; left: auto; top: 40%; } .menace i:nth-child(7) { right: 1vw; left: auto; top: 58%; } .menace i:nth-child(8) { right: 5vw; left: auto; top: 74%; }
+.menace.show i { animation: rise 2.6s ease-out forwards; animation-delay: calc(var(--i) * 0.08s); }
+@keyframes rise { 0% { transform: translateY(30px) skewX(-10deg) scale(0.6); opacity: 0; } 20% { transform: translateY(0) skewX(-10deg) scale(1.1); opacity: 1; } 100% { transform: translateY(-40px) skewX(-10deg) scale(1); opacity: 0.9; } }
+
+/* ターンの帯 */
+.turn-banner { position: fixed; left: 0; right: 0; top: 16%; display: flex; justify-content: center; align-items: baseline; gap: 14px; pointer-events: none; z-index: 52; opacity: 0; color: #fff; text-shadow: 3px 3px 0 #000; }
+.turn-banner b { font-size: clamp(26px, 4.5vw, 48px); font-style: italic; }
+.turn-banner span { font-size: clamp(16px, 2.4vw, 26px); letter-spacing: 0.4em; color: #ffd166; }
+.turn-banner.show { animation: banner 1.1s ease-out forwards; }
+@keyframes banner { 0% { opacity: 0; transform: translateX(-30vw) skewX(-15deg); } 20% { opacity: 1; transform: translateX(0) skewX(-15deg); } 70% { opacity: 1; transform: translateX(2vw) skewX(-15deg); } 100% { opacity: 0; transform: translateX(30vw) skewX(-15deg); } }
+
+/* 答え合わせ */
+.recap { position: fixed; left: 12px; top: 64px; width: min(440px, calc(100vw - 24px)); box-sizing: border-box; background: rgba(12,10,20,0.92); border: 1px solid #555; border-left: 4px solid #ffd166; border-radius: 8px; padding: 8px 10px; z-index: 54;
+  pointer-events: none; opacity: 0; transform: translateY(-10px); transition: opacity .25s, transform .25s; font-size: 12px; }
+.recap.show { opacity: 1; transform: translateY(0); }
+.recap h4 { margin: 0 0 6px; font-size: 13px; color: #ffd166; display: flex; gap: 8px; align-items: center; }
+.recap h4 em { font-style: normal; padding: 1px 8px; border-radius: 10px; font-size: 12px; }
+.recap h4 em.win { background: #06d6a0; color: #062; } .recap h4 em.lose { background: #ff5d73; color: #300; } .recap h4 em.even { background: #888; color: #111; }
+.recap .row { display: grid; grid-template-columns: 7.5em 1fr auto; gap: 6px; padding: 3px 0 3px 6px; border-left: 3px solid var(--c, #888); margin-bottom: 3px; align-items: baseline; }
+.recap .row b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recap .row .plan { color: #ccc; overflow-wrap: anywhere; }
+.recap .row .num i { font-style: normal; margin-left: 4px; font-weight: bold; }
+.recap .row .num .g { color: #06d6a0; } .recap .row .num .t { color: #ff8a8a; } .recap .row .num .ko { color: #ff5d73; }
+
+/* 体力が少ない：画面の縁が赤く脈打つ */
+.vignette { position: fixed; inset: 0; pointer-events: none; z-index: 45; opacity: 0; box-shadow: inset 0 0 120px 30px rgba(220,20,40,0.65); transition: opacity .4s; }
+.vignette.on { animation: vignette 0.9s ease-in-out infinite; }
+@keyframes vignette { 0%, 100% { opacity: 0.35; } 15% { opacity: 0.9; } 30% { opacity: 0.5; } 45% { opacity: 0.8; } }
+
+/* 結果：名場面と To Be Continued */
+.highlights { text-align: left; margin: 10px auto; max-width: 520px; font-size: 13px; }
+.highlights h4 { margin: 4px 0; color: #ffd166; }
+.highlights div { padding: 2px 0; border-bottom: 1px dashed #444; }
+.highlights span { display: inline-block; width: 4.5em; color: #999; }
+.tbc { margin: 12px auto 4px; display: inline-flex; align-items: center; gap: 0; font-family: 'Arial Black', sans-serif; font-weight: 900; font-style: italic; color: #e9d8a6; }
+.tbc .arrow { position: relative; padding: 4px 22px 4px 30px; background: #6b5b3e; border: 2px solid #e9d8a6; clip-path: polygon(14% 0, 100% 0, 100% 100%, 14% 100%, 0 50%); letter-spacing: 0.04em; font-size: 15px; }
